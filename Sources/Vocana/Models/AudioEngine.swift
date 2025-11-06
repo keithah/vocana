@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 struct AudioLevels {
     let input: Float
@@ -7,6 +8,7 @@ struct AudioLevels {
     static let zero = AudioLevels(input: 0.0, output: 0.0)
 }
 
+@MainActor
 class AudioEngine: ObservableObject {
     @Published var currentLevels = AudioLevels.zero
     private var timer: Timer?
@@ -14,12 +16,19 @@ class AudioEngine: ObservableObject {
     func startSimulation(isEnabled: Bool, sensitivity: Double) {
         stopSimulation()
         
-        timer = Timer.scheduledTimer(withTimeInterval: AppConstants.audioUpdateInterval, repeats: true) { _ in
-            self.updateLevels(isEnabled: isEnabled, sensitivity: sensitivity)
+        timer = Timer.scheduledTimer(withTimeInterval: AppConstants.audioUpdateInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateLevels(isEnabled: isEnabled, sensitivity: sensitivity)
+            }
         }
     }
     
     func stopSimulation() {
+        timer?.invalidate()
+        timer = nil
+    }
+    
+    deinit {
         timer?.invalidate()
         timer = nil
     }

@@ -1,6 +1,7 @@
 import XCTest
 @testable import Vocana
 
+@MainActor
 final class AudioEngineTests: XCTestCase {
     var audioEngine: AudioEngine!
     
@@ -39,7 +40,13 @@ final class AudioEngineTests: XCTestCase {
         audioEngine.stopSimulation()
         
         let levels = audioEngine.currentLevels
-        Thread.sleep(forTimeInterval: 0.2)
+        
+        let expectation = XCTestExpectation(description: "Levels remain stable after stop")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            expectation.fulfill()
+        }
+        
+        wait(for: [expectation], timeout: 1.0)
         
         XCTAssertEqual(audioEngine.currentLevels.input, levels.input)
         XCTAssertEqual(audioEngine.currentLevels.output, levels.output)

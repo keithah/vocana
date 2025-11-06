@@ -8,7 +8,6 @@ struct SensitivityControlView: View {
             HStack {
                 Text("Sensitivity")
                     .font(AppConstants.Fonts.subheadline)
-                    .accessibilityLabel("Sensitivity Control")
                 
                 Spacer()
                 

@@ -9,7 +9,6 @@ struct AudioLevelsView: View {
                 Text("Input")
                     .font(AppConstants.Fonts.subheadline)
                     .frame(width: 60, alignment: .leading)
-                    .accessibilityLabel("Input Audio Level")
                 
                 ProgressBar(
                     value: levels.input,
@@ -23,7 +22,6 @@ struct AudioLevelsView: View {
                 Text("Output")
                     .font(AppConstants.Fonts.subheadline)
                     .frame(width: 60, alignment: .leading)
-                    .accessibilityLabel("Output Audio Level")
                 
                 ProgressBar(
                     value: levels.output,
@@ -34,6 +32,5 @@ struct AudioLevelsView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Audio Levels")
     }
 }

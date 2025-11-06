@@ -6,6 +6,11 @@ struct ProgressBar: View {
     let accessibilityLabel: String
     let accessibilityValue: String
     
+    /// Clamped value between 0.0 and 1.0 to prevent rendering issues
+    private var clampedValue: Float {
+        max(0.0, min(1.0, value))
+    }
+    
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
@@ -16,7 +21,7 @@ struct ProgressBar: View {
                 
                 Rectangle()
                     .fill(color)
-                    .frame(width: geometry.size.width * CGFloat(value), height: AppConstants.progressBarHeight)
+                    .frame(width: geometry.size.width * CGFloat(clampedValue), height: AppConstants.progressBarHeight)
                     .cornerRadius(AppConstants.cornerRadius)
             }
         }

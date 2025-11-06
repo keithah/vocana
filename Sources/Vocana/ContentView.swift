@@ -1,11 +1,15 @@
 import SwiftUI
 import Combine
+import AVFoundation
 
+@MainActor
 struct ContentView: View {
     @State private var isEnabled = false
     @State private var sensitivity: Double = 0.5
     @State private var inputLevel: Float = 0.0
     @State private var outputLevel: Float = 0.0
+    @State private var audioEngine: AVAudioEngine?
+    @State private var inputNode: AVAudioInputNode?
     @State private var timer: Timer?
     
     var body: some View {
@@ -34,10 +38,12 @@ struct ContentView: View {
         .padding()
         .frame(width: 300, height: 400)
         .onAppear {
+            setupAudioEngine()
             startAudioLevelSimulation()
         }
         .onDisappear {
             stopAudioLevelSimulation()
+            cleanupAudioEngine()
         }
     }
     
@@ -114,7 +120,7 @@ struct ContentView: View {
     
     private var settingsButtonView: some View {
         Button(action: {
-            // TODO: Open settings window
+            openSettings()
         }) {
             HStack {
                 Image(systemName: "gear")
@@ -129,18 +135,39 @@ struct ContentView: View {
         .padding(.vertical, 4)
     }
     
+    private func setupAudioEngine() {
+        audioEngine = AVAudioEngine()
+        inputNode = audioEngine?.inputNode
+        
+        // Check microphone permission
+        checkMicrophonePermission()
+    }
+    
+    private func cleanupAudioEngine() {
+        audioEngine?.stop()
+        audioEngine = nil
+        inputNode = nil
+    }
+    
+    private func checkMicrophonePermission() {
+        // macOS will automatically prompt for microphone access when needed
+        // We can check the current permission status if needed
+    }
+    
     private func startAudioLevelSimulation() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            if isEnabled {
-                // Simulate audio levels with random values
-                inputLevel = Float.random(in: 0.2...0.8)
-                outputLevel = Float.random(in: 0.1...0.4) * Float(sensitivity)
-            } else {
-                // Gradually decrease to zero when disabled
-                inputLevel *= 0.9
-                outputLevel *= 0.9
-                if inputLevel < 0.01 { inputLevel = 0 }
-                if outputLevel < 0.01 { outputLevel = 0 }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            Task { @MainActor in
+                if self.isEnabled {
+                    // Simulate audio levels with random values
+                    self.inputLevel = Float.random(in: 0.2...0.8)
+                    self.outputLevel = Float.random(in: 0.1...0.4) * Float(self.sensitivity)
+                } else {
+                    // Gradually decrease to zero when disabled
+                    self.inputLevel *= 0.9
+                    self.outputLevel *= 0.9
+                    if self.inputLevel < 0.01 { self.inputLevel = 0 }
+                    if self.outputLevel < 0.01 { self.outputLevel = 0 }
+                }
             }
         }
     }
@@ -149,8 +176,18 @@ struct ContentView: View {
         timer?.invalidate()
         timer = nil
     }
+    
+    private func openSettings() {
+        let alert = NSAlert()
+        alert.messageText = "Settings"
+        alert.informativeText = "Settings functionality will be implemented in a future version."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
 }
 
+@MainActor
 struct ProgressBar: View {
     let value: Float
     let color: Color

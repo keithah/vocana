@@ -23,6 +23,17 @@ struct ContentView: View {
             }
             
             Spacer()
+            
+            // Audio mode indicator
+            HStack {
+                Image(systemName: audioEngine.isUsingRealAudio ? "mic.fill" : "waveform")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Text(audioEngine.isUsingRealAudio ? "Real Audio" : "Simulated")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.top, 4)
         }
         .padding()
         .frame(width: AppConstants.popoverWidth, height: AppConstants.popoverHeight)

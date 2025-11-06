@@ -1,0 +1,23 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+.swiftpm-xcodepackage/
+
+# Xcode
+*.xcodeproj/project.xcworkspace/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Build artifacts
+*.dSYM/
+*.o
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Debug
+*.log

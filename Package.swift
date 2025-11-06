@@ -19,5 +19,9 @@ let package = Package(
             name: "Vocana",
             dependencies: []
         ),
+        .testTarget(
+            name: "VocanaTests",
+            dependencies: ["Vocana"]
+        ),
     ]
 )

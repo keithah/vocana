@@ -86,7 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             throw VocanaError.statusBarButtonFailure
         }
         
-        button.image = NSImage(systemSymbolName: "waveform.and.mic", accessibilityDescription: "Vocana")
+        button.image = NSImage(systemSymbolName: "waveform.and.mic", accessibilityDescription: AppConstants.accessibilityDescription)
         button.action = #selector(menuBarClicked)
         button.target = self
         
@@ -96,7 +96,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func setupPopover() {
         popover = NSPopover()
-        popover?.contentSize = NSSize(width: 300, height: 400)
+        popover?.contentSize = NSSize(width: AppConstants.popoverWidth, height: AppConstants.popoverHeight)
         popover?.behavior = .transient
         
         let contentView = ContentView()

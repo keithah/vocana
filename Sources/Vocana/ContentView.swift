@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AVFoundation
+import AppKit
 
 @MainActor
 struct ContentView: View {
@@ -137,10 +138,17 @@ struct ContentView: View {
     
     private func setupAudioEngine() {
         audioEngine = AVAudioEngine()
-        inputNode = audioEngine?.inputNode
+        guard let audioEngine = audioEngine else { return }
+        inputNode = audioEngine.inputNode
         
         // Check microphone permission
         checkMicrophonePermission()
+        
+        do {
+            try audioEngine.start()
+        } catch {
+            print("Error starting audio engine: \(error.localizedDescription)")
+        }
     }
     
     private func cleanupAudioEngine() {
@@ -150,8 +158,23 @@ struct ContentView: View {
     }
     
     private func checkMicrophonePermission() {
-        // macOS will automatically prompt for microphone access when needed
-        // We can check the current permission status if needed
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        
+        switch status {
+        case .denied, .restricted:
+            let alert = NSAlert()
+            alert.messageText = "Microphone Access Required"
+            alert.informativeText = "Vocana needs microphone access. Please enable it in System Settings > Privacy & Security > Microphone."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        case .authorized:
+            break
+        @unknown default:
+            break
+        }
     }
     
     private func startAudioLevelSimulation() {

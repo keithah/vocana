@@ -2,6 +2,20 @@ import SwiftUI
 import AppKit
 import AVFoundation
 
+enum VocanaError: Int, Error {
+    case statusBarButtonFailure = 1
+    case setupPopoverFailure = 2
+    
+    var localizedDescription: String {
+        switch self {
+        case .statusBarButtonFailure:
+            return "Failed to get status bar button"
+        case .setupPopoverFailure:
+            return "Failed to setup popover"
+        }
+    }
+}
+
 @main
 struct VocanaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -18,8 +32,18 @@ struct VocanaApp: App {
     }
     
     private func requestMicrophonePermission() {
-        // macOS handles microphone permissions through system prompts
-        // We'll check and request permissions when needed
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            if !granted {
+                DispatchQueue.main.async {
+                    let alert = NSAlert()
+                    alert.messageText = "Microphone Access Denied"
+                    alert.informativeText = "Vocana needs access to your microphone to function. Please enable it in System Settings > Privacy & Security > Microphone."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        }
     }
 }
 
@@ -27,6 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var popover: NSPopover?
     
+    @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             try setupMenuBar()
@@ -41,14 +66,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func handleError(_ error: Error) {
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "Error"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .critical
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-        }
+        let alert = NSAlert()
+        alert.messageText = "Error"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -60,18 +83,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         
         guard let button = statusItem?.button else {
-            throw NSError(domain: "VocanaError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to get status bar button"])
+            throw VocanaError.statusBarButtonFailure
         }
         
         button.image = NSImage(systemSymbolName: "waveform.and.mic", accessibilityDescription: "Vocana")
         button.action = #selector(menuBarClicked)
         button.target = self
         
-        try setupPopover()
+        setupPopover()
     }
     
     @MainActor
-    private func setupPopover() throws {
+    private func setupPopover() {
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 300, height: 400)
         popover?.behavior = .transient

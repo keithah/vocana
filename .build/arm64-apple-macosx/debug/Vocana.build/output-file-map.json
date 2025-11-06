@@ -1,0 +1,19 @@
+{
+  "": {
+    "swift-dependencies": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/master.swiftdeps"
+  },
+  "/Users/keith/src/vocana/Vocana/Sources/Vocana/ContentView.swift": {
+    "dependencies": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/ContentView.d",
+    "object": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/ContentView.swift.o",
+    "swiftmodule": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/ContentView~partial.swiftmodule",
+    "swift-dependencies": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/ContentView.swiftdeps",
+    "diagnostics": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/ContentView.dia"
+  },
+  "/Users/keith/src/vocana/Vocana/Sources/Vocana/VocanaApp.swift": {
+    "dependencies": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/VocanaApp.d",
+    "object": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/VocanaApp.swift.o",
+    "swiftmodule": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/VocanaApp~partial.swiftmodule",
+    "swift-dependencies": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/VocanaApp.swiftdeps",
+    "diagnostics": "/Users/keith/src/vocana/Vocana/.build/arm64-apple-macosx/debug/Vocana.build/VocanaApp.dia"
+  }
+}

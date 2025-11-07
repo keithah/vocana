@@ -248,8 +248,20 @@ final class DeepFilterNet: @unchecked Sendable {
             }
             
             // Fix LOW: Add denormal detection
-            guard audio.allSatisfy({ !$0.isNaN && !$0.isInfinite }) else {
-                throw DeepFilterError.processingFailed("Input contains NaN or Infinity values")
+            // Fix CRITICAL-006: Comprehensive audio input validation
+            guard audio.allSatisfy({ sample in
+                sample.isFinite && 
+                abs(sample) <= AppConstants.maxAudioAmplitude &&
+                (sample.isZero || abs(sample) >= Float.leastNormalMagnitude)
+            }) else {
+                let invalidSamples = audio.enumerated().compactMap { index, sample in
+                    if sample.isNaN { return "NaN at \(index)" }
+                    if sample.isInfinite { return "Infinity at \(index)" }
+                    if abs(sample) > AppConstants.maxAudioAmplitude { return "Amplitude \(sample) at \(index)" }
+                    if !sample.isZero && abs(sample) < Float.leastNormalMagnitude { return "Denormal \(sample) at \(index)" }
+                    return nil
+                }
+                throw DeepFilterError.processingFailed("Invalid audio values detected: \(invalidSamples.prefix(5).joined(separator: ", "))")
             }
             
             // Check for denormals (can slow down processing 100x)

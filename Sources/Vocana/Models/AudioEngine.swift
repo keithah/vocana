@@ -41,11 +41,14 @@ struct AudioLevels {
     static let zero = AudioLevels(input: 0.0, output: 0.0)
 }
 
-@MainActor
 class AudioEngine: ObservableObject {
     private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
     
-    // MARK: - Published Properties (UI)
+    // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
+    private let audioProcessingQueue = DispatchQueue(label: "com.vocana.audio.processing", qos: .userInteractive)
+    private let uiUpdateQueue = DispatchQueue(label: "com.vocana.ui.updates", qos: .userInitiated)
+    
+    // MARK: - Published Properties (UI) - Updated safely from background
     
     @Published var currentLevels = AudioLevels.zero
     @Published var isUsingRealAudio = false
@@ -56,10 +59,22 @@ class AudioEngine: ObservableObject {
     @Published var hasPerformanceIssues = false
     @Published var bufferHealthMessage = "Buffer healthy"
     
-     // Fix CRITICAL-001: Dedicated queue for telemetry to prevent race conditions
-     // Keep telemetry state on the queue to avoid MainActor isolation violations
-     private let telemetryQueue = DispatchQueue(label: "com.vocana.telemetry", qos: .userInitiated)
-     private var queueTelemetrySnapshot = ProductionTelemetry()
+     // Fix CRITICAL-004: Actor-based telemetry to eliminate race conditions
+     private let telemetryActor = TelemetryActor()
+     
+     /// Actor for thread-safe telemetry management
+     private actor TelemetryActor {
+         private var _telemetry = ProductionTelemetry()
+         
+         func update(_ update: (ProductionTelemetry) -> ProductionTelemetry) -> ProductionTelemetry {
+             _telemetry = update(_telemetry)
+             return _telemetry
+         }
+         
+         func current() -> ProductionTelemetry {
+             return _telemetry
+         }
+     }
     
     // MARK: - Memory Pressure Monitoring
     
@@ -124,15 +139,13 @@ class AudioEngine: ObservableObject {
          }
      }
      
-     /// Fix HIGH-005: Record telemetry event in thread-safe manner
-     /// Helper method to safely update telemetry snapshot and publish changes to MainActor
+     /// Fix CRITICAL-004: Record telemetry event using actor for thread safety
      private func recordTelemetryEvent(_ update: @escaping (ProductionTelemetry) -> ProductionTelemetry) {
-         telemetryQueue.async { [weak self] in
+         Task { [weak self] in
              guard let self = self else { return }
-             let updatedTelemetry = update(self.queueTelemetrySnapshot)
-             self.queueTelemetrySnapshot = updatedTelemetry
-             Task { @MainActor in
-                 self.telemetry = self.queueTelemetrySnapshot
+             let updatedTelemetry = await self.telemetryActor.update(update)
+             await MainActor.run {
+                 self.telemetry = updatedTelemetry
                  self.updatePerformanceStatus()
              }
          }
@@ -140,10 +153,21 @@ class AudioEngine: ObservableObject {
     
     // MARK: - Component Instances
     
-    private let levelController = AudioLevelController()
-    private let bufferManager = AudioBufferManager()
-    private let mlProcessor = MLAudioProcessor()
-    private let audioSessionManager = AudioSessionManager()
+    private var levelController: AudioLevelController
+    private var bufferManager: AudioBufferManager
+    private var mlProcessor: MLAudioProcessor
+    private var audioSessionManager: AudioSessionManager
+    
+    init() {
+        // Initialize MainActor components
+        self.levelController = AudioLevelController()
+        self.bufferManager = AudioBufferManager()
+        self.mlProcessor = MLAudioProcessor()
+        self.audioSessionManager = AudioSessionManager()
+        
+        // Setup callbacks after initialization
+        setupComponentCallbacks()
+    }
     
     // MARK: - Private State
     
@@ -163,6 +187,7 @@ class AudioEngine: ObservableObject {
     }
     
     /// Configure callbacks between components
+    @MainActor
     private func setupComponentCallbacks() {
         // Level controller has no callbacks
         
@@ -293,6 +318,13 @@ class AudioEngine: ObservableObject {
      }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+        // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
+        audioProcessingQueue.async { [weak self] in
+            self?.processAudioBufferInternal(buffer)
+        }
+    }
+    
+    private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer) {
         // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
         guard !audioCaptureSuspended else { return }
         
@@ -300,8 +332,7 @@ class AudioEngine: ObservableObject {
         let channelDataValue = channelData.pointee
         let frames = buffer.frameLength
         
-         // Note: This method is called from MainActor via AudioSessionManager callback
-         // State access is safe since we're on MainActor
+         // Capture state atomically for this processing cycle
          let capturedEnabled = isEnabled
          let capturedSensitivity = sensitivity
         
@@ -313,10 +344,19 @@ class AudioEngine: ObservableObject {
         if capturedEnabled {
             let samples = Array(samplesPtr)
             let outputLevel = processWithMLIfAvailable(samples: samples, sensitivity: capturedSensitivity)
-            currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
+            
+            // Update UI safely on MainActor
+            Task { @MainActor [weak self] in
+                self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
+            }
         } else {
             // Apply level decay when disabled
-            currentLevels = levelController.applyDecay()
+            let decayedLevels = levelController.applyDecay()
+            
+            // Update UI safely on MainActor
+            Task { @MainActor [weak self] in
+                self?.currentLevels = decayedLevels
+            }
         }
     }
     

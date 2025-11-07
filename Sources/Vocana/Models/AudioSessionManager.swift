@@ -62,25 +62,33 @@ class AudioSessionManager {
                       return
                   }
                   
-                  // Create a copy of the buffer to avoid reuse-after-free race condition
-                  let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength)
-                  guard let copiedBuffer = copiedBuffer else { return }
-                 
-                 // Copy the audio data
-                 copiedBuffer.frameLength = buffer.frameLength
-                 if let sourceChannels = buffer.floatChannelData,
-                    let destChannels = copiedBuffer.floatChannelData {
-                     for channel in 0..<Int(buffer.format.channelCount) {
-                         memcpy(destChannels[channel], sourceChannels[channel], Int(buffer.frameLength) * MemoryLayout<Float>.size)
-                     }
-                 }
-                 
-                  // Fix CRITICAL: Direct MainActor dispatch to reduce latency
-                  // Audio tap callback is already on background thread, no need for additional queue
-                  Task { @MainActor in
-                      self.onAudioBufferReceived?(copiedBuffer)
+                  // Fix CRITICAL-002: Proper buffer validation to prevent use-after-free
+                  guard let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength),
+                        let sourceChannels = buffer.floatChannelData,
+                        let destChannels = copiedBuffer.floatChannelData else {
+                      Self.logger.error("Buffer copy failed - insufficient memory or invalid buffer")
+                      return
                   }
-             }
+                 
+                 // Copy audio data with bounds validation
+                 copiedBuffer.frameLength = buffer.frameLength
+                 let bytesToCopy = Int(buffer.frameLength) * MemoryLayout<Float>.size
+                 
+                 for channel in 0..<Int(buffer.format.channelCount) {
+                     guard channel < sourceChannels.count && channel < destChannels.count else {
+                         Self.logger.error("Channel index out of bounds during buffer copy")
+                         return
+                     }
+                     memcpy(destChannels[channel], sourceChannels[channel], bytesToCopy)
+                  }
+              }
+                   
+              // Fix CRITICAL: Use synchronous MainActor dispatch to prevent buffer lifecycle issues
+              // Audio tap callback runs on high-priority audio thread, buffer must be processed immediately
+              DispatchQueue.main.async { [weak self] in
+                  self?.onAudioBufferReceived?(copiedBuffer)
+              }
+          }
             isTapInstalled = true
             
             try audioEngine.start()

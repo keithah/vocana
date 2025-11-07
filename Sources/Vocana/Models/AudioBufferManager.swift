@@ -37,11 +37,19 @@ class AudioBufferManager {
         return audioBufferQueue.sync {
             let maxBufferSize = AppConstants.maxAudioBufferSize
             
-            // Fix CRITICAL: Safe integer overflow checking for buffer size calculation
-            let (projectedSize, overflowed) = bufferState.audioBuffer.count.addingReportingOverflow(samples.count)
+            // Fix CRITICAL-001: Prevent integer overflow before calculation
+            guard bufferState.audioBuffer.count <= Int.max - samples.count else {
+                // Integer overflow would occur - treat as critical buffer overflow
+                bufferState.consecutiveOverflows += 1
+                recordBufferOverflow()
+                Self.logger.error("Integer overflow in buffer size calculation")
+                return nil
+            }
             
-            // Handle overflow by treating as buffer overflow
-            if overflowed || projectedSize > maxBufferSize {
+            let projectedSize = bufferState.audioBuffer.count + samples.count
+            
+            // Handle buffer overflow
+            if projectedSize > maxBufferSize {
                 // Fix HIGH: Circuit breaker for sustained buffer overflows
                 bufferState.consecutiveOverflows += 1
                 recordBufferOverflow()

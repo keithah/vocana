@@ -181,53 +181,60 @@ final class ONNXModel {
     private static func sanitizeModelPath(_ path: String) throws -> String {
         let fm = FileManager.default
         
-        // Step 1: Standardize and resolve symlinks
+        // Fix CRITICAL-007: Prevent path traversal attacks with comprehensive validation
+        
+        // Step 1: Basic path validation
+        guard !path.isEmpty else {
+            throw ONNXError.modelNotFound("Empty model path")
+        }
+        
+        // Prevent obvious traversal attempts
+        guard !path.contains("../") && !path.contains("..\\") && !path.hasPrefix("/") else {
+            throw ONNXError.modelNotFound("Invalid path format: potential traversal attack")
+        }
+        
+        // Step 2: Resolve and validate path within app sandbox
         let url = URL(fileURLWithPath: path)
         let resolvedURL = url.standardizedFileURL
         let resolvedPath = resolvedURL.path
         
-        // Step 2: Build canonical allowed directories
-        // Each allowed directory is resolved to its canonical form to prevent symlink escapes
-        var allowedPaths: Set<String> = []
-        
-        let allowedDirectoryNames = [
-            (fm.currentDirectoryPath, "Models"),
-            (Bundle.main.resourcePath ?? "", "Models"),
-            (NSHomeDirectory(), "Documents/Models"),
-            (NSTemporaryDirectory(), "Models"),
-        ]
-        
-        for (basePath, relativePath) in allowedDirectoryNames {
-            guard !basePath.isEmpty else { continue }
-            
-            let fullPath = (basePath as NSString).appendingPathComponent(relativePath)
-            
-            // Try to get the real canonical path (following all symlinks)
-            // If directory doesn't exist yet, use the path as-is (for future creation)
-            let canonicalPath: String
-            if fm.fileExists(atPath: fullPath) {
-                // Resolve symlinks for existing directories
-                do {
-                    canonicalPath = try fm.destinationOfSymbolicLink(atPath: fullPath)
-                } catch {
-                    // If not a symlink, use standardized path
-                    canonicalPath = URL(fileURLWithPath: fullPath).standardizedFileURL.path
-                }
-            } else {
-                // For non-existent paths, standardize but don't fail
-                canonicalPath = URL(fileURLWithPath: fullPath).standardizedFileURL.path
-            }
-            
-            allowedPaths.insert(canonicalPath)
+        // Step 3: Restrict to app bundle and known safe directories only
+        let allowedPaths: Set<String> = [
+            Bundle.main.resourcePath,
+            Bundle.main.bundlePath,
+        ].compactMap { basePath in
+            guard let basePath = basePath, !basePath.isEmpty else { return nil }
+            return URL(fileURLWithPath: basePath).standardizedFileURL.path
         }
         
-        // Step 3: Validate resolved path is within allowed directories
-        // Check both exact match and as a subdirectory
+        // Step 4: Strict path validation - must be within allowed directories
         let isPathAllowed = allowedPaths.contains { allowedPath in
-            // Exact match
-            resolvedPath == allowedPath ||
-            // Is a file within the allowed directory
-            (resolvedPath.hasPrefix(allowedPath + "/") && allowedPath.hasSuffix("Models"))
+            // Must be exactly within allowed path or subdirectory
+            resolvedPath == allowedPath || resolvedPath.hasPrefix(allowedPath + "/")
+        }
+        
+        guard isPathAllowed else {
+            throw ONNXError.modelNotFound("Model path not in allowed directories: \(resolvedPath)")
+        }
+        
+        // Step 5: Additional security checks
+        let resourceValues = try resolvedURL.resourceValues(forKeys: [
+            .isReadableKey, 
+            .fileSizeKey,
+            .contentModificationDateKey
+        ])
+        
+        guard resourceValues.isReadable == true else {
+            throw ONNXError.modelNotFound("Model file is not readable")
+        }
+        
+        guard let fileSize = resourceValues.fileSize, fileSize > 0 else {
+            throw ONNXError.modelNotFound("Model file is empty or inaccessible")
+        }
+        
+        // Reasonable size limit for ONNX models (prevent DoS)
+        guard fileSize <= 500 * 1024 * 1024 else { // 500MB limit
+            throw ONNXError.modelNotFound("Model file too large: \(fileSize) bytes")
         }
         
         guard isPathAllowed else {

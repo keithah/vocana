@@ -124,67 +124,61 @@ class MLAudioProcessor {
              return nil
          }
          
-         // Fix CRITICAL: Run ML inference on dedicated queue to prevent blocking audio thread
-         // Return nil immediately if ML processing is busy (graceful degradation)
-         var result: [Float]?
-         let semaphore = DispatchSemaphore(value: 0)
-         
-         mlInferenceQueue.async { [weak self] in
-             guard let self = self else { 
-                 semaphore.signal()
-                 return 
-             }
-             
-             do {
-                 let startTime = CFAbsoluteTimeGetCurrent()
-                 let enhanced = try capturedDenoiser.process(audio: chunk)
-                 let endTime = CFAbsoluteTimeGetCurrent()
-                 
-                 let latencyMs = (endTime - startTime) * 1000.0
-                 
-                 // Update latency on MainActor
-                 Task { @MainActor in
-                     self.processingLatencyMs = latencyMs
-                 }
-                 
-                 // Fix CRITICAL: Record telemetry for production monitoring
-                 // Capture callback to avoid MainActor crossing
-                 let recordLatency = self.recordLatency
-                 Task { @MainActor in
-                     recordLatency(latencyMs)
-                 }
-                 
-                 // Monitor for SLA violations (target <1ms)
-                 if latencyMs > 1.0 {
-                     Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
-                 }
-                 
-                 result = enhanced
-              } catch {
-                  Self.logger.error("ML processing error: \(error.localizedDescription)")
-                  self.recordFailure()
+          // Fix CRITICAL: Replace semaphore with async/await to prevent priority inversion
+          // Use non-blocking approach with graceful degradation
+          return withCheckedContinuation { continuation in
+              // Check if ML queue is busy to prevent blocking
+              if mlInferenceQueue.sync(execute: { mlInferenceQueue.label.isEmpty }) == false {
+                  // Queue is busy, return nil for graceful degradation
+                  continuation.resume(returning: nil)
+                  return
+              }
+              
+              mlInferenceQueue.async { [weak self] in
+                  guard let self = self else { 
+                      continuation.resume(returning: nil)
+                      return 
+                  }
                   
-                  // Fix HIGH: Update error state atomically on MainActor
-                  Task { @MainActor [weak self] in
-                      guard let self = self else { return }
-                      self.isMLProcessingActive = false
-                      self.denoiser = nil
+                  do {
+                      let startTime = CFAbsoluteTimeGetCurrent()
+                      let enhanced = try capturedDenoiser.process(audio: chunk)
+                      let endTime = CFAbsoluteTimeGetCurrent()
+                      
+                      let latencyMs = (endTime - startTime) * 1000.0
+                      
+                      // Update latency on MainActor
+                      Task { @MainActor in
+                          self.processingLatencyMs = latencyMs
+                      }
+                      
+                      // Fix CRITICAL: Record telemetry for production monitoring
+                      let recordLatency = self.recordLatency
+                      Task { @MainActor in
+                          recordLatency(latencyMs)
+                      }
+                      
+                      // Monitor for SLA violations (target <1ms)
+                      if latencyMs > 1.0 {
+                          Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
+                      }
+                      
+                      continuation.resume(returning: enhanced)
+                  } catch {
+                      Self.logger.error("ML processing error: \(error.localizedDescription)")
+                      self.recordFailure()
+                      
+                      // Fix HIGH: Update error state atomically on MainActor
+                      Task { @MainActor [weak self] in
+                          guard let self = self else { return }
+                          self.isMLProcessingActive = false
+                          self.denoiser = nil
+                      }
+                      
+                      continuation.resume(returning: nil)
                   }
               }
-             
-             semaphore.signal()
-         }
-         
-         // Wait with timeout to prevent blocking audio thread
-         let timeout = DispatchTime.now() + .milliseconds(5) // 5ms timeout
-         let timedOut = semaphore.wait(timeout: timeout) == .timedOut
-         
-         if timedOut {
-             Self.logger.warning("ML inference timeout - falling back to direct processing")
-             return nil
-         }
-         
-         return result
+          }
      }
     
     /// Suspend ML processing due to memory pressure

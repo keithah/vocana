@@ -27,7 +27,8 @@ final class ConcurrencyStressTests: XCTestCase {
                     // Simulate rapid start/stop cycles
                     if i % 2 == 0 {
                         audioEngine.startSimulation(isEnabled: false, sensitivity: Double(i) * 0.1)
-                        Thread.sleep(forTimeInterval: 0.001) // 1ms
+                        // Small delay to allow state changes to propagate
+                        try? await Task.sleep(nanoseconds: 1_000_000) // 1ms
                         audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
                     }
                     
@@ -49,20 +50,20 @@ final class ConcurrencyStressTests: XCTestCase {
         expectation.expectedFulfillmentCount = 5
         
         // Simulate rapid audio processing that could cause buffer overflow
-        for i in 0..<5 {
+        for _ in 0..<5 {
             DispatchQueue.global().async {
                 Task { @MainActor in
-                    // Generate large audio buffer (simulate burst of audio)
-                    let largeBuffer = Array(repeating: Float(0.1), count: 10000)
-                    
+                    // Generate large audio buffer (simulate burst of audio) - not used but demonstrates allocation
+                    _ = Array(repeating: Float(0.1), count: 10000)
+
                     // This would internally test the buffer overflow handling
                     // in appendToBufferAndExtractChunk if ML processing is active
-                    
+
                     // Verify engine remains stable
                     let levels = audioEngine.currentLevels
                     XCTAssertTrue(levels.input.isFinite, "Input level should remain finite during overflow")
                     XCTAssertTrue(levels.output.isFinite, "Output level should remain finite during overflow")
-                    
+
                     expectation.fulfill()
                 }
             }

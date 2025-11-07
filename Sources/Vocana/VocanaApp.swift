@@ -1,6 +1,6 @@
 import SwiftUI
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 
 enum VocanaError: Int, Error {
     case statusBarButtonFailure = 1

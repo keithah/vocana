@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import os.log
 
 /// Manages AVAudioSession and audio capture lifecycle
@@ -136,6 +136,8 @@ class AudioSessionManager {
                 self?.updateSimulatedLevels()
             }
         }
+        // Fix MEDIUM: Ensure timer runs during event tracking and other RunLoop modes
+        RunLoop.main.add(timer!, forMode: .common)
     }
     
     /// Stop simulated audio playback

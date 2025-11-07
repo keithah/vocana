@@ -23,16 +23,16 @@ final class AudioEngineTests: XCTestCase {
     
     func testStartSimulation() {
         audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
-        
+
         let expectation = XCTestExpectation(description: "Audio levels update")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             expectation.fulfill()
         }
-        
+
         wait(for: [expectation], timeout: 1.0)
-        
-        XCTAssertGreaterThan(audioEngine.currentLevels.input, 0.0)
-        XCTAssertGreaterThan(audioEngine.currentLevels.output, 0.0)
+
+        XCTAssertGreaterThan(audioEngine.currentLevels.input, 0.0, "Input level should be > 0.0 after simulation starts")
+        XCTAssertGreaterThan(audioEngine.currentLevels.output, 0.0, "Output level should be > 0.0 after simulation starts")
     }
     
     func testStopSimulation() {

@@ -83,17 +83,35 @@ class MLAudioProcessor {
                     // Fix HIGH-008: Notify that ML processing is ready
                     self.onMLProcessingReady()
                 }
-            } catch {
-                guard !Task.isCancelled else { return }
-                
-                await MainActor.run { [weak self] in
-                    guard let self = self else { return }
-                    Self.logger.error("Could not initialize ML processing: \(error.localizedDescription)")
-                    Self.logger.info("Falling back to simple level-based processing")
-                    self.denoiser = nil
-                    self.isMLProcessingActive = false
-                }
-            }
+             } catch {
+                 guard !Task.isCancelled else { return }
+
+                 await MainActor.run { [weak self] in
+                     guard let self = self else { return }
+
+                     // Handle specific ML initialization errors
+                     if let deepFilterError = error as? DeepFilterNet.DeepFilterError {
+                         switch deepFilterError {
+                         case .modelLoadFailed(let reason):
+                             Self.logger.error("ML model loading failed: \(reason)")
+                             Self.logger.info("Check that ONNX models are present in Resources/Models directory")
+                         case .processingFailed(let reason):
+                             Self.logger.error("ML processing setup failed: \(reason)")
+                         case .invalidAudioLength, .bufferTooLarge:
+                             Self.logger.error("ML configuration error: \(error.localizedDescription)")
+                         }
+                     } else {
+                         Self.logger.error("Unexpected ML initialization error: \(error.localizedDescription)")
+                     }
+
+                     Self.logger.info("Falling back to simple level-based processing")
+                     self.denoiser = nil
+                     self.isMLProcessingActive = false
+
+                     // Notify that ML initialization failed
+                     self.recordFailure()
+                 }
+             }
         }
     }
     

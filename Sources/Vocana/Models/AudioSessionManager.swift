@@ -14,6 +14,9 @@ class AudioSessionManager {
     private var audioCaptureSuspensionTimer: Timer?
     private var timer: Timer?
     
+    // Fix HIGH-001: Dedicated queue for audio processing to avoid blocking MainActor
+    private let audioProcessingQueue = DispatchQueue(label: "com.vocana.audioprocessing", qos: .userInitiated)
+    
     // Callback for processing audio buffers
     var onAudioBufferReceived: ((AVAudioPCMBuffer) -> Void)?
     
@@ -44,12 +47,13 @@ class AudioSessionManager {
             // Fix HIGH: Track tap installation to prevent crash
             // Install tap to monitor audio levels
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-                // Fix CRITICAL: Use detached task without MainActor to prevent blocking audio thread
-                // Process on background queue, update UI properties on MainActor
-                Task.detached(priority: .high) {
-                    await MainActor.run {
-                        self?.onAudioBufferReceived?(buffer)
-                    }
+                // Fix HIGH-001: Process on dedicated audio queue instead of crossing MainActor
+                // This prevents blocking the main thread with audio processing
+                guard let self = self else { return }
+                self.audioProcessingQueue.async { [weak self] in
+                    guard let self = self else { return }
+                    // Call the callback, which handles its own dispatch if needed
+                    self.onAudioBufferReceived?(buffer)
                 }
             }
             isTapInstalled = true

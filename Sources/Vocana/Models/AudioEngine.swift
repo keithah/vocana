@@ -54,6 +54,10 @@ class AudioEngine: ObservableObject {
     @Published var memoryPressureLevel: MemoryPressureLevel = .normal
     @Published var telemetry = ProductionTelemetry()
     
+    // Fix CRITICAL-001: Dedicated queue for telemetry to prevent race conditions
+    private let telemetryQueue = DispatchQueue(label: "com.vocana.telemetry", qos: .userInitiated)
+    private var telemetrySnapshot = ProductionTelemetry()
+    
     // MARK: - Memory Pressure Monitoring
     
     enum MemoryPressureLevel: Int {
@@ -146,43 +150,61 @@ class AudioEngine: ObservableObject {
         // Level controller has no callbacks
         
         // Buffer manager callbacks
+        // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
         bufferManager.recordBufferOverflow = { [weak self] in
             guard let self = self else { return }
-            var updated = self.telemetry
-            updated.recordAudioBufferOverflow()
-            self.telemetry = updated
+            self.telemetryQueue.sync {
+                self.telemetrySnapshot.recordAudioBufferOverflow()
+                Task { @MainActor in
+                    self.telemetry = self.telemetrySnapshot
+                }
+            }
         }
         
         bufferManager.recordCircuitBreakerTrigger = { [weak self] in
             guard let self = self else { return }
-            var updated = self.telemetry
-            updated.recordCircuitBreakerTrigger()
-            self.telemetry = updated
+            self.telemetryQueue.sync {
+                self.telemetrySnapshot.recordCircuitBreakerTrigger()
+                Task { @MainActor in
+                    self.telemetry = self.telemetrySnapshot
+                }
+            }
         }
         
         bufferManager.recordCircuitBreakerSuspension = { [weak self] duration in
             guard let self = self else { return }
-            self.audioCaptureSuspended = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
-                self.audioCaptureSuspended = false
+            Task { @MainActor in
+                self.audioCaptureSuspended = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+                    self?.audioCaptureSuspended = false
+                }
             }
         }
         
         // ML processor callbacks
+        // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
         mlProcessor.recordLatency = { [weak self] latency in
             guard let self = self else { return }
-            self.processingLatencyMs = latency
-            var updated = self.telemetry
-            updated.recordLatency(latency)
-            self.telemetry = updated
+            Task { @MainActor in
+                self.processingLatencyMs = latency
+            }
+            self.telemetryQueue.sync {
+                self.telemetrySnapshot.recordLatency(latency)
+                Task { @MainActor in
+                    self.telemetry = self.telemetrySnapshot
+                }
+            }
         }
         
         mlProcessor.recordFailure = { [weak self] in
             guard let self = self else { return }
-            var updated = self.telemetry
-            updated.recordFailure()
-            self.telemetry = updated
-            self.isMLProcessingActive = false
+            self.telemetryQueue.sync {
+                self.telemetrySnapshot.recordFailure()
+                Task { @MainActor in
+                    self.telemetry = self.telemetrySnapshot
+                    self.isMLProcessingActive = false
+                }
+            }
         }
         
         // Audio session manager callbacks
@@ -284,10 +306,19 @@ class AudioEngine: ObservableObject {
         }
         
         // Append to buffer and extract chunk
-        let chunk = bufferManager.appendToBufferAndExtractChunk(samples: samples) { duration in
-            self.audioCaptureSuspended = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
-                self.audioCaptureSuspended = false
+        // Fix CRITICAL-004: Use weak self to prevent retain cycles in callback
+        let chunk = bufferManager.appendToBufferAndExtractChunk(samples: samples) { [weak self] duration in
+            guard let self = self else { return }
+            // Handle circuit breaker suspension without nested dispatch to MainActor
+            // Schedule resumption outside the audio processing hot path
+            Task { @MainActor in
+                self.audioCaptureSuspended = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+                guard let self = self else { return }
+                Task { @MainActor in
+                    self.audioCaptureSuspended = false
+                }
             }
         }
         

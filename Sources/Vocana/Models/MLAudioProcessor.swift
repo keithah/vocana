@@ -97,11 +97,11 @@ class MLAudioProcessor {
     ///   - sensitivity: Sensitivity multiplier (0-1)
     /// - Returns: Processed audio samples
     func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
-        // Fix CRITICAL: Capture denoiser to prevent race condition
-        let memoryPressureSuspended = mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
-        guard let capturedDenoiser = denoiser,
-              isMLProcessingActive,
-              !memoryPressureSuspended else {
+        // Fix CRITICAL-002: Perform all state checks atomically within single sync block to prevent TOCTOU race
+        let canProcess = mlStateQueue.sync {
+            isMLProcessingActive && !mlProcessingSuspendedDueToMemory
+        }
+        guard canProcess, let capturedDenoiser = denoiser else {
             return nil
         }
         

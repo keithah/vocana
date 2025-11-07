@@ -252,17 +252,23 @@ self.denoiser = denoiser
     // Fix HIGH: Track tap installation to prevent crash on double-removal
     private var isTapInstalled = false
     
-    nonisolated deinit {
-        // Fix CRITICAL: Trigger cleanup from nonisolated context
-        // NOTE: Callers MUST call stopSimulation() before deallocation to prevent resource leaks
-        // The tap and timer are MainActor-isolated and cannot be accessed here
-        // Swift ARC will deallocate the engine, but the tap may remain installed
-        
-        // Log warning if cleanup wasn't called
-        Task { @MainActor in
-            Self.logger.warning("AudioEngine deallocated - ensure stopSimulation() was called for proper cleanup")
-        }
-    }
+     nonisolated deinit {
+         // Fix CRITICAL: Trigger cleanup from nonisolated context
+         // 
+         // NOTE: Callers MUST call stopSimulation() before deallocation to prevent resource leaks.
+         // The tap and timer are MainActor-isolated and cannot be accessed from this nonisolated context.
+         // Swift ARC will deallocate the engine, but the tap may remain installed on the audio node.
+         //
+         // Best-Effort Logging:
+         // The warning below is fire-and-forget and may not execute if deallocation occurs during
+         // app shutdown or when the main thread is blocked. This is expected behavior.
+         // The warning serves as a development aid only and cannot be relied upon for production cleanup.
+         
+         // Attempt to log warning if main thread is available (best-effort)
+         Task { @MainActor in
+             Self.logger.warning("AudioEngine deallocated - ensure stopSimulation() was called for proper cleanup")
+         }
+     }
     
     // MARK: - Real Audio Capture
     

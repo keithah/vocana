@@ -70,9 +70,20 @@ struct AppConstants {
     // Also avoids low-frequency rumble and wind noise in real-world recordings
     static let minFrequency: Float = 50.0
     
-    // Small positive value prevents log(0) in ERB calculations while being close to silence
+     // Small positive value prevents log(0) in ERB calculations while being close to silence
     // Chosen to be well below typical speech/noise levels (>0.01) but above numerical precision issues
     static let defaultTensorValue: Float = 0.1
+    
+    // STFT Window Validation Constants
+    // Minimum peak amplitude for Hann window to ensure COLA (Constant Overlap-Add) property
+    // For vDSP_HANN_DENORM with 50% overlap, peak ~1.0, so 0.5 threshold ensures healthy windows
+    // This prevents reconstruction artifacts that occur with amplitude too low
+    static let minWindowPeakAmplitude: Float = 0.5
+    
+    // Reflection padding safety threshold
+    // FFT size must be at least 2x smaller than maxAudioBufferSize to allow proper reflection padding
+    // This prevents insufficient padding that could cause processing artifacts
+    static let minBufferForReflectionRatio: Int = 2
     
     // Accessibility
     static let accessibilityDescription = "Vocana"

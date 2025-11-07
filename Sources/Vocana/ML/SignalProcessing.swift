@@ -89,10 +89,10 @@ final class STFT {
             preconditionFailure("Window generation failed - invalid values at indices: \(invalidValues.map(\.offset))")
         }
         
-        // Verify window has proper COLA properties for overlap-add
-        guard hannWindow.max() ?? 0 > 0.5 else {
-            preconditionFailure("Window amplitude too low - may cause reconstruction artifacts")
-        }
+         // Verify window has proper COLA properties for overlap-add
+         guard hannWindow.max() ?? 0 > AppConstants.minWindowPeakAmplitude else {
+             preconditionFailure("Window amplitude too low (< \(AppConstants.minWindowPeakAmplitude)) - may cause reconstruction artifacts")
+         }
         
         self.window = hannWindow
         

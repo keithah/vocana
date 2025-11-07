@@ -32,6 +32,15 @@ import os.log
 /// let denoiser = try DeepFilterNet(modelsDirectory: "path/to/models")
 /// let enhanced = try denoiser.process(audio: audioSamples)
 /// ```
+///
+/// **Error Handling Patterns**:
+/// - **Throwing Methods** (e.g., process()): Use for unrecoverable errors requiring caller intervention
+///   - Invalid audio shape, ML inference failures, tensor dimension mismatches
+///   - Caller should handle with appropriate recovery strategy
+/// - **Async Non-Blocking** (e.g., reset()): Use for non-critical async cleanup to prevent deadlocks
+///   - Completion handler provided for synchronization when needed
+///   - Immediate state after method return may not be fully cleared
+/// - **Validation Errors**: Use preconditionFailure for programming errors (e.g., buffer size mismatches)
 final class DeepFilterNet {
     
     // MARK: - Components
@@ -165,23 +174,40 @@ final class DeepFilterNet {
         Self.logger.debug("DeepFilterNet deinitialized")
     }
     
-    /// Reset internal state (call when starting new audio stream)
-    /// 
-    /// This method is now async to prevent potential deadlocks during high-load scenarios.
-    /// Use `resetSync()` if you need synchronous behavior and can guarantee no deadlock risk.
-    func reset() {
-        // Fix CRITICAL: Use async dispatch to prevent potential deadlock
-        // This ensures reset never blocks if queues are under heavy load
-        stateQueue.async { [weak self] in
-            self?._states = [:]
-        }
-        
-        processingQueue.async { [weak self] in
-            self?.overlapBuffer.removeAll()
-        }
-        
-        Self.logger.info("DeepFilterNet async reset initiated - clearing states and overlap buffer")
-    }
+     /// Reset internal state (call when starting new audio stream)
+     /// 
+     /// - Parameter completion: Optional closure called on the main queue when reset completes
+     /// 
+     /// This method is now async to prevent potential deadlocks during high-load scenarios.
+     /// **IMPORTANT**: Callers cannot guarantee that state is cleared immediately after this method returns.
+     /// If process() is called immediately after reset(), partial state may still exist.
+     /// For critical cleanup sequences, use `resetSync()` instead (with caution about deadlock potential).
+     /// Use `resetSync()` if you need synchronous behavior and can guarantee no deadlock risk.
+     func reset(completion: (() -> Void)? = nil) {
+         // Fix CRITICAL: Use async dispatch to prevent potential deadlock
+         // This ensures reset never blocks if queues are under heavy load
+         let group = DispatchGroup()
+         
+         group.enter()
+         stateQueue.async { [weak self] in
+             self?._states.removeAll()  // Explicit cleanup for clarity
+             group.leave()
+         }
+         
+         group.enter()
+         processingQueue.async { [weak self] in
+             self?.overlapBuffer.removeAll()
+             group.leave()
+         }
+         
+         if let completion = completion {
+             group.notify(queue: .main) {
+                 completion()
+             }
+         }
+         
+         Self.logger.info("DeepFilterNet async reset initiated - clearing states and overlap buffer")
+     }
     
     /// Synchronous reset for testing and scenarios where immediate completion is required
     /// 
@@ -399,18 +425,19 @@ final class DeepFilterNet {
             Tensor(shape: tensor.shape, data: Array(tensor.data))
         }
         
-        // Fix CRITICAL: Improved memory management for state updates
-        // Use autoreleasepool to ensure prompt memory cleanup during sustained processing
-        stateQueue.sync {
-            autoreleasepool {
-                // Store reference to old states to ensure proper deallocation timing
-                let _ = _states  // Keep reference until autoreleasepool drains
-                _states = copiedOutputs
-                
-                // Old states will be deallocated when autoreleasepool drains
-                // This ensures prompt memory reclamation under sustained processing load
-            }
-        }
+         // Fix CRITICAL: Improved memory management for state updates
+         // Use autoreleasepool to ensure prompt memory cleanup during sustained processing
+         stateQueue.sync {
+             autoreleasepool {
+                 // Explicitly clear old states before assignment to ensure prompt deallocation
+                 // This is more explicit than relying on ARC's deallocation timing
+                 _states.removeAll()
+                 _states = copiedOutputs
+                 
+                 // autoreleasepool ensures any temporary Tensor objects from removeAll()
+                 // are deallocated promptly rather than accumulating in autorelease pool
+             }
+         }
         return copiedOutputs
     }
     
@@ -569,12 +596,19 @@ final class DeepFilterNet {
                 let remaining = audio.count - position
                 var lastChunk = Array(audio[position..<audio.count])
                 
-                // Fix HIGH: Add size limit to reflection padding to prevent unbounded arrays
-                if remaining < fftSize {
-                    let padCount = fftSize - remaining
-                    // Limit reflection to reasonable size (max 2x FFT size) to prevent memory issues
-                    let maxReflectSize = min(fftSize * 2, AppConstants.maxAudioBufferSize)
-                    let reflectCount = min(padCount, remaining, maxReflectSize)
+                 // Fix HIGH: Add size limit to reflection padding to prevent unbounded arrays
+                 if remaining < fftSize {
+                     let padCount = fftSize - remaining
+                     
+                     // Fix MEDIUM: Ensure maxAudioBufferSize is large enough for reflection padding
+                     precondition(AppConstants.maxAudioBufferSize >= fftSize * AppConstants.minBufferForReflectionRatio,
+                                "maxAudioBufferSize (\(AppConstants.maxAudioBufferSize)) must be at least " +
+                                "\(fftSize * AppConstants.minBufferForReflectionRatio) (fftSize * \(AppConstants.minBufferForReflectionRatio)) " +
+                                "for proper reflection padding")
+                     
+                     // Limit reflection to reasonable size (max 2x FFT size) to prevent memory issues
+                     let maxReflectSize = min(fftSize * 2, AppConstants.maxAudioBufferSize)
+                     let reflectCount = min(padCount, remaining, maxReflectSize)
                     
                     // Fix CRITICAL: More robust reflection padding with edge case handling
                     guard reflectCount > 0, audio.count >= reflectCount else {

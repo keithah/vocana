@@ -298,10 +298,14 @@ final class STFT {
             }
             
             // Negative frequencies (complex conjugate of positive)
-            // Fix HIGH: Explicit bounds check in loop to prevent races
-            for i in 1..<binsToUse where i < frameReal.count && i < frameImag.count {
+            // Fix HIGH: Capture array sizes before loop to prevent race conditions
+            let frameSize = min(frameReal.count, frameImag.count)
+            let bufferSize = min(fullReal.count, fullImag.count, fftSizePowerOf2)
+            let mirrorBinsToUse = min(binsToUse, frameSize)
+            
+            for i in 1..<mirrorBinsToUse {
                 let mirrorIndex = fftSizePowerOf2 - i
-                guard mirrorIndex > 0 && mirrorIndex < fftSizePowerOf2 && mirrorIndex < fullReal.count && mirrorIndex < fullImag.count else {
+                guard mirrorIndex > 0 && mirrorIndex < bufferSize else {
                     continue
                 }
                 fullReal[mirrorIndex] = frameReal[i]
@@ -385,12 +389,15 @@ final class STFT {
     // MARK: - Helper Methods
     
     private func calculateOutputLength(numFrames: Int) -> Int? {
+        // Fix HIGH: Add bounds validation for negative results
+        guard numFrames > 0 else { return nil }
+        
         // Safe calculation with overflow checking
         let (framesPart, overflow1) = (numFrames - 1).multipliedReportingOverflow(by: hopSize)
         guard !overflow1 else { return nil }
         
         let (result, overflow2) = framesPart.addingReportingOverflow(fftSize)
-        guard !overflow2 else { return nil }
+        guard !overflow2, result > 0 else { return nil }
         
         return result
     }

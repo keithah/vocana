@@ -5,12 +5,11 @@ import os.log
 /// ERB (Equivalent Rectangular Bandwidth) feature extraction
 /// Implements perceptually-motivated frequency analysis for audio processing
 ///
-/// **Thread Safety**: This class is NOT fully thread-safe for concurrent calls to the SAME method.
-/// - The filterbank is immutable after init (thread-safe)
-/// - extract() and normalize() use instance buffer reuse patterns
-/// - Safe for: Concurrent calls to DIFFERENT methods, OR sequential calls
-/// - Unsafe for: Concurrent calls to extract() OR concurrent calls to normalize()
-/// - For parallel processing, create separate instances per thread
+/// **Thread Safety**: This class is thread-safe after initialization.
+/// - The filterbank is immutable after init (thread-safe)  
+/// - extract() and normalize() use per-frame buffer allocation (thread-safe)
+/// - Safe for: Concurrent calls to ANY method from multiple threads
+/// - Per-frame allocation ensures no shared mutable state between calls
 ///
 /// **Usage Example**:
 /// ```swift
@@ -71,6 +70,14 @@ final class ERBFeatures {
     /// - Returns: Tuple of (filterbank, center frequencies)
     private static func generateERBFilterbank(numBands: Int, sampleRate: Int, fftSize: Int) -> ([[Float]], [Float]) {
         let numFreqBins = fftSize / 2 + 1
+        
+        // Fix HIGH: Add memory usage validation to prevent exhaustion
+        let estimatedMemoryBytes = numBands * numFreqBins * MemoryLayout<Float>.size
+        let estimatedMemoryMB = estimatedMemoryBytes / (1024 * 1024)
+        precondition(estimatedMemoryMB < 100, 
+                    "Filterbank would require \(estimatedMemoryMB)MB (max: 100MB)")
+        
+        Self.logger.debug("Generating ERB filterbank: \(numBands) bands × \(numFreqBins) bins = \(estimatedMemoryMB)MB")
         
         // Frequency range: 0 to Nyquist
         let nyquistFreq = Float(sampleRate) / 2.0

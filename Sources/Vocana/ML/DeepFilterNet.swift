@@ -48,8 +48,8 @@ final class DeepFilterNet {
     // MARK: - State Management with Thread Safety
     
     // Fix CRITICAL: Thread-safe state storage AND processing
-    private let stateQueue = DispatchQueue(label: "com.vocana.deepfilternet.state")
-    private let processingQueue = DispatchQueue(label: "com.vocana.deepfilternet.processing")
+    private let stateQueue = DispatchQueue(label: "com.vocana.deepfilternet.state", qos: .userInitiated)
+    private let processingQueue = DispatchQueue(label: "com.vocana.deepfilternet.processing", qos: .userInitiated)
     private var _states: [String: Tensor] = [:]
     private var states: [String: Tensor] {
         get { stateQueue.sync { _states } }
@@ -124,18 +124,17 @@ final class DeepFilterNet {
     
     // Fix MEDIUM: Add nonisolated for consistency with other deinit methods
     nonisolated deinit {
-        // Fix MEDIUM: Proper state cleanup
-        stateQueue.sync {
-            _states.removeAll()
+        // Fix MEDIUM: Cannot access MainActor-isolated properties from nonisolated deinit
+        // State cleanup handled by ARC - manual cleanup should be done via reset() before deallocation
+        Task { @MainActor in
+            Self.logger.debug("DeepFilterNet deinitialized")
         }
-        Self.logger.debug("DeepFilterNet deinitialized")
     }
     
     /// Reset internal state (call when starting new audio stream)
     func reset() {
-        stateQueue.sync {
-            _states.removeAll()
-        }
+        // Fix CRITICAL: Use proper state synchronization through computed property
+        states = [:]
         // Fix CRITICAL: Clear overlap buffer on reset
         // Fix HIGH: Ensure both states and overlap buffer are cleared together
         overlapBuffer.removeAll()
@@ -315,19 +314,17 @@ final class DeepFilterNet {
             }
         }
         
-        // Fix CRITICAL: Atomic state update - deep copy AND store in single transaction
+        // Fix CRITICAL: Use proper state synchronization through computed property
         // Fix CRITICAL #6: Clear old states before storing new ones to prevent memory leak
-        return stateQueue.sync {
-            // Clear old states to prevent unbounded growth
-            _states.removeAll(keepingCapacity: true)
-            
-            // Deep copy new states
-            let copiedOutputs = outputs.mapValues { tensor in
-                Tensor(shape: tensor.shape, data: Array(tensor.data))
-            }
-            _states = copiedOutputs
-            return copiedOutputs
+        
+        // Deep copy new states outside the queue for better performance
+        let copiedOutputs = outputs.mapValues { tensor in
+            Tensor(shape: tensor.shape, data: Array(tensor.data))
         }
+        
+        // Update states atomically through synchronized property
+        states = copiedOutputs
+        return copiedOutputs
     }
     
     private func runERBDecoder(states: [String: Tensor]) throws -> [Float] {

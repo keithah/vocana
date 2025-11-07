@@ -25,7 +25,7 @@ class AudioEngine: ObservableObject {
     private var denoiser: DeepFilterNet?
     
     // Fix CRITICAL: Thread-safe audioBuffer access with dedicated queue
-    private let audioBufferQueue = DispatchQueue(label: "com.vocana.audiobuffer")
+    private let audioBufferQueue = DispatchQueue(label: "com.vocana.audiobuffer", qos: .userInteractive)
     private var _audioBuffer: [Float] = []
     private var audioBuffer: [Float] {
         get { audioBufferQueue.sync { _audioBuffer } }
@@ -159,7 +159,8 @@ class AudioEngine: ObservableObject {
             // Fix HIGH: Track tap installation to prevent crash
             // Install tap to monitor audio levels
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-                Task { @MainActor in
+                // Fix CRITICAL: Use detached task to prevent MainActor deadlock
+                Task.detached { @MainActor in
                     self?.processAudioBuffer(buffer)
                 }
             }
@@ -312,15 +313,29 @@ class AudioEngine: ObservableObject {
     // Fix CRITICAL #5: Prevent unbounded memory growth during ML initialization
     private func appendToBufferAndExtractChunk(samples: [Float]) -> [Float]? {
         return audioBufferQueue.sync {
-            // Fix CRITICAL #5: Limit buffer size to 1 second (48000 samples at 48kHz)
-            // Prevents unbounded growth while ML initializes
+            // Fix CRITICAL #5: Check buffer size BEFORE appending to prevent memory spikes
             let maxBufferSize = 48000
-            _audioBuffer.append(contentsOf: samples)
+            let projectedSize = _audioBuffer.count + samples.count
             
-            // Drop old samples if buffer exceeds maximum
-            if _audioBuffer.count > maxBufferSize {
-                let excess = _audioBuffer.count - maxBufferSize
-                _audioBuffer.removeFirst(excess)
+            if projectedSize > maxBufferSize {
+                // Calculate how many samples we can safely add
+                let remainingCapacity = maxBufferSize - _audioBuffer.count
+                if remainingCapacity <= 0 {
+                    // Buffer is full, drop oldest samples first
+                    let excessSamples = samples.count
+                    let samplesToRemove = min(excessSamples, _audioBuffer.count)
+                    _audioBuffer.removeFirst(samplesToRemove)
+                }
+                
+                // Add only what fits
+                let samplesToAdd = min(samples.count, maxBufferSize - _audioBuffer.count)
+                if samplesToAdd > 0 {
+                    let endIndex = min(samplesToAdd, samples.count)
+                    _audioBuffer.append(contentsOf: samples[..<endIndex])
+                }
+            } else {
+                // Safe to add all samples
+                _audioBuffer.append(contentsOf: samples)
             }
             
             guard _audioBuffer.count >= minimumBufferSize else {

@@ -83,10 +83,12 @@ final class SpectralFeatures {
             let realPart = spectrogramReal[frameIndex]
             let imagPart = spectrogramImag[frameIndex]
             
-            // Fix HIGH: Don't skip frames - causes temporal misalignment
+            // Fix CRITICAL: Replace preconditionFailure with recoverable error handling
             guard realPart.count == imagPart.count else {
                 Self.logger.error("Frame \(frameIndex) dimension mismatch: real=\(realPart.count), imag=\(imagPart.count)")
-                preconditionFailure("Real and imaginary parts must have same size at frame \(frameIndex)")
+                // Return partial results to prevent crash - caller should validate output
+                Self.logger.warning("Returning partial spectral features due to dimension mismatch")
+                return spectralFeatures
             }
             
             // Extract first dfBands bins
@@ -124,10 +126,11 @@ final class SpectralFeatures {
         
         guard !features.isEmpty else { return [] }
         
-        // Fix LOW: Validate all frames have expected structure
+        // Fix CRITICAL: Replace preconditionFailure with recoverable error handling
         guard features.allSatisfy({ $0.count == 2 && !$0[0].isEmpty && !$0[1].isEmpty }) else {
             Self.logger.error("normalize() received invalid frame structure")
-            preconditionFailure("All frames must have 2 non-empty channels")
+            // Return empty result instead of crashing
+            return []
         }
         
         // Fix MEDIUM: Pre-allocate output array
@@ -149,10 +152,12 @@ final class SpectralFeatures {
             var normalizedRealBuffer = [Float](repeating: 0, count: frameSize)
             var normalizedImagBuffer = [Float](repeating: 0, count: frameSize)
             
-            // Fix HIGH: Validate arrays are non-empty and same length
+            // Fix CRITICAL: Replace preconditionFailure with recoverable error handling
             guard !realPart.isEmpty, !imagPart.isEmpty, realPart.count == imagPart.count else {
                 Self.logger.error("Invalid frame dimensions: real=\(realPart.count), imag=\(imagPart.count)")
-                preconditionFailure("Real and imaginary channels must be non-empty and same length")
+                // Skip this frame instead of crashing
+                normalized.append([[Float](), [Float]()])
+                continue
             }
             
             let length = vDSP_Length(realPart.count)
@@ -162,10 +167,12 @@ final class SpectralFeatures {
             vDSP_vsq(imagPart, 1, &imagSquaredBuffer, 1, length)
             vDSP_vadd(realSquaredBuffer, 1, imagSquaredBuffer, 1, &magnitudeBuffer, 1, length)
             
-            // Fix HIGH: Validate magnitude buffer before vvsqrtf
+            // Fix CRITICAL: Replace preconditionFailure with recoverable error handling
             guard magnitudeBuffer.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
                 Self.logger.error("Invalid magnitude buffer (NaN/Inf/negative)")
-                preconditionFailure("Magnitude buffer contains invalid values")
+                // Skip this frame with zero output instead of crashing
+                normalized.append([[Float](repeating: 0, count: realPart.count), [Float](repeating: 0, count: realPart.count)])
+                continue
             }
             
             // Fix CRITICAL: Safe sqrt with separate output buffer and Int32 overflow protection

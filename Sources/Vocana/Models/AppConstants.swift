@@ -40,9 +40,9 @@ struct AppConstants {
     // 500MB allows for very large models while preventing DoS attacks
     static let maxFilterbankMemoryMB: Int = 500
     
-    // Duration in seconds to suspend audio capture when circuit breaker triggers
-    // 150ms allows ML pipeline to catch up with minimal audio interruption
-    static let circuitBreakerSuspensionSeconds: Double = 0.15
+     // Duration in seconds to suspend audio capture when circuit breaker triggers
+     // 50ms provides better user experience while allowing ML pipeline to catch up
+     static let circuitBreakerSuspensionSeconds: Double = 0.05
     
     // Default Log-SNR value for DeepFilterNet when no ML output is available
     // -10dB represents moderate noise suppression as a safe fallback

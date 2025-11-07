@@ -41,7 +41,7 @@ import os.log
 ///   - Completion handler provided for synchronization when needed
 ///   - Immediate state after method return may not be fully cleared
 /// - **Validation Errors**: Use preconditionFailure for programming errors (e.g., buffer size mismatches)
-final class DeepFilterNet {
+final class DeepFilterNet: @unchecked Sendable {
     
     // MARK: - Components
     

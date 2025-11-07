@@ -11,9 +11,12 @@ class MLAudioProcessor {
     private var denoiser: DeepFilterNet?
     private var mlInitializationTask: Task<Void, Never>?
     
-    // ML state management
-    private let mlStateQueue = DispatchQueue(label: "com.vocana.mlstate", qos: .userInitiated)
-    private var mlProcessingSuspendedDueToMemory = false
+     // ML state management
+     private let mlStateQueue = DispatchQueue(label: "com.vocana.mlstate", qos: .userInitiated)
+     private var mlProcessingSuspendedDueToMemory = false
+     
+     // Fix CRITICAL: Dedicated queue for ML inference to prevent blocking audio thread
+     private let mlInferenceQueue = DispatchQueue(label: "com.vocana.mlinference", qos: .userInitiated)
     
      // Telemetry and callbacks
      var telemetry: AudioEngine.ProductionTelemetry = .init()
@@ -105,46 +108,81 @@ class MLAudioProcessor {
         mlInitializationTask?.cancel()
     }
     
-    /// Process audio chunk with DeepFilterNet if available
-    /// - Parameters:
-    ///   - chunk: Audio samples to process
-    ///   - sensitivity: Sensitivity multiplier (0-1)
-    /// - Returns: Processed audio samples
-    func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
-        // Fix CRITICAL-002: Perform all state checks atomically within single sync block to prevent TOCTOU race
-        let canProcess = mlStateQueue.sync {
-            isMLProcessingActive && !mlProcessingSuspendedDueToMemory
-        }
-        guard canProcess, let capturedDenoiser = denoiser else {
-            return nil
-        }
-        
-        do {
-            let startTime = CFAbsoluteTimeGetCurrent()
-            let enhanced = try capturedDenoiser.process(audio: chunk)
-            let endTime = CFAbsoluteTimeGetCurrent()
-            
-            let latencyMs = (endTime - startTime) * 1000.0
-            processingLatencyMs = latencyMs
-            
-            // Fix CRITICAL: Record telemetry for production monitoring
-            recordLatency(latencyMs)
-            
-            // Monitor for SLA violations (target <1ms)
-            if latencyMs > 1.0 {
-                Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
-            }
-            
-            return enhanced
-        } catch {
-            Self.logger.error("ML processing error: \(error.localizedDescription)")
-            recordFailure()
-            
-            isMLProcessingActive = false
-            denoiser = nil
-            return nil
-        }
-    }
+     /// Process audio chunk with DeepFilterNet if available
+     /// - Parameters:
+     ///   - chunk: Audio samples to process
+     ///   - sensitivity: Sensitivity multiplier (0-1)
+     /// - Returns: Processed audio samples
+     func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
+         // Fix CRITICAL: Perform all state checks atomically within single sync block to prevent TOCTOU race
+         let canProcess = mlStateQueue.sync {
+             isMLProcessingActive && !mlProcessingSuspendedDueToMemory
+         }
+         guard canProcess, let capturedDenoiser = denoiser else {
+             return nil
+         }
+         
+         // Fix CRITICAL: Run ML inference on dedicated queue to prevent blocking audio thread
+         // Return nil immediately if ML processing is busy (graceful degradation)
+         var result: [Float]?
+         let semaphore = DispatchSemaphore(value: 0)
+         
+         mlInferenceQueue.async { [weak self] in
+             guard let self = self else { 
+                 semaphore.signal()
+                 return 
+             }
+             
+             do {
+                 let startTime = CFAbsoluteTimeGetCurrent()
+                 let enhanced = try capturedDenoiser.process(audio: chunk)
+                 let endTime = CFAbsoluteTimeGetCurrent()
+                 
+                 let latencyMs = (endTime - startTime) * 1000.0
+                 
+                 // Update latency on MainActor
+                 Task { @MainActor in
+                     self.processingLatencyMs = latencyMs
+                 }
+                 
+                 // Fix CRITICAL: Record telemetry for production monitoring
+                 // Capture callback to avoid MainActor crossing
+                 let recordLatency = self.recordLatency
+                 Task { @MainActor in
+                     recordLatency(latencyMs)
+                 }
+                 
+                 // Monitor for SLA violations (target <1ms)
+                 if latencyMs > 1.0 {
+                     Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
+                 }
+                 
+                 result = enhanced
+             } catch {
+                 Self.logger.error("ML processing error: \(error.localizedDescription)")
+                 self.recordFailure()
+                 
+                 // Fix HIGH: Update error state atomically
+                 self.mlStateQueue.sync {
+                     self.isMLProcessingActive = false
+                     self.denoiser = nil
+                 }
+             }
+             
+             semaphore.signal()
+         }
+         
+         // Wait with timeout to prevent blocking audio thread
+         let timeout = DispatchTime.now() + .milliseconds(5) // 5ms timeout
+         let timedOut = semaphore.wait(timeout: timeout) == .timedOut
+         
+         if timedOut {
+             Self.logger.warning("ML inference timeout - falling back to direct processing")
+             return nil
+         }
+         
+         return result
+     }
     
     /// Suspend ML processing due to memory pressure
     /// - Parameter reason: Reason for suspension

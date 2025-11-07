@@ -126,12 +126,11 @@ class AudioEngine: ObservableObject {
      
      /// Fix HIGH-005: Record telemetry event in thread-safe manner
      /// Helper method to safely update telemetry snapshot and publish changes to MainActor
-     /// Note: The compiler warning about inout is a false positive - we're exclusively accessing
-     /// queueTelemetrySnapshot on telemetryQueue, which is the correct synchronization point.
-     private func recordTelemetryEvent(_ update: @escaping (inout ProductionTelemetry) -> Void) {
+     private func recordTelemetryEvent(_ update: @escaping (ProductionTelemetry) -> ProductionTelemetry) {
          telemetryQueue.async { [weak self] in
              guard let self = self else { return }
-             update(&self.queueTelemetrySnapshot)
+             let updatedTelemetry = update(self.queueTelemetrySnapshot)
+             self.queueTelemetrySnapshot = updatedTelemetry
              Task { @MainActor in
                  self.telemetry = self.queueTelemetrySnapshot
                  self.updatePerformanceStatus()
@@ -172,12 +171,20 @@ class AudioEngine: ObservableObject {
          // Fix HIGH-005: Use async instead of sync to avoid blocking audio processing
          bufferManager.recordBufferOverflow = { [weak self] in
              guard let self = self else { return }
-             self.recordTelemetryEvent { $0.recordAudioBufferOverflow() }
+             self.recordTelemetryEvent { telemetry in
+                 var updated = telemetry
+                 updated.recordAudioBufferOverflow()
+                 return updated
+             }
          }
          
          bufferManager.recordCircuitBreakerTrigger = { [weak self] in
              guard let self = self else { return }
-             self.recordTelemetryEvent { $0.recordCircuitBreakerTrigger() }
+             self.recordTelemetryEvent { telemetry in
+                 var updated = telemetry
+                 updated.recordCircuitBreakerTrigger()
+                 return updated
+             }
          }
         
          bufferManager.recordCircuitBreakerSuspension = { [weak self] duration in
@@ -203,12 +210,20 @@ class AudioEngine: ObservableObject {
              Task { @MainActor in
                  self.processingLatencyMs = latency
              }
-             self.recordTelemetryEvent { $0.recordLatency(latency) }
+             self.recordTelemetryEvent { telemetry in
+                 var updated = telemetry
+                 updated.recordLatency(latency)
+                 return updated
+             }
          }
          
          mlProcessor.recordFailure = { [weak self] in
              guard let self = self else { return }
-             self.recordTelemetryEvent { $0.recordFailure() }
+             self.recordTelemetryEvent { telemetry in
+                 var updated = telemetry
+                 updated.recordFailure()
+                 return updated
+             }
              Task { @MainActor in
                  self.isMLProcessingActive = false
                  self.updatePerformanceStatus()
@@ -285,9 +300,10 @@ class AudioEngine: ObservableObject {
         let channelDataValue = channelData.pointee
         let frames = buffer.frameLength
         
-        // Capture state atomically
-        let capturedEnabled = isEnabled
-        let capturedSensitivity = sensitivity
+         // Note: This method is called from MainActor via AudioSessionManager callback
+         // State access is safe since we're on MainActor
+         let capturedEnabled = isEnabled
+         let capturedSensitivity = sensitivity
         
         let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
         
@@ -363,12 +379,15 @@ class AudioEngine: ObservableObject {
         isMemoryPressureHandlerActive = true
     }
     
-    private func handleMemoryPressure(_ pressureLevel: DispatchSource.MemoryPressureEvent?) {
-        guard let pressureLevel = pressureLevel else { return }
-        
-        var updatedTelemetry = telemetry
-        updatedTelemetry.recordMemoryPressure()
-        telemetry = updatedTelemetry
+     private func handleMemoryPressure(_ pressureLevel: DispatchSource.MemoryPressureEvent?) {
+         guard let pressureLevel = pressureLevel else { return }
+         
+         // Fix HIGH: Use recordTelemetryEvent to avoid race condition
+         recordTelemetryEvent { telemetry in
+             var updated = telemetry
+             updated.recordMemoryPressure()
+             return updated
+         }
         
         if pressureLevel.contains(.critical) {
             memoryPressureLevel = .critical

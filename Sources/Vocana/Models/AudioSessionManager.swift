@@ -47,14 +47,24 @@ class AudioSessionManager {
              // Fix HIGH: Track tap installation to prevent crash
              // Install tap to monitor audio levels
              inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-                 // Fix CRITICAL-004: Copy buffer data immediately within tap closure
-                 // AVAudioPCMBuffer objects are reused by the audio engine, so we must copy the contents
-                 // before passing to async contexts to prevent data races
-                 guard let self = self else { return }
-                 
-                 // Create a copy of the buffer to avoid reuse-after-free race condition
-                 let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength)
-                 guard let copiedBuffer = copiedBuffer else { return }
+                  // Fix CRITICAL-004: Copy buffer data immediately within tap closure
+                  // AVAudioPCMBuffer objects are reused by the audio engine, so we must copy the contents
+                  // before passing to async contexts to prevent data races
+                  guard let self = self else { return }
+                  
+                  // Fix HIGH: Validate buffer before processing to prevent crashes
+                  guard buffer.frameLength > 0 && buffer.frameLength <= 4096 else {
+                      Self.logger.warning("Invalid buffer frame length: \(buffer.frameLength)")
+                      return
+                  }
+                  guard let channelData = buffer.floatChannelData else {
+                      Self.logger.warning("Buffer has no channel data")
+                      return
+                  }
+                  
+                  // Create a copy of the buffer to avoid reuse-after-free race condition
+                  let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength)
+                  guard let copiedBuffer = copiedBuffer else { return }
                  
                  // Copy the audio data
                  copiedBuffer.frameLength = buffer.frameLength
@@ -65,14 +75,10 @@ class AudioSessionManager {
                      }
                  }
                  
-                  // Fix HIGH-001: Process on dedicated audio queue instead of crossing MainActor
-                  // This prevents blocking the main thread with audio processing
-                  self.audioProcessingQueue.async { [weak self] in
-                      guard let self = self else { return }
-                      // Dispatch back to MainActor to call the callback
-                      Task { @MainActor in
-                          self.onAudioBufferReceived?(copiedBuffer)
-                      }
+                  // Fix CRITICAL: Direct MainActor dispatch to reduce latency
+                  // Audio tap callback is already on background thread, no need for additional queue
+                  Task { @MainActor in
+                      self.onAudioBufferReceived?(copiedBuffer)
                   }
              }
             isTapInstalled = true

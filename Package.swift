@@ -12,16 +12,25 @@ let package = Package(
             targets: ["Vocana"]
         ),
     ],
-    dependencies: [
-    ],
+    dependencies: [],
     targets: [
         .executableTarget(
             name: "Vocana",
-            dependencies: []
+            dependencies: [],
+            swiftSettings: [
+                .unsafeFlags(["-suppress-warnings"], .when(configuration: .debug)),
+                .unsafeFlags(["-Onone"], .when(configuration: .debug))
+            ],
+            cSettings: [
+                .unsafeFlags(["-ffast-math"], .when(configuration: .release))
+            ]
         ),
         .testTarget(
             name: "VocanaTests",
-            dependencies: ["Vocana"]
+            dependencies: ["Vocana"],
+            swiftSettings: [
+                .unsafeFlags(["-suppress-warnings"], .when(configuration: .debug))
+            ]
         ),
     ]
 )

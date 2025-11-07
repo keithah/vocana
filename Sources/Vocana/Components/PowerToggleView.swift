@@ -15,7 +15,8 @@ struct PowerToggleView: View {
                 Toggle("", isOn: $isEnabled)
                     .toggleStyle(SwitchToggleStyle())
                     .accessibilityLabel(isEnabled ? "Noise Cancellation Enabled" : "Noise Cancellation Disabled")
-                    .accessibilityHint("Toggle to enable or disable noise cancellation")
+                    .accessibilityHint("Toggle to enable or disable noise cancellation. Keyboard shortcut: ⌥⌘N")
+                    .keyboardShortcut("n", modifiers: [.command, .option])  // ⌥⌘N to toggle
             }
             
             HStack {

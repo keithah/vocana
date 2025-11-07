@@ -1,14 +1,13 @@
 import SwiftUI
 
 /// Real-time audio visualization with smooth animations
+/// Displays input/output audio levels with animated progress bars and smooth interpolation
 struct AudioVisualizerView: View {
     let inputLevel: Float
     let outputLevel: Float
-    let isActive: Bool
     
     @State private var displayedInputLevel: Float = 0.0
     @State private var displayedOutputLevel: Float = 0.0
-    @State private var timer: Timer?
     
     var body: some View {
         VStack(spacing: 12) {
@@ -18,10 +17,12 @@ struct AudioVisualizerView: View {
                     Label("Input", systemImage: "mic.fill")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .accessibilityIdentifier("audio-input-label")
                     Spacer()
-                    Text(String(format: "%.0f%%", Float(displayedInputLevel) * 100))
+                    Text(String(format: "%.0f%%", displayedInputLevel * 100))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .accessibilityLabel("Input level: \(String(format: "%.0f", displayedInputLevel * 100))%")
                 }
                 
                 // Animated level bar
@@ -34,8 +35,8 @@ struct AudioVisualizerView: View {
                             .fill(
                                 LinearGradient(
                                     gradient: Gradient(colors: [
-                                        .blue,
-                                        displayedInputLevel > 0.7 ? .orange : .blue
+                                        AppConstants.Colors.inputLevel,
+                                        displayedInputLevel > AppConstants.levelWarningThreshold ? .orange : AppConstants.Colors.inputLevel
                                     ]),
                                     startPoint: .leading,
                                     endPoint: .trailing
@@ -53,10 +54,12 @@ struct AudioVisualizerView: View {
                     Label("Output", systemImage: "speaker.wave.2.fill")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .accessibilityIdentifier("audio-output-label")
                     Spacer()
-                    Text(String(format: "%.0f%%", Float(displayedOutputLevel) * 100))
+                    Text(String(format: "%.0f%%", displayedOutputLevel * 100))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .accessibilityLabel("Output level: \(String(format: "%.0f", displayedOutputLevel * 100))%")
                 }
                 
                 // Animated level bar
@@ -69,8 +72,8 @@ struct AudioVisualizerView: View {
                             .fill(
                                 LinearGradient(
                                     gradient: Gradient(colors: [
-                                        .green,
-                                        displayedOutputLevel > 0.7 ? .orange : .green
+                                        AppConstants.Colors.outputLevel,
+                                        displayedOutputLevel > AppConstants.levelWarningThreshold ? .orange : AppConstants.Colors.outputLevel
                                     ]),
                                     startPoint: .leading,
                                     endPoint: .trailing
@@ -82,28 +85,25 @@ struct AudioVisualizerView: View {
                 .frame(height: 8)
             }
         }
-        .onAppear {
-            timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-                updateLevels()
-            }
+        .onChange(of: inputLevel) { newValue in
+            updateLevels(newInput: newValue, newOutput: outputLevel)
         }
-        .onDisappear {
-            timer?.invalidate()
-            timer = nil
+        .onChange(of: outputLevel) { newValue in
+            updateLevels(newInput: inputLevel, newOutput: newValue)
         }
     }
     
-    private func updateLevels() {
+    private func updateLevels(newInput: Float, newOutput: Float) {
         withAnimation(.easeOut(duration: 0.05)) {
-            // Smooth interpolation towards target levels
-            let smoothingFactor: Float = 0.3
-            displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + inputLevel * smoothingFactor
-            displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + outputLevel * smoothingFactor
+            // Smooth interpolation towards target levels using exponential moving average
+            let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
+            displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + newInput * smoothingFactor
+            displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + newOutput * smoothingFactor
         }
     }
 }
 
 #Preview {
-    AudioVisualizerView(inputLevel: 0.6, outputLevel: 0.3, isActive: true)
+    AudioVisualizerView(inputLevel: 0.6, outputLevel: 0.3)
         .padding()
 }

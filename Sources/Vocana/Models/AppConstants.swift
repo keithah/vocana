@@ -98,6 +98,10 @@ struct AppConstants {
     // Prevents processing of distorted/clipped audio that would give poor results
     static let maxRMSLevel: Float = 0.95
     
+    // Audio Level UI Constants
+    static let levelWarningThreshold: Float = 0.7  // Show warning color when level exceeds 70%
+    static let audioLevelSmoothingFactor: Float = 0.3  // Exponential moving average smoothing (0-1)
+    
     // Accessibility
     static let accessibilityDescription = "Vocana"
     

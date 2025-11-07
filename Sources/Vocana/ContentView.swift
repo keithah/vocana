@@ -21,8 +21,7 @@ struct ContentView: View {
             // Real-time audio visualization
             AudioVisualizerView(
                 inputLevel: audioEngine.currentLevels.input,
-                outputLevel: audioEngine.currentLevels.output,
-                isActive: settings.isEnabled
+                outputLevel: audioEngine.currentLevels.output
             )
             
             // Sensitivity control with visual feedback
@@ -51,7 +50,6 @@ struct ContentView: View {
         .onChange(of: settings.sensitivity) { newValue in
             audioEngine.startSimulation(isEnabled: settings.isEnabled, sensitivity: newValue)
         }
-        .keyboardShortcut("n", modifiers: [.command, .option])  // ⌥⌘N to toggle
     }
 }
 

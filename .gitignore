@@ -117,6 +117,16 @@ Temporary Items
 *.mlmodelc/
 *.mlpackage/
 
+# ML Models and Python Environment
+ml-models/pretrained/
+ml-models/DeepFilterNet/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
 # Database
 *.db
 *.sqlite

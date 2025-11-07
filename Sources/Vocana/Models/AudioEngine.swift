@@ -58,6 +58,7 @@ class AudioEngine: ObservableObject {
     
     private func initializeMLProcessing() {
         // Fix HIGH: Make ML initialization async to avoid blocking UI
+        // Fix CRITICAL #4: Use MainActor.run to ensure isMLProcessingActive updates are synchronized
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
             
@@ -68,7 +69,7 @@ class AudioEngine: ObservableObject {
                 // Create DeepFilterNet instance (potentially slow model loading)
                 let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
                 
-                // Update state on main actor
+                // Fix CRITICAL #4: Update state on main actor atomically
                 await MainActor.run {
                     self.denoiser = denoiser
                     self.isMLProcessingActive = true
@@ -291,9 +292,20 @@ class AudioEngine: ObservableObject {
     }
     
     // Fix CRITICAL: Atomic multi-step buffer operation
+    // Fix CRITICAL #5: Prevent unbounded memory growth during ML initialization
     private func appendToBufferAndExtractChunk(samples: [Float]) -> [Float]? {
         return audioBufferQueue.sync {
+            // Fix CRITICAL #5: Limit buffer size to 1 second (48000 samples at 48kHz)
+            // Prevents unbounded growth while ML initializes
+            let maxBufferSize = 48000
             _audioBuffer.append(contentsOf: samples)
+            
+            // Drop old samples if buffer exceeds maximum
+            if _audioBuffer.count > maxBufferSize {
+                let excess = _audioBuffer.count - maxBufferSize
+                _audioBuffer.removeFirst(excess)
+            }
+            
             guard _audioBuffer.count >= minimumBufferSize else {
                 return nil
             }

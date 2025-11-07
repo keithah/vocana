@@ -306,7 +306,12 @@ final class DeepFilterNet {
         let outputs = try encoder.infer(inputs: inputs)
         
         // Fix CRITICAL: Atomic state update - deep copy AND store in single transaction
+        // Fix CRITICAL #6: Clear old states before storing new ones to prevent memory leak
         return stateQueue.sync {
+            // Clear old states to prevent unbounded growth
+            _states.removeAll(keepingCapacity: true)
+            
+            // Deep copy new states
             let copiedOutputs = outputs.mapValues { tensor in
                 Tensor(shape: tensor.shape, data: Array(tensor.data))
             }

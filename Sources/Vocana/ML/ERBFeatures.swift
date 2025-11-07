@@ -280,21 +280,23 @@ final class ERBFeatures {
         for frame in features {
             // Per-frame buffer allocation
             let frameSize = frame.count
-            var meanArray = [Float](repeating: 0, count: frameSize)
             var centered = [Float](repeating: 0, count: frameSize)
             var normalizedFrame = [Float](repeating: 0, count: frameSize)
-            // Fix CRITICAL: Variance calculation order (frame - mean, not mean - frame)
+            // Fix CRITICAL #7: Remove redundant mean subtraction
+            // Calculate mean once
             var mean: Float = 0
             vDSP_meanv(frame, 1, &mean, vDSP_Length(frame.count))
             
-            // Fix HIGH: Simplified variance validation logic
-            // Calculate variance using corrected order
-            vDSP_vfill([mean], &meanArray, 1, vDSP_Length(frame.count))
-            vDSP_vsub(meanArray, 1, frame, 1, &centered, 1, vDSP_Length(frame.count))
-            vDSP_vsq(centered, 1, &centered, 1, vDSP_Length(frame.count))
+            // Calculate centered values: centered = frame - mean
+            var meanNeg = -mean
+            vDSP_vsadd(frame, 1, &meanNeg, &centered, 1, vDSP_Length(frame.count))
+            
+            // Calculate variance from centered values
+            var centeredSquared = [Float](repeating: 0, count: frameSize)
+            vDSP_vsq(centered, 1, &centeredSquared, 1, vDSP_Length(frame.count))
             
             var variance: Float = 0
-            vDSP_meanv(centered, 1, &variance, vDSP_Length(frame.count))
+            vDSP_meanv(centeredSquared, 1, &variance, vDSP_Length(frame.count))
             
             // Fix HIGH: Simplified variance handling - use max() which handles negative/NaN
             let epsilon: Float = 1e-6
@@ -308,11 +310,9 @@ final class ERBFeatures {
             
             let std = sqrt(validVariance)
             
-            // Unit normalization: (x - mean) / std using vDSP
-            var meanNeg = -mean
-            vDSP_vsadd(frame, 1, &meanNeg, &normalizedFrame, 1, vDSP_Length(frame.count))
+            // Unit normalization: centered / std (already have centered = x - mean)
             var divisor = std
-            vDSP_vsdiv(normalizedFrame, 1, &divisor, &normalizedFrame, 1, vDSP_Length(frame.count))
+            vDSP_vsdiv(centered, 1, &divisor, &normalizedFrame, 1, vDSP_Length(frame.count))
             
             // Apply alpha scaling
             var alphaScalar = alpha

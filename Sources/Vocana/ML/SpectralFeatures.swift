@@ -196,15 +196,11 @@ final class SpectralFeatures {
             // Fix MEDIUM: Remove redundant NaN/Inf check after epsilon
             // std is guaranteed valid after sqrt(max(...))
             
-            // Normalize real and imaginary parts using vDSP
-            var invStd = 1.0 / max(std, epsilon)
-            vDSP_vsmul(realPart, 1, &invStd, &normalizedRealBuffer, 1, vDSP_Length(realPart.count))
-            vDSP_vsmul(imagPart, 1, &invStd, &normalizedImagBuffer, 1, vDSP_Length(imagPart.count))
-            
-            // Apply alpha scaling
-            var alphaVal = alpha
-            vDSP_vsmul(normalizedRealBuffer, 1, &alphaVal, &normalizedRealBuffer, 1, vDSP_Length(normalizedRealBuffer.count))
-            vDSP_vsmul(normalizedImagBuffer, 1, &alphaVal, &normalizedImagBuffer, 1, vDSP_Length(normalizedImagBuffer.count))
+            // Fix CRITICAL #8: Combine normalization and alpha scaling in single operation for clarity
+            // Normalize and scale: (x / std) * alpha = x * (alpha / std)
+            var scale = alpha / max(std, epsilon)
+            vDSP_vsmul(realPart, 1, &scale, &normalizedRealBuffer, 1, vDSP_Length(realPart.count))
+            vDSP_vsmul(imagPart, 1, &scale, &normalizedImagBuffer, 1, vDSP_Length(imagPart.count))
             
             normalized.append([Array(normalizedRealBuffer), Array(normalizedImagBuffer)])
         }

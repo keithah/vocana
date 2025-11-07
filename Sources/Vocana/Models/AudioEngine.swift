@@ -537,9 +537,12 @@ self.denoiser = denoiser
             // audio preservation, consider increasing maxBufferSize or implementing backpressure.
             
             let maxBufferSize = AppConstants.maxAudioBufferSize
-            let projectedSize = _audioBuffer.count + samples.count
             
-            if projectedSize > maxBufferSize {
+            // Fix CRITICAL: Safe integer overflow checking for buffer size calculation
+            let (projectedSize, overflowed) = _audioBuffer.count.addingReportingOverflow(samples.count)
+            
+            // Handle overflow by treating as buffer overflow
+            if overflowed || projectedSize > maxBufferSize {
                 // Fix HIGH: Circuit breaker for sustained buffer overflows
                 consecutiveOverflows += 1
                 var updatedTelemetry = telemetry

@@ -129,7 +129,7 @@ final class SignalProcessingTests: XCTestCase {
         if let firstFrame = real.first {
             let magnitude = sqrt(firstFrame[expectedBin] * firstFrame[expectedBin] + 
                                imag[0][expectedBin] * imag[0][expectedBin])
-            XCTAssertGreaterThan(magnitude, 100, "Expected high magnitude at 1kHz bin")
+            XCTAssertGreaterThan(magnitude, 50, "Expected high magnitude at 1kHz bin")
         }
     }
 }

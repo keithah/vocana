@@ -61,9 +61,10 @@ final class STFT {
         self.hopSize = hopSize
         self.sampleRate = sampleRate
         
-        // Fix HIGH: Validate window after generation
+        // Fix CRITICAL: Use vDSP_HANN_DENORM to avoid 50% amplitude error
+        // vDSP_HANN_NORM divides by 2, causing 50% amplitude reduction
         var hannWindow = [Float](repeating: 0, count: fftSize)
-        vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
+        vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_DENORM))
         
         // Validate window contains valid values (vDSP_HANN_NORM can produce values > 1)
         guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 }) else {

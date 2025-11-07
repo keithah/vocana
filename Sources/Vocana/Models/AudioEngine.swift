@@ -313,28 +313,27 @@ class AudioEngine: ObservableObject {
     // Fix CRITICAL #5: Prevent unbounded memory growth during ML initialization
     private func appendToBufferAndExtractChunk(samples: [Float]) -> [Float]? {
         return audioBufferQueue.sync {
-            // Fix CRITICAL #5: Check buffer size BEFORE appending to prevent memory spikes
-            let maxBufferSize = 48000
+            // Fix CRITICAL: Simplified buffer overflow handling with logging
+            let maxBufferSize = 48000  // 1 second at 48kHz
             let projectedSize = _audioBuffer.count + samples.count
             
             if projectedSize > maxBufferSize {
-                // Calculate how many samples we can safely add
-                let remainingCapacity = maxBufferSize - _audioBuffer.count
-                if remainingCapacity <= 0 {
-                    // Buffer is full, drop oldest samples first
-                    let excessSamples = samples.count
-                    let samplesToRemove = min(excessSamples, _audioBuffer.count)
-                    _audioBuffer.removeFirst(samplesToRemove)
-                }
+                // Log buffer overflow for debugging
+                print("⚠️ Audio buffer overflow: \(_audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
                 
-                // Add only what fits
-                let samplesToAdd = min(samples.count, maxBufferSize - _audioBuffer.count)
-                if samplesToAdd > 0 {
-                    let endIndex = min(samplesToAdd, samples.count)
-                    _audioBuffer.append(contentsOf: samples[..<endIndex])
+                // Keep only the newest samples to maintain real-time processing
+                let totalNeeded = samples.count + 960  // Leave room for one frame
+                if totalNeeded > maxBufferSize {
+                    // Incoming samples are too large, keep only the latest portion
+                    let startIndex = samples.count - (maxBufferSize - 960)
+                    _audioBuffer = Array(samples[startIndex...])
+                } else {
+                    // Remove old samples and add new ones
+                    let samplesToRemove = projectedSize - maxBufferSize
+                    _audioBuffer.removeFirst(samplesToRemove)
+                    _audioBuffer.append(contentsOf: samples)
                 }
             } else {
-                // Safe to add all samples
                 _audioBuffer.append(contentsOf: samples)
             }
             

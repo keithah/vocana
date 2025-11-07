@@ -12,10 +12,10 @@ import os.log
 /// 5. Filtering - Apply enhancement to spectrum
 /// 6. ISTFT - Convert back to time domain
 ///
-/// **Thread Safety**: This class is NOT thread-safe. Do not call process() or processBuffer()
-/// concurrently from multiple threads. All component classes (STFT, ERBFeatures, etc.) maintain
-/// internal mutable state and are NOT thread-safe. Never share a DeepFilterNet instance across threads.
-/// Create separate instances per thread with proper synchronization.
+/// **Thread Safety**: This class IS thread-safe for external calls. The process() and processBuffer()
+/// methods use internal synchronization (processingQueue) to ensure safe concurrent access.
+/// Individual component classes (STFT, ERBFeatures, etc.) are internally protected by queues.
+/// Multiple threads can safely call methods on the same DeepFilterNet instance.
 ///
 /// Reference: https://arxiv.org/abs/2305.08227
 ///
@@ -133,12 +133,12 @@ final class DeepFilterNet {
     
     /// Reset internal state (call when starting new audio stream)
     func reset() {
-        // Fix CRITICAL: Use proper state synchronization through computed property
-        states = [:]
-        // Fix CRITICAL: Clear overlap buffer on reset
-        // Fix HIGH: Ensure both states and overlap buffer are cleared together
-        overlapBuffer.removeAll()
-        Self.logger.info("DeepFilterNet state reset")
+        // Fix CRITICAL: Atomic reset of both state and overlap buffer
+        processingQueue.sync {
+            states = [:]
+            overlapBuffer.removeAll()
+            Self.logger.info("DeepFilterNet state reset - cleared states and overlap buffer")
+        }
     }
     
     // MARK: - Processing
@@ -388,40 +388,7 @@ final class DeepFilterNet {
     
     // MARK: - Utilities
     
-    // Fix MEDIUM: Document or remove unused method
-    /// Compute magnitude from complex spectrum (reserved for visualization/debugging)
-    private func spectrumToMagnitude(_ spectrum: (real: [Float], imag: [Float])) -> [Float] {
-        var magnitude = [Float](repeating: 0, count: spectrum.real.count)
-        var realSquared = [Float](repeating: 0, count: spectrum.real.count)
-        var imagSquared = [Float](repeating: 0, count: spectrum.imag.count)
-        
-        vDSP_vsq(spectrum.real, 1, &realSquared, 1, vDSP_Length(spectrum.real.count))
-        vDSP_vsq(spectrum.imag, 1, &imagSquared, 1, vDSP_Length(spectrum.imag.count))
-        vDSP_vadd(realSquared, 1, imagSquared, 1, &magnitude, 1, vDSP_Length(magnitude.count))
-        
-        // Fix HIGH: Validate magnitude buffer before vvsqrtf
-        guard magnitude.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
-            Self.logger.error("Invalid magnitude values detected (NaN/Inf/negative)")
-            return [Float](repeating: 0, count: magnitude.count)
-        }
-        
-        // Fix HIGH: Int32 overflow protection for vvsqrtf
-        guard magnitude.count < Int32.max else {
-            Self.logger.error("Buffer too large for vvsqrtf: \(magnitude.count)")
-            return [Float](repeating: 0, count: magnitude.count)
-        }
-        
-        // Fix MEDIUM: Use separate buffer for vvsqrtf to avoid in-place operation issues
-        var sqrtResult = [Float](repeating: 0, count: magnitude.count)
-        magnitude.withUnsafeBufferPointer { magPtr in
-            sqrtResult.withUnsafeMutableBufferPointer { sqrtPtr in
-                var count = Int32(magnitude.count)
-                vvsqrtf(sqrtPtr.baseAddress!, magPtr.baseAddress!, &count)
-            }
-        }
-        
-        return sqrtResult
-    }
+    // Removed unused spectrumToMagnitude method as identified in code review
     
     /// Process entire audio buffer (for batch processing)
     ///

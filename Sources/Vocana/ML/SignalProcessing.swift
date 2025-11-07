@@ -5,8 +5,9 @@ import os.log
 /// Short-Time Fourier Transform (STFT) and Inverse STFT for audio processing
 /// Implements real-time compatible spectral analysis with overlap-add synthesis
 ///
-/// **Thread Safety**: This class is NOT thread-safe. Do not call transform() or inverse()
-/// concurrently from multiple threads. Create separate STFT instances per thread if needed.
+/// **Thread Safety**: This class IS thread-safe. The transform() and inverse() methods
+/// use internal synchronization (transformQueue) to protect shared buffer access.
+/// Multiple threads can safely call methods on the same STFT instance.
 /// Read-only properties are thread-safe after initialization.
 ///
 /// **Usage Example**:

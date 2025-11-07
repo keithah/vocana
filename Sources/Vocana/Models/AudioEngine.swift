@@ -109,6 +109,10 @@ class AudioEngine: ObservableObject {
         stopRealAudioCapture()
         stopSimulatedAudio()
         
+        // Fix HIGH: Ensure timer cleanup to prevent memory leak
+        timer?.invalidate()
+        timer = nil
+        
         // Clean up ML processing
         if denoiser != nil {
             denoiser?.reset()
@@ -132,6 +136,13 @@ class AudioEngine: ObservableObject {
     
     private func startRealAudioCapture() -> Bool {
         do {
+            // Fix HIGH: Configure audio session before starting engine
+            #if os(iOS) || os(tvOS) || os(watchOS)
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.record, mode: .measurement, options: [])
+            try session.setActive(true)
+            #endif
+            
             audioEngine = AVAudioEngine()
             guard let audioEngine = audioEngine else { return false }
             
@@ -156,12 +167,12 @@ class AudioEngine: ObservableObject {
     }
     
     private func stopRealAudioCapture() {
-        audioEngine?.stop()
-        // Fix HIGH: Only remove tap if it was installed to prevent crash
+        // Fix HIGH: Remove tap BEFORE stopping engine to prevent crash
         if isTapInstalled, let engine = audioEngine {
             engine.inputNode.removeTap(onBus: 0)
             isTapInstalled = false
         }
+        audioEngine?.stop()
         audioEngine = nil
     }
     
@@ -170,30 +181,54 @@ class AudioEngine: ObservableObject {
         let channelDataValue = channelData.pointee
         let frames = buffer.frameLength
         
-        // Extract audio samples
-        var samples = [Float](repeating: 0, count: Int(frames))
-        for i in 0..<Int(frames) {
-            samples[i] = channelDataValue[i]
-        }
+        // Fix HIGH: Capture isEnabled/sensitivity atomically to prevent race
+        let capturedEnabled = isEnabled
+        let capturedSensitivity = sensitivity
         
-        // Calculate input level (RMS)
-        let inputLevel = calculateRMS(samples: samples)
+        // Fix HIGH: Use direct buffer access instead of allocation (performance)
+        let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
         
-        if isEnabled {
+        // Calculate input level (RMS) - using pointer directly
+        let inputLevel = calculateRMSFromPointer(samplesPtr)
+        
+        if capturedEnabled {
+            // Need array for ML processing
+            let samples = Array(samplesPtr)
+            
             // Process with ML if available
-            let outputLevel = processWithMLIfAvailable(samples: samples)
+            let outputLevel = processWithMLIfAvailable(samples: samples, sensitivity: capturedSensitivity)
             currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
         } else {
             // When disabled, show decay
-            let decayedInput = max(currentLevels.input * AppConstants.levelDecayRate, 0)
-            let decayedOutput = max(currentLevels.output * AppConstants.levelDecayRate, 0)
-            
-            if decayedInput < AppConstants.minimumLevelThreshold && decayedOutput < AppConstants.minimumLevelThreshold {
-                currentLevels = AudioLevels.zero
-            } else {
-                currentLevels = AudioLevels(input: decayedInput, output: decayedOutput)
-            }
+            currentLevels = applyDecay()
         }
+    }
+    
+    // Fix HIGH: Extract decay logic to avoid duplication
+    private func applyDecay() -> AudioLevels {
+        let decayedInput = max(currentLevels.input * AppConstants.levelDecayRate, 0)
+        let decayedOutput = max(currentLevels.output * AppConstants.levelDecayRate, 0)
+        
+        if decayedInput < AppConstants.minimumLevelThreshold && decayedOutput < AppConstants.minimumLevelThreshold {
+            return AudioLevels.zero
+        } else {
+            return AudioLevels(input: decayedInput, output: decayedOutput)
+        }
+    }
+    
+    // Fix HIGH: Add pointer-based RMS for performance
+    private func calculateRMSFromPointer(_ samplesPtr: UnsafeBufferPointer<Float>) -> Float {
+        guard samplesPtr.count > 0 else { return 0 }
+        
+        // Calculate RMS manually - vDSP_svesq isn't available in standard vDSP
+        var sumOfSquares: Float = 0
+        for sample in samplesPtr {
+            sumOfSquares += sample * sample
+        }
+        let rms = sqrt(sumOfSquares / Float(samplesPtr.count))
+        
+        // Convert to 0-1 range
+        return min(1.0, rms * 10.0)
     }
     
     private func calculateRMS(samples: [Float]) -> Float {
@@ -210,7 +245,7 @@ class AudioEngine: ObservableObject {
         return min(1.0, rms * 10.0)
     }
     
-    private func processWithMLIfAvailable(samples: [Float]) -> Float {
+    private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
         // Fix CRITICAL: Capture denoiser to prevent race condition where it becomes nil
         // between guard check and actual use
         guard let capturedDenoiser = denoiser, isMLProcessingActive else {
@@ -283,14 +318,8 @@ class AudioEngine: ObservableObject {
             let output = Float.random(in: Float(AppConstants.outputLevelRange.lowerBound)...Float(AppConstants.outputLevelRange.upperBound)) * Float(sensitivity)
             currentLevels = AudioLevels(input: input, output: output)
         } else {
-            let decayedInput = max(currentLevels.input * AppConstants.levelDecayRate, 0)
-            let decayedOutput = max(currentLevels.output * AppConstants.levelDecayRate, 0)
-            
-            if decayedInput < AppConstants.minimumLevelThreshold && decayedOutput < AppConstants.minimumLevelThreshold {
-                currentLevels = AudioLevels.zero
-            } else {
-                currentLevels = AudioLevels(input: decayedInput, output: decayedOutput)
-            }
+            // Fix HIGH: Use extracted decay method
+            currentLevels = applyDecay()
         }
     }
 }

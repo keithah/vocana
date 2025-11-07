@@ -30,9 +30,10 @@ final class SpectralFeatures {
     // MARK: - Initialization
     
     init(dfBands: Int = 96, sampleRate: Int = 48000, fftSize: Int = 960) {
-        // Fix LOW: Better precondition messages with valid ranges
-        precondition(dfBands > 0 && dfBands <= 1000, 
-                    "DF bands must be in range [1, 1000], got \(dfBands)")
+        // Fix HIGH: Validate dfBands doesn't exceed available FFT bins
+        let maxBands = fftSize / 2 + 1
+        precondition(dfBands > 0 && dfBands <= maxBands, 
+                    "DF bands must be in range [1, \(maxBands)] for FFT size \(fftSize), got \(dfBands)")
         precondition(sampleRate > 0 && sampleRate <= 192000, 
                     "Sample rate must be in range [1, 192000], got \(sampleRate)")
         precondition(fftSize > 0 && fftSize <= 16384, 

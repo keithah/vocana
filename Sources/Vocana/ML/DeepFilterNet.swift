@@ -394,6 +394,9 @@ final class DeepFilterNet {
     /// - Parameter audio: Input audio samples (any length)
     /// - Returns: Enhanced audio samples
     /// - Throws: DeepFilterError if buffer is too large or processing fails
+    /// - Note: For buffers longer than 10 seconds, consider processing in smaller batches
+    ///   to reduce peak memory usage. Maximum buffer duration is 60 seconds.
+    /// - Warning: Peak memory usage is approximately 4 * audio.count bytes (input + output + intermediate buffers)
     func processBuffer(_ audio: [Float]) throws -> [Float] {
         // Fix MEDIUM: Make max buffer size configurable
         let maxBufferDuration = 60  // seconds
@@ -406,6 +409,12 @@ final class DeepFilterNet {
         
         // Need at least fftSize samples to process
         guard audio.count >= fftSize else {
+            return audio
+        }
+        
+        // Fix HIGH: Validate hopSize to prevent infinite loop
+        guard self.hopSize > 0 else {
+            Self.logger.error("Invalid hopSize: \(self.hopSize)")
             return audio
         }
         
@@ -423,12 +432,18 @@ final class DeepFilterNet {
                 }
                 
                 let chunk = Array(audio[position..<position + fftSize])
-                guard let enhanced = try? process(audio: chunk) else {
-                    return  // Skip failed chunks
-                }
                 
-                let outputChunk = Array(enhanced.prefix(hopSize))
-                output.append(contentsOf: outputChunk)
+                // Fix HIGH: Handle errors gracefully instead of silently dropping
+                do {
+                    let enhanced = try process(audio: chunk)
+                    let outputChunk = Array(enhanced.prefix(hopSize))
+                    output.append(contentsOf: outputChunk)
+                } catch {
+                    Self.logger.error("Chunk processing failed at position \(position): \(error)")
+                    // Append original chunk to maintain temporal continuity
+                    let fallbackChunk = Array(chunk.prefix(hopSize))
+                    output.append(contentsOf: fallbackChunk)
+                }
             }
             
             position += hopSize
@@ -436,6 +451,7 @@ final class DeepFilterNet {
         
         // Handle remaining samples
         // Fix HIGH: Add autoreleasepool here too
+        // Fix HIGH: Document memory implications for long buffers
         if position < audio.count {
             autoreleasepool {
                 let remaining = audio.count - position
@@ -452,9 +468,15 @@ final class DeepFilterNet {
                     }
                 }
                 
-                if let enhanced = try? process(audio: lastChunk) {
+                // Fix HIGH: Handle errors gracefully
+                do {
+                    let enhanced = try process(audio: lastChunk)
                     let outputChunk = Array(enhanced.prefix(remaining))
                     output.append(contentsOf: outputChunk)
+                } catch {
+                    Self.logger.error("Last chunk processing failed: \(error)")
+                    // Append original to maintain continuity
+                    output.append(contentsOf: audio[position..<audio.count])
                 }
             }
         }

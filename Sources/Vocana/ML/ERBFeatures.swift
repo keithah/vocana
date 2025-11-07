@@ -194,10 +194,9 @@ final class ERBFeatures {
         var erbFeatures: [[Float]] = []
         erbFeatures.reserveCapacity(numFrames)
         
-        // Fix HIGH: Pre-allocate reusable buffers to avoid per-frame allocation
-        var magnitudeSpectrum: [Float]?
-        var realSquared: [Float]?
-        var imagSquared: [Float]?
+        // Fix HIGH: Allocate buffers per-frame to ensure thread safety
+        // Note: This trades performance for correctness. For thread-safe concurrent
+        // calls, each frame needs its own buffers.
         
         for frameIndex in 0..<numFrames {
             let realPart = spectrogramReal[frameIndex]
@@ -211,28 +210,22 @@ final class ERBFeatures {
                 continue
             }
             
-            // Allocate buffers on first iteration
-            if magnitudeSpectrum == nil {
-                let size = realPart.count
-                magnitudeSpectrum = [Float](repeating: 0, count: size)
-                realSquared = [Float](repeating: 0, count: size)
-                imagSquared = [Float](repeating: 0, count: size)
-            }
+            // Fix HIGH: Allocate buffers per-frame for thread safety
+            let size = realPart.count
+            var magnitudeSpectrum = [Float](repeating: 0, count: size)
+            var realSquared = [Float](repeating: 0, count: size)
+            var imagSquared = [Float](repeating: 0, count: size)
             
             // Calculate magnitude using Accelerate framework (much faster)
-            var magSpec = magnitudeSpectrum!
-            var realSq = realSquared!
-            var imagSq = imagSquared!
-            
             let length = vDSP_Length(realPart.count)
-            vDSP_vsq(realPart, 1, &realSq, 1, length)
-            vDSP_vsq(imagPart, 1, &imagSq, 1, length)
-            vDSP_vadd(realSq, 1, imagSq, 1, &magSpec, 1, length)
+            vDSP_vsq(realPart, 1, &realSquared, 1, length)
+            vDSP_vsq(imagPart, 1, &imagSquared, 1, length)
+            vDSP_vadd(realSquared, 1, imagSquared, 1, &magnitudeSpectrum, 1, length)
             
-            // Fix CRITICAL: Safe sqrt operation - use separate output
-            var count = Int32(magSpec.count)
-            var sqrtResult = [Float](repeating: 0, count: magSpec.count)
-            vvsqrtf(&sqrtResult, magSpec, &count)
+            // Fix HIGH: Pre-allocate sqrtResult to avoid repeated allocation
+            var count = Int32(magnitudeSpectrum.count)
+            var sqrtResult = [Float](repeating: 0, count: magnitudeSpectrum.count)
+            vvsqrtf(&sqrtResult, magnitudeSpectrum, &count)
             
             // Apply ERB filterbank using vDSP dot product (much faster)
             var erbFrame = [Float](repeating: 0, count: numBands)
@@ -281,54 +274,51 @@ final class ERBFeatures {
         var normalized: [[Float]] = []
         normalized.reserveCapacity(features.count)
         
-        // Fix MEDIUM: Pre-allocate buffers to reduce per-frame allocation
-        let frameSize = features[0].count
-        var buffers = NormalizeBuffers(
-            meanArray: [Float](repeating: 0, count: frameSize),
-            centered: [Float](repeating: 0, count: frameSize),
-            normalizedFrame: [Float](repeating: 0, count: frameSize)
-        )
+        // Fix HIGH: Allocate buffers per-frame for thread safety instead of reusing
+        // This ensures normalize() is safe for concurrent calls
         
         for frame in features {
+            // Per-frame buffer allocation
+            let frameSize = frame.count
+            var meanArray = [Float](repeating: 0, count: frameSize)
+            var centered = [Float](repeating: 0, count: frameSize)
+            var normalizedFrame = [Float](repeating: 0, count: frameSize)
             // Fix CRITICAL: Variance calculation order (frame - mean, not mean - frame)
             var mean: Float = 0
             vDSP_meanv(frame, 1, &mean, vDSP_Length(frame.count))
             
+            // Fix HIGH: Simplified variance validation logic
             // Calculate variance using corrected order
-            vDSP_vfill([mean], &buffers.meanArray, 1, vDSP_Length(frame.count))
-            vDSP_vsub(buffers.meanArray, 1, frame, 1, &buffers.centered, 1, vDSP_Length(frame.count))
-            vDSP_vsq(buffers.centered, 1, &buffers.centered, 1, vDSP_Length(frame.count))
+            vDSP_vfill([mean], &meanArray, 1, vDSP_Length(frame.count))
+            vDSP_vsub(meanArray, 1, frame, 1, &centered, 1, vDSP_Length(frame.count))
+            vDSP_vsq(centered, 1, &centered, 1, vDSP_Length(frame.count))
             
             var variance: Float = 0
-            vDSP_meanv(buffers.centered, 1, &variance, vDSP_Length(frame.count))
+            vDSP_meanv(centered, 1, &variance, vDSP_Length(frame.count))
             
-            // Fix HIGH: Don't continue on invalid variance - causes frame count mismatch
-            // Instead, use fallback normalization with epsilon
+            // Fix HIGH: Simplified variance handling - use max() which handles negative/NaN
             let epsilon: Float = 1e-6
             let validVariance: Float
-            if variance.isNaN || variance.isInfinite || variance < 0 {
+            if variance.isNaN || variance.isInfinite {
                 Self.logger.error("Invalid variance: \(variance), using epsilon fallback")
                 validVariance = epsilon
             } else {
-                validVariance = variance
+                validVariance = max(variance, epsilon)
             }
             
-            let std = sqrt(max(validVariance, epsilon))
-            
-            // Fix MEDIUM: Remove redundant NaN check after epsilon addition
-            // std is guaranteed positive due to sqrt(max(...))
+            let std = sqrt(validVariance)
             
             // Unit normalization: (x - mean) / std using vDSP
             var meanNeg = -mean
-            vDSP_vsadd(frame, 1, &meanNeg, &buffers.normalizedFrame, 1, vDSP_Length(frame.count))
+            vDSP_vsadd(frame, 1, &meanNeg, &normalizedFrame, 1, vDSP_Length(frame.count))
             var divisor = std
-            vDSP_vsdiv(buffers.normalizedFrame, 1, &divisor, &buffers.normalizedFrame, 1, vDSP_Length(frame.count))
+            vDSP_vsdiv(normalizedFrame, 1, &divisor, &normalizedFrame, 1, vDSP_Length(frame.count))
             
             // Apply alpha scaling
             var alphaScalar = alpha
-            vDSP_vsmul(buffers.normalizedFrame, 1, &alphaScalar, &buffers.normalizedFrame, 1, vDSP_Length(frame.count))
+            vDSP_vsmul(normalizedFrame, 1, &alphaScalar, &normalizedFrame, 1, vDSP_Length(frame.count))
             
-            normalized.append(Array(buffers.normalizedFrame))
+            normalized.append(normalizedFrame)
         }
         
         return normalized

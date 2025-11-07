@@ -61,9 +61,15 @@ final class STFT {
         self.hopSize = hopSize
         self.sampleRate = sampleRate
         
-        // Pre-compute Hann window
+        // Fix HIGH: Validate window after generation
         var hannWindow = [Float](repeating: 0, count: fftSize)
         vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
+        
+        // Validate window contains valid values (vDSP_HANN_NORM can produce values > 1)
+        guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
+            preconditionFailure("Window generation failed - contains invalid values")
+        }
+        
         self.window = hannWindow
         
         // Set up FFT - must be power of 2, so round up
@@ -267,14 +273,21 @@ final class STFT {
                 }
             }
             
+            // Fix HIGH: Validate frame sizes match before mirroring
+            guard frameReal.count == frameImag.count else {
+                Self.logger.error("Frame \(frameIndex) real/imag size mismatch: \(frameReal.count) vs \(frameImag.count)")
+                continue
+            }
+            
             // Negative frequencies (complex conjugate of positive)
-            // Fix HIGH: Use fftSizePowerOf2 for correct mirroring
-            for i in 1..<binsToUse {
+            // Fix HIGH: Explicit bounds check in loop to prevent races
+            for i in 1..<binsToUse where i < frameReal.count && i < frameImag.count {
                 let mirrorIndex = fftSizePowerOf2 - i
-                if mirrorIndex > 0 && mirrorIndex < fftSizePowerOf2 {
-                    fullReal[mirrorIndex] = frameReal[i]
-                    fullImag[mirrorIndex] = -frameImag[i]
+                guard mirrorIndex > 0 && mirrorIndex < fftSizePowerOf2 && mirrorIndex < fullReal.count && mirrorIndex < fullImag.count else {
+                    continue
                 }
+                fullReal[mirrorIndex] = frameReal[i]
+                fullImag[mirrorIndex] = -frameImag[i]
             }
             
             // Perform inverse FFT with safe pointer handling
@@ -321,17 +334,30 @@ final class STFT {
             // Take real part and apply window
             vDSP_vmul(tempReal, 1, window, 1, &frameBuffer, 1, vDSP_Length(fftSize))
             
-            // Overlap-add with proper COLA normalization
+            // Fix HIGH: Calculate safe range first to prevent integer overflow
             let startSample = frameIndex * hopSize
-            for i in 0..<fftSize where startSample + i < outputLength {
+            let endIdx = min(fftSize, outputLength - startSample)
+            guard endIdx > 0, startSample < outputLength else { continue }
+            
+            // Overlap-add with proper COLA normalization
+            for i in 0..<endIdx {
                 output[startSample + i] += frameBuffer[i]
                 windowSumBuffer[startSample + i] += window[i] * window[i]
             }
         }
         
-        // Fix HIGH: Proper COLA normalization
-        for i in 0..<outputLength where windowSumBuffer[i] > Float.leastNormalMagnitude {
-            output[i] /= windowSumBuffer[i]
+        // Fix HIGH: Use reasonable epsilon and validate output
+        let epsilon: Float = 1e-10
+        for i in 0..<outputLength {
+            if windowSumBuffer[i] > epsilon {
+                output[i] /= windowSumBuffer[i]
+                // Validate output for NaN/Inf
+                if !output[i].isFinite {
+                    output[i] = 0  // Fallback for NaN/Inf
+                }
+            } else {
+                output[i] = 0  // No window contribution means no signal
+            }
         }
         
         return output

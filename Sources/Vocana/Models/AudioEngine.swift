@@ -211,28 +211,26 @@ class AudioEngine: ObservableObject {
     }
     
     private func processWithMLIfAvailable(samples: [Float]) -> Float {
-        guard let denoiser = denoiser, isMLProcessingActive else {
+        // Fix CRITICAL: Capture denoiser to prevent race condition where it becomes nil
+        // between guard check and actual use
+        guard let capturedDenoiser = denoiser, isMLProcessingActive else {
             // Fallback to simple level-based processing
             return calculateRMS(samples: samples) * Float(sensitivity)
         }
         
-        // Accumulate samples in buffer
-        audioBuffer.append(contentsOf: samples)
+        // Fix CRITICAL: Atomic multi-step buffer operations to prevent race conditions
+        let chunk = appendToBufferAndExtractChunk(samples: samples)
         
         // Process when we have enough samples
-        guard audioBuffer.count >= minimumBufferSize else {
+        guard let chunk = chunk else {
             // Not enough samples yet, return current level
             return calculateRMS(samples: samples) * Float(sensitivity)
         }
         
-        // Extract chunk for processing
-        let chunk = Array(audioBuffer.prefix(minimumBufferSize))
-        audioBuffer.removeFirst(minimumBufferSize)
-        
         // Process with DeepFilterNet
         do {
             let startTime = CFAbsoluteTimeGetCurrent()
-            let enhanced = try denoiser.process(audio: chunk)
+            let enhanced = try capturedDenoiser.process(audio: chunk)
             let endTime = CFAbsoluteTimeGetCurrent()
             
             // Update latency measurement
@@ -243,9 +241,24 @@ class AudioEngine: ObservableObject {
         } catch {
             print("⚠️  ML processing error: \(error.localizedDescription)")
             isMLProcessingActive = false
+            // Fix HIGH: Clear buffer on error to prevent unbounded growth
+            audioBuffer.removeAll()
             
             // Fallback to simple processing
             return calculateRMS(samples: chunk) * Float(sensitivity)
+        }
+    }
+    
+    // Fix CRITICAL: Atomic multi-step buffer operation
+    private func appendToBufferAndExtractChunk(samples: [Float]) -> [Float]? {
+        return audioBufferQueue.sync {
+            _audioBuffer.append(contentsOf: samples)
+            guard _audioBuffer.count >= minimumBufferSize else {
+                return nil
+            }
+            let chunk = Array(_audioBuffer.prefix(minimumBufferSize))
+            _audioBuffer.removeFirst(minimumBufferSize)
+            return chunk
         }
     }
     

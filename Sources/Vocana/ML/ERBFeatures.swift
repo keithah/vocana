@@ -5,8 +5,12 @@ import os.log
 /// ERB (Equivalent Rectangular Bandwidth) feature extraction
 /// Implements perceptually-motivated frequency analysis for audio processing
 ///
-/// **Thread Safety**: This class is thread-safe. All methods are stateless after initialization.
-/// The filterbank is immutable after init, allowing concurrent calls to extract() and normalize().
+/// **Thread Safety**: This class is NOT fully thread-safe for concurrent calls to the SAME method.
+/// - The filterbank is immutable after init (thread-safe)
+/// - extract() and normalize() use instance buffer reuse patterns
+/// - Safe for: Concurrent calls to DIFFERENT methods, OR sequential calls
+/// - Unsafe for: Concurrent calls to extract() OR concurrent calls to normalize()
+/// - For parallel processing, create separate instances per thread
 ///
 /// **Usage Example**:
 /// ```swift
@@ -168,10 +172,10 @@ final class ERBFeatures {
     /// - Returns: ERB features [numFrames, numBands]
     /// - Throws: Never, but logs errors and returns empty array on failure
     func extract(spectrogramReal: [[Float]], spectrogramImag: [[Float]]) -> [[Float]] {
-        // Fix CRITICAL: Don't silently fail - validate inputs strictly
+        // Fix CRITICAL: Consistent error handling - return empty instead of crashing
         guard spectrogramReal.count == spectrogramImag.count else {
             Self.logger.error("Spectrogram dimension mismatch: real=\(spectrogramReal.count), imag=\(spectrogramImag.count)")
-            preconditionFailure("Real and imaginary spectrograms must have same number of frames")
+            return []
         }
         
         // Fix HIGH: Validate input isn't empty
@@ -199,10 +203,12 @@ final class ERBFeatures {
             let realPart = spectrogramReal[frameIndex]
             let imagPart = spectrogramImag[frameIndex]
             
-            // Fix CRITICAL: Don't skip frames - this causes data corruption
+            // Fix CRITICAL: Consistent error handling - skip bad frame but log
             guard realPart.count == imagPart.count else {
                 Self.logger.error("Frame \(frameIndex) dimension mismatch: real=\(realPart.count), imag=\(imagPart.count)")
-                preconditionFailure("Real and imaginary parts must have same size at frame \(frameIndex)")
+                // Skip this frame to maintain count consistency
+                erbFeatures.append([Float](repeating: 0, count: numBands))
+                continue
             }
             
             // Allocate buffers on first iteration
@@ -233,13 +239,16 @@ final class ERBFeatures {
             for (bandIndex, filter) in erbFilterbank.enumerated() {
                 var bandEnergy: Float = 0
                 
-                // Fix HIGH: Assert filter/magnitude match instead of silent min
+                // Fix CRITICAL: Guard instead of assert to prevent silent corruption in release
                 let filterLen = filter.count
                 let magLen = sqrtResult.count
-                assert(filterLen == magLen, "Filter size \(filterLen) doesn't match magnitude \(magLen)")
+                guard filterLen == magLen else {
+                    Self.logger.error("Filter/magnitude size mismatch: \(filterLen) vs \(magLen)")
+                    erbFrame[bandIndex] = 0
+                    continue
+                }
                 
-                let length = min(filterLen, magLen)
-                vDSP_dotpr(filter, 1, sqrtResult, 1, &bandEnergy, vDSP_Length(length))
+                vDSP_dotpr(filter, 1, sqrtResult, 1, &bandEnergy, vDSP_Length(filterLen))
                 erbFrame[bandIndex] = bandEnergy
             }
             

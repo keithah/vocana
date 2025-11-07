@@ -53,6 +53,8 @@ class AudioEngine: ObservableObject {
     @Published var processingLatencyMs: Double = 0
     @Published var memoryPressureLevel: MemoryPressureLevel = .normal
     @Published var telemetry = ProductionTelemetry()
+    @Published var hasPerformanceIssues = false
+    @Published var bufferHealthMessage = "Buffer healthy"
     
     // Fix CRITICAL-001: Dedicated queue for telemetry to prevent race conditions
     private let telemetryQueue = DispatchQueue(label: "com.vocana.telemetry", qos: .userInitiated)
@@ -68,7 +70,7 @@ class AudioEngine: ObservableObject {
     }
     
     // Fix CRITICAL: Production telemetry for monitoring and debugging
-    struct ProductionTelemetry {
+    struct ProductionTelemetry: Sendable {
         var totalFramesProcessed: UInt64 = 0
         var mlProcessingFailures: UInt64 = 0
         var circuitBreakerTriggers: UInt64 = 0
@@ -100,24 +102,24 @@ class AudioEngine: ObservableObject {
         }
     }
     
-    /// Computed property to indicate if there are buffer/performance issues
-    var hasPerformanceIssues: Bool {
-        telemetry.audioBufferOverflows > 0 ||
-        telemetry.circuitBreakerTriggers > 0 ||
-        telemetry.mlProcessingFailures > 0 ||
-        memoryPressureLevel != .normal
-    }
-    
-    /// Computed property for user-friendly status message about buffer health
-    var bufferHealthMessage: String {
+    /// Fix HIGH-004: Update performance status based on current telemetry
+    private func updatePerformanceStatus() {
+        hasPerformanceIssues = (
+            telemetry.audioBufferOverflows > 0 ||
+            telemetry.circuitBreakerTriggers > 0 ||
+            telemetry.mlProcessingFailures > 0 ||
+            memoryPressureLevel != .normal
+        )
+        
+        // Update buffer health message
         if telemetry.circuitBreakerTriggers > 0 {
-            return "Circuit breaker active (\(telemetry.circuitBreakerTriggers)x)"
+            bufferHealthMessage = "Circuit breaker active (\(telemetry.circuitBreakerTriggers)x)"
         } else if telemetry.audioBufferOverflows > 0 {
-            return "Buffer pressure (\(telemetry.audioBufferOverflows) overflows)"
+            bufferHealthMessage = "Buffer pressure (\(telemetry.audioBufferOverflows) overflows)"
         } else if telemetry.mlProcessingFailures > 0 {
-            return "ML issues detected"
+            bufferHealthMessage = "ML issues detected"
         } else {
-            return "Buffer healthy"
+            bufferHealthMessage = "Buffer healthy"
         }
     }
     
@@ -157,6 +159,7 @@ class AudioEngine: ObservableObject {
                 self.telemetrySnapshot.recordAudioBufferOverflow()
                 Task { @MainActor in
                     self.telemetry = self.telemetrySnapshot
+                    self.updatePerformanceStatus()
                 }
             }
         }
@@ -167,6 +170,7 @@ class AudioEngine: ObservableObject {
                 self.telemetrySnapshot.recordCircuitBreakerTrigger()
                 Task { @MainActor in
                     self.telemetry = self.telemetrySnapshot
+                    self.updatePerformanceStatus()
                 }
             }
         }
@@ -205,6 +209,7 @@ class AudioEngine: ObservableObject {
                 Task { @MainActor in
                     self.telemetry = self.telemetrySnapshot
                     self.isMLProcessingActive = false
+                    self.updatePerformanceStatus()
                 }
             }
         }
@@ -378,6 +383,9 @@ class AudioEngine: ObservableObject {
             // Reduce buffer sizes but continue processing
             bufferManager.clearAudioBuffers()
         }
+        
+        // Fix HIGH-004: Update performance status when memory pressure changes
+        updatePerformanceStatus()
         
         Self.logger.warning("Memory pressure detected: \(self.memoryPressureLevel.rawValue)")
     }

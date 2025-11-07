@@ -20,10 +20,23 @@ class AudioLevelController {
         for sample in samplesPtr {
             sumOfSquares += sample * sample
         }
-        let rms = sqrt(sumOfSquares / Float(samplesPtr.count))
+        
+        // Fix HIGH-005: Use consolidated RMS calculation logic
+        let rms = calculateRawRMSInternal(sumOfSquares: sumOfSquares, count: samplesPtr.count)
         
         // Convert to 0-1 range and apply amplification
         return min(1.0, rms * AppConstants.rmsAmplificationFactor)
+    }
+    
+    /// Fix HIGH-005: Consolidated RMS calculation logic to prevent duplication
+    /// Internal helper to calculate RMS from sum of squares and count
+    /// - Parameters:
+    ///   - sumOfSquares: Pre-calculated sum of squares
+    ///   - count: Number of samples
+    /// - Returns: Raw RMS value
+    private func calculateRawRMSInternal(sumOfSquares: Float, count: Int) -> Float {
+        guard count > 0 else { return 0 }
+        return sqrt(sumOfSquares / Float(count))
     }
     
     /// Calculate raw RMS value from audio samples (for validation purposes)
@@ -36,7 +49,7 @@ class AudioLevelController {
         for sample in samples {
             sum += sample * sample
         }
-        return sqrt(sum / Float(samples.count))
+        return calculateRawRMSInternal(sumOfSquares: sum, count: samples.count)
     }
     
     /// Calculate normalized RMS level for audio display/processing

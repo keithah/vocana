@@ -157,9 +157,9 @@ final class DeepFilterNet {
         Self.logger.debug("  DF bands: \(self.dfBands)")
     }
     
-    // Fix MEDIUM: Add nonisolated for consistency with other deinit methods
-    nonisolated deinit {
-        // Fix MEDIUM: Cannot access MainActor-isolated properties from nonisolated deinit
+    // Fix MEDIUM: deinit is nonisolated by default, logging handled asynchronously
+    deinit {
+        // Note: deinit is nonisolated, logger is thread-safe
         // State cleanup handled by ARC - manual cleanup should be done via reset() before deallocation
         Task { @MainActor in
             Self.logger.debug("DeepFilterNet deinitialized")
@@ -211,8 +211,9 @@ final class DeepFilterNet {
         // Fix CRITICAL: Wrap entire processing in queue to prevent concurrent access
         // to non-thread-safe components (STFT, ERBFeatures, SpectralFeatures)
         return try processingQueue.sync {
-            // Fix CRITICAL: Add maximum size validation to prevent memory exhaustion attacks
-            let maxAudioSize = sampleRate * 3600  // 1 hour maximum at sample rate
+            // Fix MEDIUM: Use configurable maximum size to prevent memory exhaustion attacks
+            // Allows 1 hour of audio processing while preventing DoS attacks
+            let maxAudioSize = sampleRate * AppConstants.maxAudioProcessingSeconds
             guard audio.count >= fftSize && audio.count <= maxAudioSize else {
                 if audio.count < fftSize {
                     throw DeepFilterError.invalidAudioLength(got: audio.count, minimum: fftSize)
@@ -569,10 +570,12 @@ final class DeepFilterNet {
                 let remaining = audio.count - position
                 var lastChunk = Array(audio[position..<audio.count])
                 
-                // Fix CRITICAL: Use reflection padding with bounds validation
+                // Fix HIGH: Add size limit to reflection padding to prevent unbounded arrays
                 if remaining < fftSize {
                     let padCount = fftSize - remaining
-                    let reflectCount = min(padCount, remaining)
+                    // Limit reflection to reasonable size (max 2x FFT size) to prevent memory issues
+                    let maxReflectSize = min(fftSize * 2, AppConstants.maxAudioBufferSize)
+                    let reflectCount = min(padCount, remaining, maxReflectSize)
                     
                     // Fix CRITICAL: More robust reflection padding with edge case handling
                     guard reflectCount > 0, audio.count >= reflectCount else {

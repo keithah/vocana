@@ -96,7 +96,7 @@ final class ERBFeatures {
         let estimatedMemoryBytes = numBands * numFreqBins * MemoryLayout<Float>.size
         let estimatedMemoryMB = estimatedMemoryBytes / (1024 * 1024)
         // DeepFilterNet models typically use 32 bands × 481 bins = ~60KB, allow headroom for larger models
-        let maxMemoryMB = 500 // 500MB limit allows for much larger spectrograms while preventing abuse
+        let maxMemoryMB = AppConstants.maxFilterbankMemoryMB // Prevent abuse while allowing large models
         precondition(estimatedMemoryMB < maxMemoryMB, 
                     "Filterbank would require \(estimatedMemoryMB)MB (max: \(maxMemoryMB)MB)")
         

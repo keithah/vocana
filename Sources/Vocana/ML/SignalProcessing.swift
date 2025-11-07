@@ -108,8 +108,8 @@ final class STFT {
         self.frameBuffer = [Float](repeating: 0, count: fftSize)
     }
     
-    // Fix CRITICAL: Ensure proper FFT setup cleanup
-    // Note: deinit cannot be marked nonisolated since it accesses stored properties
+    // Fix CRITICAL: Ensure proper FFT setup cleanup with thread safety
+    // Note: FFT setup destruction must be synchronized to prevent race conditions
     deinit {
         transformQueue.sync {
             vDSP_destroy_fftsetup(fftSetup)

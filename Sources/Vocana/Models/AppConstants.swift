@@ -32,6 +32,18 @@ struct AppConstants {
     // Calculated as: (35 * 60 * 48000) / 480 = 105,000 frames, rounded to 100,000
     static let maxSpectralFrames: Int = 100_000
     
+    // 1 hour maximum audio length to prevent DoS attacks while allowing legitimate long recordings
+    // At 48kHz with 32-bit float samples: 1 hour = ~172MB of audio data
+    static let maxAudioProcessingSeconds: Int = 3600
+    
+    // Maximum memory allowed for ERB filterbank generation to prevent abuse
+    // 500MB allows for very large models while preventing DoS attacks
+    static let maxFilterbankMemoryMB: Int = 500
+    
+    // Duration in seconds to suspend audio capture when circuit breaker triggers
+    // 1 second allows ML pipeline to catch up without noticeable audio interruption
+    static let circuitBreakerSuspensionSeconds: Double = 1.0
+    
     // Default Log-SNR value for DeepFilterNet when no ML output is available
     // -10dB represents moderate noise suppression as a safe fallback
     static let defaultLSNRValue: Float = -10.0

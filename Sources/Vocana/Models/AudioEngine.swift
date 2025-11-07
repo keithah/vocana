@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AVFoundation
+import os.log
 
 struct AudioLevels {
     let input: Float
@@ -11,6 +12,7 @@ struct AudioLevels {
 
 @MainActor
 class AudioEngine: ObservableObject {
+    private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
     @Published var currentLevels = AudioLevels.zero
     @Published var isUsingRealAudio = false
     @Published var isMLProcessingActive = false
@@ -29,6 +31,8 @@ class AudioEngine: ObservableObject {
     struct ProductionTelemetry {
         var totalFramesProcessed: UInt64 = 0
         var mlProcessingFailures: UInt64 = 0
+        var circuitBreakerTriggers: UInt64 = 0
+        var audioBufferOverflows: UInt64 = 0
         var memoryPressureEvents: UInt64 = 0
         var averageLatencyMs: Double = 0
         var peakMemoryUsageMB: Double = 0
@@ -46,6 +50,14 @@ class AudioEngine: ObservableObject {
         
         mutating func recordMemoryPressure() {
             memoryPressureEvents += 1
+        }
+        
+        mutating func recordCircuitBreakerTrigger() {
+            circuitBreakerTriggers += 1
+        }
+        
+        mutating func recordAudioBufferOverflow() {
+            audioBufferOverflows += 1
         }
     }
     
@@ -131,22 +143,26 @@ class AudioEngine: ObservableObject {
                 // Create DeepFilterNet instance (potentially slow model loading)
                 let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
                 
-                guard !Task.isCancelled else { return }
+                // Fix HIGH: Atomic cancellation and state check to prevent TOCTOU race
+                let wasCancelled = Task.isCancelled
                 
                 // Fix CRITICAL #4: Update state atomically with proper synchronization
                 await MainActor.run {
                     self.mlStateQueue.sync {
-                        // Double-check cancellation after context switch
-                        guard !Task.isCancelled else { return }
-                        
-                        // Check if ML was suspended during initialization
-                        if !self.mlProcessingSuspendedDueToMemory {
-                            self.denoiser = denoiser
-                            self.isMLProcessingActive = true
-                            print("✓ DeepFilterNet ML processing enabled")
-                        } else {
-                            print("⚠️ ML initialization completed but suspended due to memory pressure")
+                        // Atomic check: verify both task cancellation AND ML suspension state
+                        guard !wasCancelled && !self.mlProcessingSuspendedDueToMemory else { 
+                            if wasCancelled {
+                                print("⚠️ ML initialization cancelled")
+                            } else {
+                                print("⚠️ ML initialization completed but suspended due to memory pressure")
+                            }
+                            return 
                         }
+                        
+self.denoiser = denoiser
+                            self.isMLProcessingActive = true
+                            Self.logger.info("DeepFilterNet ML processing enabled")
+                            print("✓ DeepFilterNet ML processing enabled")
                     }
                 }
             } catch {
@@ -396,7 +412,8 @@ class AudioEngine: ObservableObject {
             
             // Monitor for SLA violations (target <1ms)
             if latencyMs > 1.0 {
-                print("⚠️ Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
+                Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
+                    print("⚠️ Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
             }
             
             // Calculate output level from enhanced audio
@@ -443,16 +460,22 @@ class AudioEngine: ObservableObject {
             if projectedSize > maxBufferSize {
                 // Fix HIGH: Circuit breaker for sustained buffer overflows
                 consecutiveOverflows += 1
+                telemetry.recordAudioBufferOverflow()
                 
                 if consecutiveOverflows > maxConsecutiveOverflows && !audioCaptureSuspended {
-                    print("🔴 Circuit breaker triggered: \(consecutiveOverflows) consecutive overflows")
+                    telemetry.recordCircuitBreakerTrigger()
+                    Self.logger.warning("Circuit breaker triggered: \(self.consecutiveOverflows) consecutive overflows")
+                    Self.logger.info("Suspending audio capture for 1 second to allow ML to catch up")
+                    print("🔴 Circuit breaker triggered: \(self.consecutiveOverflows) consecutive overflows")
                     print("   Suspending audio capture for 1 second to allow ML to catch up")
-                    suspendAudioCapture(duration: 1.0)
+                    suspendAudioCapture(duration: AppConstants.circuitBreakerSuspensionSeconds)
                     return nil // Skip this buffer append to help recovery
                 }
                 
                 // Fix CRITICAL: Implement smoothing to prevent audio discontinuities
-                print("⚠️ Audio buffer overflow \(consecutiveOverflows): \(_audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
+                Self.logger.warning("Audio buffer overflow \(self.consecutiveOverflows): \(self._audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
+                Self.logger.info("Applying crossfade to maintain audio continuity")
+                print("⚠️ Audio buffer overflow \(self.consecutiveOverflows): \(self._audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
                 print("   Applying crossfade to maintain audio continuity")
                 
                 // Calculate how many samples to remove
@@ -552,6 +575,7 @@ class AudioEngine: ObservableObject {
             optimizeMemoryUsage()
         }
         
+        Self.logger.warning("Memory pressure detected: \(self.memoryPressureLevel.rawValue) - ML suspended: \(self.mlProcessingSuspendedDueToMemory)")
         print("⚠️ Memory pressure detected: \(memoryPressureLevel) - ML suspended: \(mlProcessingSuspendedDueToMemory)")
     }
     

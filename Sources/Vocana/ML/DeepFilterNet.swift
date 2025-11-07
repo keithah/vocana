@@ -121,14 +121,14 @@ final class DeepFilterNet {
         }
     }
     
-    deinit {
+    // Fix MEDIUM: Add nonisolated for consistency with other deinit methods
+    nonisolated deinit {
         // Fix MEDIUM: Proper state cleanup
         stateQueue.sync {
             _states.removeAll()
         }
         Self.logger.debug("DeepFilterNet deinitialized")
     }
-    // Note: deinit already properly uses stateQueue.sync for thread-safe cleanup
     
     /// Reset internal state (call when starting new audio stream)
     func reset() {

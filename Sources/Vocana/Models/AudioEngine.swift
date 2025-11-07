@@ -49,23 +49,35 @@ class AudioEngine: ObservableObject {
     // MARK: - ML Processing
     
     private func initializeMLProcessing() {
-        do {
-            // Find models directory
-            let modelsPath = findModelsDirectory()
+        // Fix HIGH: Make ML initialization async to avoid blocking UI
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
             
-            // Create DeepFilterNet instance
-            self.denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
-            self.isMLProcessingActive = true
-            print("✓ DeepFilterNet ML processing enabled")
-        } catch {
-            print("⚠️  Could not initialize ML processing: \(error.localizedDescription)")
-            print("   Falling back to simple level-based processing")
-            self.denoiser = nil
-            self.isMLProcessingActive = false
+            do {
+                // Find models directory (can be slow with file system checks)
+                let modelsPath = self.findModelsDirectory()
+                
+                // Create DeepFilterNet instance (potentially slow model loading)
+                let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
+                
+                // Update state on main actor
+                await MainActor.run {
+                    self.denoiser = denoiser
+                    self.isMLProcessingActive = true
+                    print("✓ DeepFilterNet ML processing enabled")
+                }
+            } catch {
+                await MainActor.run {
+                    print("⚠️  Could not initialize ML processing: \(error.localizedDescription)")
+                    print("   Falling back to simple level-based processing")
+                    self.denoiser = nil
+                    self.isMLProcessingActive = false
+                }
+            }
         }
     }
     
-    private func findModelsDirectory() -> String {
+    nonisolated private func findModelsDirectory() -> String {
         // Try multiple locations for models
         let searchPaths = [
             "Resources/Models",

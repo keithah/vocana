@@ -292,13 +292,14 @@ final class ERBFeatures {
             var variance: Float = 0
             vDSP_meanv(buffers.centered, 1, &variance, vDSP_Length(frame.count))
             
-            // Fix MEDIUM: Better epsilon for Float32
+            // Fix CRITICAL: Better epsilon for division safety (same as SpectralFeatures)
             guard !variance.isNaN && !variance.isInfinite && variance >= 0 else {
                 Self.logger.error("Invalid variance: \(variance)")
                 continue
             }
             
-            let std = sqrt(max(variance, Float.leastNormalMagnitude))
+            let epsilon: Float = 1e-6
+            let std = sqrt(max(variance, epsilon))
             
             // Fix MEDIUM: Remove redundant NaN check after epsilon addition
             // std is guaranteed positive due to sqrt(max(...))

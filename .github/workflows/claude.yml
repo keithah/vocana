@@ -17,10 +17,10 @@ on:
 jobs:
   claude:
     if: |
-      (github.event_name == 'issue_comment' && contains(toLower(github.event.comment.body), '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(toLower(github.event.comment.body), '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(toLower(github.event.review.body), '@claude')) ||
-      (github.event_name == 'issues' && (contains(toLower(github.event.issue.body), '@claude') || contains(toLower(github.event.title), '@claude')))
+      (github.event_name == 'issue_comment' && contains(lower(github.event.comment.body), '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(lower(github.event.comment.body), '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(lower(github.event.review.body), '@claude')) ||
+      (github.event_name == 'issues' && (contains(lower(github.event.issue.body), '@claude') || contains(lower(github.event.title), '@claude')))
     runs-on: ubuntu-latest
     permissions:
       contents: read

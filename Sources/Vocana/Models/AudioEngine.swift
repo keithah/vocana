@@ -92,9 +92,31 @@ class AudioEngine: ObservableObject {
         }
     }
     
-    @Published var telemetry = ProductionTelemetry()
-    
-    private var timer: Timer?
+     @Published var telemetry = ProductionTelemetry()
+     
+     /// Computed property to indicate if there are buffer/performance issues
+     /// Useful for UI indicators that show when the engine is under stress
+     var hasPerformanceIssues: Bool {
+         telemetry.audioBufferOverflows > 0 || 
+         telemetry.circuitBreakerTriggers > 0 ||
+         telemetry.mlProcessingFailures > 0 ||
+         memoryPressureLevel != .normal
+     }
+     
+     /// Computed property for user-friendly status message about buffer health
+     var bufferHealthMessage: String {
+         if telemetry.circuitBreakerTriggers > 0 {
+             return "Circuit breaker active (\(telemetry.circuitBreakerTriggers)x)"
+         } else if telemetry.audioBufferOverflows > 0 {
+             return "Buffer pressure (\(telemetry.audioBufferOverflows) overflows)"
+         } else if telemetry.mlProcessingFailures > 0 {
+             return "ML issues detected"
+         } else {
+             return "Buffer healthy"
+         }
+     }
+     
+     private var timer: Timer?
     private var audioEngine: AVAudioEngine?
     private var isEnabled: Bool = false
     private var sensitivity: Double = 0.5

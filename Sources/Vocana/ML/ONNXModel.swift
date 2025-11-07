@@ -6,8 +6,7 @@ import Accelerate
 /// This class provides a Swift interface to ONNX Runtime for running
 /// the three DeepFilterNet3 models: encoder, ERB decoder, and DF decoder.
 ///
-/// TODO: Replace mock implementation with actual ONNX Runtime C API integration
-/// For production, this will use libonnxruntime.dylib with C API bindings
+/// Supports both mock and native ONNX Runtime implementations.
 class ONNXModel {
     enum ONNXError: Error {
         case modelNotFound(String)
@@ -19,6 +18,7 @@ class ONNXModel {
     
     private let modelPath: String
     private let modelName: String
+    private let session: InferenceSession
     
     // Model shapes (from DeepFilterNet3 config)
     private let encoderInputShapes = [
@@ -36,8 +36,10 @@ class ONNXModel {
     ]
     
     /// Initialize ONNX model from file path
-    /// - Parameter modelPath: Path to .onnx model file
-    init(modelPath: String) throws {
+    /// - Parameters:
+    ///   - modelPath: Path to .onnx model file
+    ///   - useNative: If true, try to use native ONNX Runtime (falls back to mock if unavailable)
+    init(modelPath: String, useNative: Bool = false) throws {
         self.modelPath = modelPath
         self.modelName = URL(fileURLWithPath: modelPath).deletingPathExtension().lastPathComponent
         
@@ -46,77 +48,43 @@ class ONNXModel {
             throw ONNXError.modelNotFound(modelPath)
         }
         
-        print("✓ Loaded ONNX model: \(modelName)")
+        // Create ONNX Runtime session
+        let runtime = ONNXRuntimeWrapper(mode: useNative ? .automatic : .mock)
+        let options = SessionOptions(
+            intraOpNumThreads: 4,
+            graphOptimizationLevel: .all
+        )
         
-        // TODO: Initialize ONNX Runtime session
-        // let env = OrtEnv()
-        // let sessionOptions = OrtSessionOptions()
-        // self.session = try OrtSession(env: env, modelPath: modelPath, options: sessionOptions)
+        do {
+            self.session = try runtime.createSession(modelPath: modelPath, options: options)
+            print("✓ Loaded ONNX model: \(modelName)")
+        } catch {
+            throw ONNXError.sessionCreationFailed(error.localizedDescription)
+        }
     }
     
     /// Run inference with input tensors
     /// - Parameter inputs: Dictionary of input name to tensor data
     /// - Returns: Dictionary of output name to tensor data
     func infer(inputs: [String: Tensor]) throws -> [String: Tensor] {
-        // TODO: Replace with actual ONNX Runtime inference
-        // For now, return mock outputs with correct shapes based on model type
-        
-        switch modelName {
-        case "enc":
-            return try inferEncoder(inputs: inputs)
-        case "erb_dec":
-            return try inferERBDecoder(inputs: inputs)
-        case "df_dec":
-            return try inferDFDecoder(inputs: inputs)
-        default:
-            throw ONNXError.inferenceError("Unknown model: \(modelName)")
-        }
-    }
-    
-    // MARK: - Mock Inference (TODO: Replace with ONNX Runtime)
-    
-    private func inferEncoder(inputs: [String: Tensor]) throws -> [String: Tensor] {
-        // Validate inputs
-        guard let erbFeat = inputs["erb_feat"],
-              let _ = inputs["spec_feat"] else {
-            throw ONNXError.invalidInputShape
+        // Convert Tensor to TensorData
+        var tensorInputs: [String: TensorData] = [:]
+        for (name, tensor) in inputs {
+            let shape = tensor.shape.map { Int64($0) }
+            tensorInputs[name] = TensorData(shape: shape, data: tensor.data)
         }
         
-        let timeSteps = erbFeat.shape[2]
+        // Run inference
+        let tensorOutputs = try session.run(inputs: tensorInputs)
         
-        // Create mock outputs with correct shapes
-        return [
-            "e0": Tensor(shape: [1, 1, timeSteps, 96], data: Array(repeating: 0.1, count: 1 * 1 * timeSteps * 96)),
-            "e1": Tensor(shape: [1, 32, timeSteps, 48], data: Array(repeating: 0.1, count: 1 * 32 * timeSteps * 48)),
-            "e2": Tensor(shape: [1, 64, timeSteps, 24], data: Array(repeating: 0.1, count: 1 * 64 * timeSteps * 24)),
-            "e3": Tensor(shape: [1, 128, timeSteps, 12], data: Array(repeating: 0.1, count: 1 * 128 * timeSteps * 12)),
-            "emb": Tensor(shape: [1, 256, timeSteps, 6], data: Array(repeating: 0.1, count: 1 * 256 * timeSteps * 6)),
-            "c0": Tensor(shape: [1, timeSteps, 256], data: Array(repeating: 0.1, count: 1 * timeSteps * 256)),
-            "lsnr": Tensor(shape: [1, timeSteps, 1], data: Array(repeating: -10.0, count: 1 * timeSteps * 1))
-        ]
-    }
-    
-    private func inferERBDecoder(inputs: [String: Tensor]) throws -> [String: Tensor] {
-        // Extract time dimension from inputs
-        let timeSteps = inputs["e3"]?.shape[2] ?? 1
-        let freqBins = 481  // Full spectrum bins
+        // Convert TensorData back to Tensor
+        var outputs: [String: Tensor] = [:]
+        for (name, tensorData) in tensorOutputs {
+            let shape = tensorData.shape.map { Int($0) }
+            outputs[name] = Tensor(shape: shape, data: tensorData.data)
+        }
         
-        // Return enhanced ERB mask
-        return [
-            "m": Tensor(shape: [1, 1, timeSteps, freqBins], data: Array(repeating: 0.8, count: 1 * 1 * timeSteps * freqBins))
-        ]
-    }
-    
-    private func inferDFDecoder(inputs: [String: Tensor]) throws -> [String: Tensor] {
-        // Extract time dimension
-        let timeSteps = inputs["e3"]?.shape[2] ?? 1
-        let dfBins = 96
-        let dfOrder = 5
-        
-        // Return deep filtering coefficients
-        return [
-            "coefs": Tensor(shape: [timeSteps, dfBins, dfOrder], data: Array(repeating: 0.01, count: timeSteps * dfBins * dfOrder))
-        ]
+        return outputs
     }
 }
 
@@ -156,59 +124,24 @@ struct Tensor {
     }
 }
 
-// MARK: - ONNX Runtime Integration Notes
+// MARK: - Usage Notes
 
 /*
- Production ONNX Runtime Integration Steps:
+ The ONNXModel class now uses ONNXRuntimeWrapper which supports both:
+ - Mock inference (for development/testing without ONNX Runtime)
+ - Native inference (when ONNX Runtime library is available)
  
- 1. Add ONNX Runtime dependency:
-    - Download onnxruntime-osx-universal2 from GitHub releases
-    - Add libonnxruntime.dylib to Frameworks/
-    - Link in Package.swift
+ To enable native ONNX Runtime:
+ 1. See ONNXRuntimeWrapper.swift for installation instructions
+ 2. Create model with useNative = true
+ 3. Runtime will automatically detect and use available library
  
- 2. Create C API bindings:
-    - Import onnxruntime_c_api.h
-    - Wrap OrtEnv, OrtSession, OrtValue creation
+ Example:
+ ```swift
+ // Use mock (default)
+ let model = try ONNXModel(modelPath: "enc.onnx")
  
- 3. Replace init():
-    ```swift
-    let env = try OrtEnv.create(with: .default, name: "VocanaONNX")
-    let options = try OrtSessionOptions.create()
-    try options.setIntraOpNumThreads(4)
-    try options.setGraphOptimizationLevel(.all)
-    self.session = try OrtSession.create(env: env, modelPath: modelPath, options: options)
-    ```
- 
- 4. Replace infer():
-    ```swift
-    // Create input tensors
-    let inputNames = Array(inputs.keys)
-    let inputTensors = try inputs.map { name, tensor in
-        try OrtValue.createTensor(with: tensor.data, shape: tensor.shape)
-    }
-    
-    // Run inference
-    let outputs = try session.run(
-        inputNames: inputNames,
-        inputValues: inputTensors,
-        outputNames: getOutputNames()
-    )
-    
-    // Convert outputs back to Tensor
-    return try outputs.reduce(into: [:]) { result, output in
-        result[output.name] = Tensor(
-            shape: try output.value.getTensorShape(),
-            data: try output.value.getTensorData()
-        )
-    }
-    ```
- 
- 5. Performance optimization:
-    - Enable CoreML ExecutionProvider on macOS
-    - Use memory arena for faster allocation
-    - Batch processing when possible
- 
- References:
- - ONNX Runtime C API: https://onnxruntime.ai/docs/api/c/
- - iOS/macOS Integration: https://onnxruntime.ai/docs/tutorials/mobile/
+ // Try native, fall back to mock if unavailable
+ let model = try ONNXModel(modelPath: "enc.onnx", useNative: true)
+ ```
  */

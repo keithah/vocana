@@ -13,17 +13,29 @@ struct AudioLevels {
 class AudioEngine: ObservableObject {
     @Published var currentLevels = AudioLevels.zero
     @Published var isUsingRealAudio = false
+    @Published var isMLProcessingActive = false
+    @Published var processingLatencyMs: Double = 0
     
     private var timer: Timer?
     private var audioEngine: AVAudioEngine?
     private var isEnabled: Bool = false
     private var sensitivity: Double = 0.5
     
+    // ML processing
+    private var denoiser: DeepFilterNet?
+    private var audioBuffer: [Float] = []
+    private let minimumBufferSize = 960  // FFT size for DeepFilterNet
+    
     func startSimulation(isEnabled: Bool, sensitivity: Double) {
         self.isEnabled = isEnabled
         self.sensitivity = sensitivity
         
         stopSimulation()
+        
+        // Initialize DeepFilterNet if enabled
+        if isEnabled {
+            initializeMLProcessing()
+        }
         
         // Try to start real audio capture, fallback to simulation
         if startRealAudioCapture() {
@@ -34,9 +46,57 @@ class AudioEngine: ObservableObject {
         }
     }
     
+    // MARK: - ML Processing
+    
+    private func initializeMLProcessing() {
+        do {
+            // Find models directory
+            let modelsPath = findModelsDirectory()
+            
+            // Create DeepFilterNet instance
+            self.denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
+            self.isMLProcessingActive = true
+            print("✓ DeepFilterNet ML processing enabled")
+        } catch {
+            print("⚠️  Could not initialize ML processing: \(error.localizedDescription)")
+            print("   Falling back to simple level-based processing")
+            self.denoiser = nil
+            self.isMLProcessingActive = false
+        }
+    }
+    
+    private func findModelsDirectory() -> String {
+        // Try multiple locations for models
+        let searchPaths = [
+            "Resources/Models",
+            "../Resources/Models",
+            "ml-models/pretrained/tmp/export",
+            "../ml-models/pretrained/tmp/export"
+        ]
+        
+        for path in searchPaths {
+            let encPath = "\(path)/enc.onnx"
+            if FileManager.default.fileExists(atPath: encPath) {
+                return path
+            }
+        }
+        
+        // Default fallback
+        return "Resources/Models"
+    }
+    
     func stopSimulation() {
         stopRealAudioCapture()
         stopSimulatedAudio()
+        
+        // Clean up ML processing
+        if denoiser != nil {
+            denoiser?.reset()
+            denoiser = nil
+            audioBuffer.removeAll()
+            isMLProcessingActive = false
+            processingLatencyMs = 0
+        }
     }
     
     deinit {
@@ -82,20 +142,18 @@ class AudioEngine: ObservableObject {
         let channelDataValue = channelData.pointee
         let frames = buffer.frameLength
         
-        // Calculate RMS (Root Mean Square) for audio level
-        var sum: Float = 0
-        for frame in 0..<Int(frames) {
-            let sample = channelDataValue[frame]
-            sum += sample * sample
+        // Extract audio samples
+        var samples = [Float](repeating: 0, count: Int(frames))
+        for i in 0..<Int(frames) {
+            samples[i] = channelDataValue[i]
         }
-        let rms = sqrt(sum / Float(frames))
         
-        // Convert to 0-1 range (typical audio is -1 to 1, RMS will be much smaller)
-        let inputLevel = min(1.0, rms * 10.0) // Scale up RMS
+        // Calculate input level (RMS)
+        let inputLevel = calculateRMS(samples: samples)
         
         if isEnabled {
-            // Apply noise reduction (simulated by reducing output level)
-            let outputLevel = inputLevel * Float(sensitivity)
+            // Process with ML if available
+            let outputLevel = processWithMLIfAvailable(samples: samples)
             currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
         } else {
             // When disabled, show decay
@@ -107,6 +165,56 @@ class AudioEngine: ObservableObject {
             } else {
                 currentLevels = AudioLevels(input: decayedInput, output: decayedOutput)
             }
+        }
+    }
+    
+    private func calculateRMS(samples: [Float]) -> Float {
+        var sum: Float = 0
+        for sample in samples {
+            sum += sample * sample
+        }
+        let rms = sqrt(sum / Float(samples.count))
+        
+        // Convert to 0-1 range (typical audio is -1 to 1, RMS will be much smaller)
+        return min(1.0, rms * 10.0)
+    }
+    
+    private func processWithMLIfAvailable(samples: [Float]) -> Float {
+        guard let denoiser = denoiser, isMLProcessingActive else {
+            // Fallback to simple level-based processing
+            return calculateRMS(samples: samples) * Float(sensitivity)
+        }
+        
+        // Accumulate samples in buffer
+        audioBuffer.append(contentsOf: samples)
+        
+        // Process when we have enough samples
+        guard audioBuffer.count >= minimumBufferSize else {
+            // Not enough samples yet, return current level
+            return calculateRMS(samples: samples) * Float(sensitivity)
+        }
+        
+        // Extract chunk for processing
+        let chunk = Array(audioBuffer.prefix(minimumBufferSize))
+        audioBuffer.removeFirst(minimumBufferSize)
+        
+        // Process with DeepFilterNet
+        do {
+            let startTime = CFAbsoluteTimeGetCurrent()
+            let enhanced = try denoiser.process(audio: chunk)
+            let endTime = CFAbsoluteTimeGetCurrent()
+            
+            // Update latency measurement
+            processingLatencyMs = (endTime - startTime) * 1000.0
+            
+            // Calculate output level from enhanced audio
+            return calculateRMS(samples: enhanced)
+        } catch {
+            print("⚠️  ML processing error: \(error.localizedDescription)")
+            isMLProcessingActive = false
+            
+            // Fallback to simple processing
+            return calculateRMS(samples: chunk) * Float(sensitivity)
         }
     }
     

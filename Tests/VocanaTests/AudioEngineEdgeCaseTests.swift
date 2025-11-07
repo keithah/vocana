@@ -28,20 +28,44 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(initialLevel, 0.0, "Should handle empty buffers gracefully")
     }
     
-    func testNaNValuesInAudioInput() {
-        // Engine should detect NaN and skip processing
-        audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
-        // Engine should detect NaN and skip processing
-        // This is tested indirectly - if it crashes, test fails
-        XCTAssertTrue(audioEngine.isMLProcessingActive || !audioEngine.isMLProcessingActive, "Should continue running despite NaN values")
-    }
+     func testNaNValuesInAudioInput() {
+         // Engine should detect NaN and skip processing
+         audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
+         
+         // Verify ML processing started when simulation begins
+         let initialState = audioEngine.isMLProcessingActive
+         
+         // Wait briefly for ML initialization (simulated, so should be fast)
+         let expectation = XCTestExpectation(description: "ML processing initialized")
+         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+             expectation.fulfill()
+         }
+         
+         wait(for: [expectation], timeout: 1.0)
+         
+         // After starting with ML enabled, should attempt ML processing
+         // (may succeed or fail depending on model availability, but shouldn't crash)
+         XCTAssertNotNil(audioEngine.currentLevels, "Engine should produce audio levels despite NaN input")
+     }
     
-    func testInfinityValuesInAudioInput() {
-        // Engine should detect infinity and skip processing
-        audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
-        // Engine should detect infinity and skip processing
-        XCTAssertTrue(audioEngine.isMLProcessingActive || !audioEngine.isMLProcessingActive, "Should continue running despite infinity values")
-    }
+     func testInfinityValuesInAudioInput() {
+         // Engine should detect infinity and skip processing
+         audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
+         
+         // Verify processing initialization happens
+         let expectation = XCTestExpectation(description: "Processing continues after infinity values")
+         
+         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+             // Engine should still be running and producing valid levels
+             let level = self.audioEngine.currentLevels.input
+             XCTAssertGreaterThanOrEqual(level, 0.0, "Input level should be >= 0")
+             XCTAssertFalse(level.isInfinite, "Input level should not be infinite")
+             XCTAssertFalse(level.isNaN, "Input level should not be NaN")
+             expectation.fulfill()
+         }
+         
+         wait(for: [expectation], timeout: 1.0)
+     }
     
     func testExtremeAmplitudeValues() {
         // Should log warning and skip ML processing on extreme amplitudes

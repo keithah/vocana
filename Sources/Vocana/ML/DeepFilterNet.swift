@@ -128,6 +128,7 @@ final class DeepFilterNet {
         }
         Self.logger.debug("DeepFilterNet deinitialized")
     }
+    // Note: deinit already properly uses stateQueue.sync for thread-safe cleanup
     
     /// Reset internal state (call when starting new audio stream)
     func reset() {
@@ -180,9 +181,9 @@ final class DeepFilterNet {
                 throw DeepFilterError.processingFailed("Invalid STFT output dimensions")
             }
             
-            // Fix MEDIUM: Use reduce instead of flatMap for efficiency
-            let spectrumReal = spectrum2D.real.reduce([], +)
-            let spectrumImag = spectrum2D.imag.reduce([], +)
+            // Fix MAJOR: Use flatMap instead of reduce for O(n) complexity instead of O(n²)
+            let spectrumReal = spectrum2D.real.flatMap { $0 }
+            let spectrumImag = spectrum2D.imag.flatMap { $0 }
             let spectrum = (real: spectrumReal, imag: spectrumImag)
             
             // 2. Extract features
@@ -368,10 +369,16 @@ final class DeepFilterNet {
         vDSP_vsq(spectrum.imag, 1, &imagSquared, 1, vDSP_Length(spectrum.imag.count))
         vDSP_vadd(realSquared, 1, imagSquared, 1, &magnitude, 1, vDSP_Length(magnitude.count))
         
-        var count = Int32(magnitude.count)
-        vvsqrtf(&magnitude, magnitude, &count)
+        // Fix MEDIUM: Use separate buffer for vvsqrtf to avoid in-place operation issues
+        var sqrtResult = [Float](repeating: 0, count: magnitude.count)
+        magnitude.withUnsafeBufferPointer { magPtr in
+            sqrtResult.withUnsafeMutableBufferPointer { sqrtPtr in
+                var count = Int32(magnitude.count)
+                vvsqrtf(sqrtPtr.baseAddress!, magPtr.baseAddress!, &count)
+            }
+        }
         
-        return magnitude
+        return sqrtResult
     }
     
     /// Process entire audio buffer (for batch processing)

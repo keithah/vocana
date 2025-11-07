@@ -6,11 +6,10 @@ This script loads a pretrained DeepFilterNet3 model and attempts to convert it
 to Core ML format for use in the Vocana macOS application.
 """
 
-import os
+# Fix LOW: Remove unused imports
 import sys
 import torch
 import coremltools as ct
-import numpy as np
 from pathlib import Path
 
 # Add DeepFilterNet to path
@@ -18,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "DeepFilterNet" / "DeepFil
 
 from df.enhance import init_df
 from df.model import ModelParams
-from libdf import DF
 
 
 def convert_model(model_dir: str, output_path: str):

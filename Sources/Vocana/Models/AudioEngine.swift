@@ -177,6 +177,9 @@ class AudioEngine: ObservableObject {
     }
     
     private func calculateRMS(samples: [Float]) -> Float {
+        // Fix MAJOR: Guard against empty buffer causing division by zero
+        guard !samples.isEmpty else { return 0 }
+        
         var sum: Float = 0
         for sample in samples {
             sum += sample * sample

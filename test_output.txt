@@ -1,0 +1,120 @@
+Test Suite 'All tests' started at 2025-11-06 19:06:45.197.
+Test Suite 'VocanaPackageTests.xctest' started at 2025-11-06 19:06:45.198.
+Test Suite 'AppConstantsTests' started at 2025-11-06 19:06:45.198.
+Test Case '-[VocanaTests.AppConstantsTests testColors]' started.
+Test Case '-[VocanaTests.AppConstantsTests testColors]' passed (0.001 seconds).
+Test Case '-[VocanaTests.AppConstantsTests testConstantsValues]' started.
+Test Case '-[VocanaTests.AppConstantsTests testConstantsValues]' passed (0.000 seconds).
+Test Case '-[VocanaTests.AppConstantsTests testFonts]' started.
+Test Case '-[VocanaTests.AppConstantsTests testFonts]' passed (0.000 seconds).
+Test Suite 'AppConstantsTests' passed at 2025-11-06 19:06:45.199.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'AppSettingsTests' started at 2025-11-06 19:06:45.199.
+Test Case '-[VocanaTests.AppSettingsTests testClampedValuePersistence]' started.
+Test Case '-[VocanaTests.AppSettingsTests testClampedValuePersistence]' passed (0.001 seconds).
+Test Case '-[VocanaTests.AppSettingsTests testDefaultValues]' started.
+Test Case '-[VocanaTests.AppSettingsTests testDefaultValues]' passed (0.000 seconds).
+Test Case '-[VocanaTests.AppSettingsTests testInitWithCorruptedUserDefaults]' started.
+Test Case '-[VocanaTests.AppSettingsTests testInitWithCorruptedUserDefaults]' passed (0.000 seconds).
+Test Case '-[VocanaTests.AppSettingsTests testIsEnabledPersistence]' started.
+Test Case '-[VocanaTests.AppSettingsTests testIsEnabledPersistence]' passed (0.001 seconds).
+Test Case '-[VocanaTests.AppSettingsTests testResetToDefaults]' started.
+Test Case '-[VocanaTests.AppSettingsTests testResetToDefaults]' passed (0.001 seconds).
+Test Case '-[VocanaTests.AppSettingsTests testSensitivityBoundaryValues]' started.
+Test Case '-[VocanaTests.AppSettingsTests testSensitivityBoundaryValues]' passed (0.000 seconds).
+Test Case '-[VocanaTests.AppSettingsTests testSensitivityClamping]' started.
+Test Case '-[VocanaTests.AppSettingsTests testSensitivityClamping]' passed (0.000 seconds).
+Test Case '-[VocanaTests.AppSettingsTests testSensitivityPersistence]' started.
+Test Case '-[VocanaTests.AppSettingsTests testSensitivityPersistence]' passed (0.000 seconds).
+Test Case '-[VocanaTests.AppSettingsTests testSensitivitySpecialValues]' started.
+Test Case '-[VocanaTests.AppSettingsTests testSensitivitySpecialValues]' passed (0.000 seconds).
+Test Suite 'AppSettingsTests' passed at 2025-11-06 19:06:45.205.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.005 (0.006) seconds
+Test Suite 'AudioEngineTests' started at 2025-11-06 19:06:45.205.
+Test Case '-[VocanaTests.AudioEngineTests testDisabledStateDecay]' started.
+Test Case '-[VocanaTests.AudioEngineTests testDisabledStateDecay]' passed (1.362 seconds).
+Test Case '-[VocanaTests.AudioEngineTests testInitialState]' started.
+Test Case '-[VocanaTests.AudioEngineTests testInitialState]' passed (0.000 seconds).
+Test Case '-[VocanaTests.AudioEngineTests testStartSimulation]' started.
+Test Case '-[VocanaTests.AudioEngineTests testStartSimulation]' passed (0.363 seconds).
+Test Case '-[VocanaTests.AudioEngineTests testStopSimulation]' started.
+Test Case '-[VocanaTests.AudioEngineTests testStopSimulation]' passed (0.370 seconds).
+Test Suite 'AudioEngineTests' passed at 2025-11-06 19:06:47.301.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 2.096 (2.096) seconds
+Test Suite 'AudioLevelsTests' started at 2025-11-06 19:06:47.301.
+Test Case '-[VocanaTests.AudioLevelsTests testAudioLevelsInitialization]' started.
+Test Case '-[VocanaTests.AudioLevelsTests testAudioLevelsInitialization]' passed (0.000 seconds).
+Test Case '-[VocanaTests.AudioLevelsTests testAudioLevelsRange]' started.
+Test Case '-[VocanaTests.AudioLevelsTests testAudioLevelsRange]' passed (0.000 seconds).
+Test Case '-[VocanaTests.AudioLevelsTests testAudioLevelsZero]' started.
+Test Case '-[VocanaTests.AudioLevelsTests testAudioLevelsZero]' passed (0.000 seconds).
+Test Suite 'AudioLevelsTests' passed at 2025-11-06 19:06:47.302.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'DeepFilterNetTests' started at 2025-11-06 19:06:47.302.
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilteringCoefficients]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilteringCoefficients]' passed (0.000 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilteringEnhance]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilteringEnhance]' passed (0.000 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilteringMaskApplication]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilteringMaskApplication]' passed (0.000 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetBuffer]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetBuffer]' passed (0.068 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetInitialization]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetInitialization]' passed (0.003 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetPerformance]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetPerformance]' passed (0.009 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetReset]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetReset]' passed (0.005 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetSingleFrame]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testDeepFilterNetSingleFrame]' passed (0.004 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testONNXEncoderInference]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testONNXEncoderInference]' passed (0.000 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testONNXModelLoading]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testONNXModelLoading]' passed (0.000 seconds).
+Test Case '-[VocanaTests.DeepFilterNetTests testTensorOperations]' started.
+Test Case '-[VocanaTests.DeepFilterNetTests testTensorOperations]' passed (0.000 seconds).
+Test Suite 'DeepFilterNetTests' passed at 2025-11-06 19:06:47.391.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.089 (0.090) seconds
+Test Suite 'FeatureExtractionTests' started at 2025-11-06 19:06:47.391.
+Test Case '-[VocanaTests.FeatureExtractionTests testERBFeatureExtraction]' started.
+Test Case '-[VocanaTests.FeatureExtractionTests testERBFeatureExtraction]' passed (0.006 seconds).
+Test Case '-[VocanaTests.FeatureExtractionTests testERBFilterbankGeneration]' started.
+Test Case '-[VocanaTests.FeatureExtractionTests testERBFilterbankGeneration]' passed (0.002 seconds).
+Test Case '-[VocanaTests.FeatureExtractionTests testERBNormalization]' started.
+Test Case '-[VocanaTests.FeatureExtractionTests testERBNormalization]' passed (0.003 seconds).
+Test Case '-[VocanaTests.FeatureExtractionTests testFullFeatureExtractionPipeline]' started.
+Test Case '-[VocanaTests.FeatureExtractionTests testFullFeatureExtractionPipeline]' passed (0.009 seconds).
+Test Case '-[VocanaTests.FeatureExtractionTests testSpectralFeatureExtraction]' started.
+Test Case '-[VocanaTests.FeatureExtractionTests testSpectralFeatureExtraction]' passed (0.005 seconds).
+Test Case '-[VocanaTests.FeatureExtractionTests testSpectralFeatureFrequencyRange]' started.
+Test Case '-[VocanaTests.FeatureExtractionTests testSpectralFeatureFrequencyRange]' passed (0.003 seconds).
+Test Case '-[VocanaTests.FeatureExtractionTests testSpectralFeatureNormalization]' started.
+Test Case '-[VocanaTests.FeatureExtractionTests testSpectralFeatureNormalization]' passed (0.003 seconds).
+Test Suite 'FeatureExtractionTests' passed at 2025-11-06 19:06:47.422.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.031 (0.031) seconds
+Test Suite 'SignalProcessingTests' started at 2025-11-06 19:06:47.423.
+Test Case '-[VocanaTests.SignalProcessingTests testDCSignal]' started.
+Test Case '-[VocanaTests.SignalProcessingTests testDCSignal]' passed (0.000 seconds).
+Test Case '-[VocanaTests.SignalProcessingTests testPerfectReconstruction]' started.
+Test Case '-[VocanaTests.SignalProcessingTests testPerfectReconstruction]' passed (0.036 seconds).
+Test Case '-[VocanaTests.SignalProcessingTests testSineWaveFrequencyDetection]' started.
+Test Case '-[VocanaTests.SignalProcessingTests testSineWaveFrequencyDetection]' passed (0.003 seconds).
+Test Case '-[VocanaTests.SignalProcessingTests testSTFTEmptyInput]' started.
+Test Case '-[VocanaTests.SignalProcessingTests testSTFTEmptyInput]' passed (0.000 seconds).
+Test Case '-[VocanaTests.SignalProcessingTests testSTFTInitialization]' started.
+Test Case '-[VocanaTests.SignalProcessingTests testSTFTInitialization]' passed (0.000 seconds).
+Test Case '-[VocanaTests.SignalProcessingTests testSTFTShortInput]' started.
+Test Case '-[VocanaTests.SignalProcessingTests testSTFTShortInput]' passed (0.000 seconds).
+Test Suite 'SignalProcessingTests' passed at 2025-11-06 19:06:47.463.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.040 (0.040) seconds
+Test Suite 'VocanaPackageTests.xctest' passed at 2025-11-06 19:06:47.463.
+	 Executed 43 tests, with 0 failures (0 unexpected) in 2.262 (2.265) seconds
+Test Suite 'All tests' passed at 2025-11-06 19:06:47.463.
+	 Executed 43 tests, with 0 failures (0 unexpected) in 2.262 (2.266) seconds
+✓ DeepFilterNet ML processing enabled
+✓ DeepFilterNet ML processing enabled
+Average latency: 0.60 ms
+◇ Test run started.
+↳ Testing Library Version: 1085
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

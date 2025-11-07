@@ -160,18 +160,14 @@ class MockInferenceSession: InferenceSession {
     
     /// Safe conversion from Int64 to Int with overflow checking
     private func safeIntCount(_ values: Int64...) throws -> Int {
-        let product = values.reduce(Int64(1)) { result, val in
-            let (p, overflow) = result.multipliedReportingOverflow(by: val)
+        // Fix MEDIUM: Don't use Int64.max as sentinel - throw immediately on overflow
+        var product = Int64(1)
+        for val in values {
+            let (p, overflow) = product.multipliedReportingOverflow(by: val)
             guard !overflow else {
-                // Changed from fatalError to throwing error
-                return Int64.max  // Signal overflow
+                throw ONNXError.runtimeError("Tensor size overflow during multiplication")
             }
-            return p
-        }
-        
-        // Check if overflow occurred
-        guard product != Int64.max else {
-            throw ONNXError.runtimeError("Tensor size overflow during multiplication")
+            product = p
         }
         
         guard let count = Int(exactly: product) else {

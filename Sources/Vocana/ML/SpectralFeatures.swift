@@ -174,7 +174,7 @@ final class SpectralFeatures {
             vDSP_meanv(sqrtResult, 1, &meanMag, vDSP_Length(sqrtResult.count))
             
             // Fix MEDIUM: Vectorized variance calculation
-            var meanSquared = meanMag * meanMag
+            let meanSquared = meanMag * meanMag
             var magSquared = [Float](repeating: 0, count: sqrtResult.count)
             vDSP_vsq(sqrtResult, 1, &magSquared, 1, vDSP_Length(sqrtResult.count))
             
@@ -195,7 +195,9 @@ final class SpectralFeatures {
             // std is guaranteed valid after sqrt(max(...))
             
             // Normalize real and imaginary parts using vDSP
-            var invStd = 1.0 / max(std, Float.leastNormalMagnitude)
+            // Fix CRITICAL: Use reasonable epsilon to prevent division issues with silent frames
+            let epsilon: Float = 1e-6
+            var invStd = 1.0 / max(std, epsilon)
             vDSP_vsmul(realPart, 1, &invStd, &normalizedRealBuffer, 1, vDSP_Length(realPart.count))
             vDSP_vsmul(imagPart, 1, &invStd, &normalizedImagBuffer, 1, vDSP_Length(imagPart.count))
             

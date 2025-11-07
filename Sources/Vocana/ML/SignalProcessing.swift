@@ -91,7 +91,8 @@ final class STFT {
         self.frameBuffer = [Float](repeating: 0, count: fftSize)
     }
     
-    deinit {
+    // Fix MEDIUM: Mark deinit as nonisolated for consistency
+    nonisolated deinit {
         vDSP_destroy_fftsetup(fftSetup)
     }
     

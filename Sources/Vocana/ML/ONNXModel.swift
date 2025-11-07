@@ -55,7 +55,8 @@ final class ONNXModel {
         }
     }
     
-    deinit {
+    // Fix MEDIUM: Mark deinit as nonisolated for consistency
+    nonisolated deinit {
         // Session cleanup is handled by InferenceSession protocol implementations automatically
         Self.logger.debug("ONNXModel \(self.modelName) deinitialized")
     }
@@ -102,6 +103,8 @@ final class ONNXModel {
                 }
                 return intValue
             }
+            // Fix MAJOR: Tensor validates shape/data consistency with precondition
+            // Note: If throwing validation is needed, update Tensor init to throw
             outputs[name] = Tensor(shape: shape, data: tensorData.data)
         }
         

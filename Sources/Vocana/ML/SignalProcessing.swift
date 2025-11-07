@@ -44,6 +44,9 @@ final class STFT {
     private var tempImag: [Float]
     private var frameBuffer: [Float]
     
+    // Fix CRITICAL: Thread safety for shared buffer access
+    private let transformQueue = DispatchQueue(label: "com.vocana.stft.transform", qos: .userInitiated)
+    
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "STFT")
     
@@ -109,7 +112,9 @@ final class STFT {
     /// - Parameter audio: Input audio samples
     /// - Returns: Complex spectrogram as (real, imag) arrays with shape [numFrames, fftSize/2 + 1]
     func transform(_ audio: [Float]) -> (real: [[Float]], imag: [[Float]]) {
-        let numSamples = audio.count
+        // Fix CRITICAL: Thread-safe transform with dedicated queue
+        return transformQueue.sync {
+            let numSamples = audio.count
         
         // Fix CRITICAL: Integer underflow protection
         guard numSamples >= fftSize else {
@@ -210,6 +215,7 @@ final class STFT {
         }
         
         return (spectrogramReal, spectrogramImag)
+        } // End transformQueue.sync
     }
     
     // MARK: - Inverse Transform (Frequency → Time)
@@ -220,9 +226,11 @@ final class STFT {
     ///   - imag: Imaginary part of spectrogram [numFrames, fftSize/2 + 1]
     /// - Returns: Reconstructed audio samples
     func inverse(real: [[Float]], imag: [[Float]]) -> [Float] {
-        guard real.count == imag.count, real.count > 0 else {
-            return []
-        }
+        // Fix CRITICAL: Thread-safe inverse transform
+        return transformQueue.sync {
+            guard real.count == imag.count, real.count > 0 else {
+                return []
+            }
         
         let numFrames = real.count
         
@@ -371,6 +379,7 @@ final class STFT {
         }
         
         return output
+        } // End transformQueue.sync
     }
     
     // MARK: - Helper Methods

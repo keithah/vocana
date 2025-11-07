@@ -24,6 +24,9 @@ final class ONNXModel {
     private let modelName: String
     private let session: InferenceSession
     
+    // Fix CRITICAL: Thread safety for concurrent inference calls
+    private let sessionQueue = DispatchQueue(label: "com.vocana.onnx.session", qos: .userInitiated)
+    
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "ONNXModel")
     
@@ -66,27 +69,29 @@ final class ONNXModel {
     /// - Returns: Dictionary of output name to tensor data
     /// - Throws: ONNXError if inference fails
     func infer(inputs: [String: Tensor]) throws -> [String: Tensor] {
-        // Fix MEDIUM: Validate inputs not empty
-        guard !inputs.isEmpty else {
-            throw ONNXError.emptyInputs
-        }
-        
-        // Convert Tensor to TensorData with safe type conversion
-        var tensorInputs: [String: TensorData] = [:]
-        for (name, tensor) in inputs {
-            // Fix CRITICAL: Safe Int to Int64 conversion with proper error handling
-            let shape = try tensor.shape.map { value in
-                guard let int64Value = Int64(exactly: value) else {
-                    throw ONNXError.invalidInputShape("Shape dimension \(value) cannot be converted to Int64")
-                }
-                return int64Value
+        // Fix CRITICAL: Thread-safe inference with dedicated queue
+        return try sessionQueue.sync {
+            // Fix MEDIUM: Validate inputs not empty
+            guard !inputs.isEmpty else {
+                throw ONNXError.emptyInputs
             }
-            // Use throwing initializer for validation
-            tensorInputs[name] = try TensorData(shape: shape, data: tensor.data)
-        }
-        
-        // Run inference
-        let tensorOutputs = try session.run(inputs: tensorInputs)
+            
+            // Convert Tensor to TensorData with safe type conversion
+            var tensorInputs: [String: TensorData] = [:]
+            for (name, tensor) in inputs {
+                // Fix CRITICAL: Safe Int to Int64 conversion with proper error handling
+                let shape = try tensor.shape.map { value in
+                    guard let int64Value = Int64(exactly: value) else {
+                        throw ONNXError.invalidInputShape("Shape dimension \(value) cannot be converted to Int64")
+                    }
+                    return int64Value
+                }
+                // Use throwing initializer for validation
+                tensorInputs[name] = try TensorData(shape: shape, data: tensor.data)
+            }
+            
+            // Run inference (ONNX Runtime is not thread-safe)
+            let tensorOutputs = try session.run(inputs: tensorInputs)
         
         // Fix MEDIUM: Validate outputs not empty
         guard !tensorOutputs.isEmpty else {
@@ -124,6 +129,7 @@ final class ONNXModel {
         }
         
         return outputs
+        } // End sessionQueue.sync
     }
 }
 
@@ -132,7 +138,7 @@ final class ONNXModel {
 /// Simple tensor structure for ONNX data
 struct Tensor {
     let shape: [Int]
-    var data: [Float]  // Fix MEDIUM: Consider making immutable (let) for thread safety
+    let data: [Float]  // Fix HIGH: Immutable for thread safety
     
     init(shape: [Int], data: [Float]) {
         self.shape = shape

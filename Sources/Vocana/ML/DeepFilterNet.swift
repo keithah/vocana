@@ -408,6 +408,12 @@ final class DeepFilterNet {
             return [Float](repeating: 0, count: magnitude.count)
         }
         
+        // Fix HIGH: Int32 overflow protection for vvsqrtf
+        guard magnitude.count < Int32.max else {
+            Self.logger.error("Buffer too large for vvsqrtf: \(magnitude.count)")
+            return [Float](repeating: 0, count: magnitude.count)
+        }
+        
         // Fix MEDIUM: Use separate buffer for vvsqrtf to avoid in-place operation issues
         var sqrtResult = [Float](repeating: 0, count: magnitude.count)
         magnitude.withUnsafeBufferPointer { magPtr in

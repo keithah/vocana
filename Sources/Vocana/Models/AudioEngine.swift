@@ -169,6 +169,12 @@ class AudioEngine: ObservableObject {
             return true
         } catch {
             print("Failed to start real audio capture: \(error.localizedDescription)")
+            // Fix HIGH: Clean up tap on failure path to prevent leak
+            if isTapInstalled {
+                audioEngine?.inputNode.removeTap(onBus: 0)
+                isTapInstalled = false
+            }
+            audioEngine = nil
             return false
         }
     }

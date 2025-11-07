@@ -168,7 +168,13 @@ final class SpectralFeatures {
                 preconditionFailure("Magnitude buffer contains invalid values")
             }
             
-            // Fix CRITICAL: Safe sqrt with separate output buffer
+            // Fix CRITICAL: Safe sqrt with separate output buffer and Int32 overflow protection
+            guard realPart.count < Int32.max else {
+                Self.logger.error("Buffer too large for vvsqrtf: \(realPart.count)")
+                // Skip this frame with zeros
+                normalized.append([[Float](repeating: 0, count: realPart.count), [Float](repeating: 0, count: realPart.count)])
+                continue
+            }
             var count = Int32(realPart.count)
             var sqrtResult = [Float](repeating: 0, count: realPart.count)
             vvsqrtf(&sqrtResult, magnitudeBuffer, &count)

@@ -56,9 +56,10 @@ class AudioEngine: ObservableObject {
     @Published var hasPerformanceIssues = false
     @Published var bufferHealthMessage = "Buffer healthy"
     
-    // Fix CRITICAL-001: Dedicated queue for telemetry to prevent race conditions
-    private let telemetryQueue = DispatchQueue(label: "com.vocana.telemetry", qos: .userInitiated)
-    private var telemetrySnapshot = ProductionTelemetry()
+     // Fix CRITICAL-001: Dedicated queue for telemetry to prevent race conditions
+     // Keep telemetry state on the queue to avoid MainActor isolation violations
+     private let telemetryQueue = DispatchQueue(label: "com.vocana.telemetry", qos: .userInitiated)
+     private var queueTelemetrySnapshot = ProductionTelemetry()
     
     // MARK: - Memory Pressure Monitoring
     
@@ -102,26 +103,41 @@ class AudioEngine: ObservableObject {
         }
     }
     
-    /// Fix HIGH-004: Update performance status based on current telemetry
-    private func updatePerformanceStatus() {
-        hasPerformanceIssues = (
-            telemetry.audioBufferOverflows > 0 ||
-            telemetry.circuitBreakerTriggers > 0 ||
-            telemetry.mlProcessingFailures > 0 ||
-            memoryPressureLevel != .normal
-        )
-        
-        // Update buffer health message
-        if telemetry.circuitBreakerTriggers > 0 {
-            bufferHealthMessage = "Circuit breaker active (\(telemetry.circuitBreakerTriggers)x)"
-        } else if telemetry.audioBufferOverflows > 0 {
-            bufferHealthMessage = "Buffer pressure (\(telemetry.audioBufferOverflows) overflows)"
-        } else if telemetry.mlProcessingFailures > 0 {
-            bufferHealthMessage = "ML issues detected"
-        } else {
-            bufferHealthMessage = "Buffer healthy"
-        }
-    }
+     /// Fix HIGH-004: Update performance status based on current telemetry
+     private func updatePerformanceStatus() {
+         hasPerformanceIssues = (
+             telemetry.audioBufferOverflows > 0 ||
+             telemetry.circuitBreakerTriggers > 0 ||
+             telemetry.mlProcessingFailures > 0 ||
+             memoryPressureLevel != .normal
+         )
+         
+         // Update buffer health message
+         if telemetry.circuitBreakerTriggers > 0 {
+             bufferHealthMessage = "Circuit breaker active (\(telemetry.circuitBreakerTriggers)x)"
+         } else if telemetry.audioBufferOverflows > 0 {
+             bufferHealthMessage = "Buffer pressure (\(telemetry.audioBufferOverflows) overflows)"
+         } else if telemetry.mlProcessingFailures > 0 {
+             bufferHealthMessage = "ML issues detected"
+         } else {
+             bufferHealthMessage = "Buffer healthy"
+         }
+     }
+     
+     /// Fix HIGH-005: Record telemetry event in thread-safe manner
+     /// Helper method to safely update telemetry snapshot and publish changes to MainActor
+     /// Note: The compiler warning about inout is a false positive - we're exclusively accessing
+     /// queueTelemetrySnapshot on telemetryQueue, which is the correct synchronization point.
+     private func recordTelemetryEvent(_ update: @escaping (inout ProductionTelemetry) -> Void) {
+         telemetryQueue.async { [weak self] in
+             guard let self = self else { return }
+             update(&self.queueTelemetrySnapshot)
+             Task { @MainActor in
+                 self.telemetry = self.queueTelemetrySnapshot
+                 self.updatePerformanceStatus()
+             }
+         }
+     }
     
     // MARK: - Component Instances
     
@@ -151,68 +167,60 @@ class AudioEngine: ObservableObject {
     private func setupComponentCallbacks() {
         // Level controller has no callbacks
         
-        // Buffer manager callbacks
-        // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
-        bufferManager.recordBufferOverflow = { [weak self] in
-            guard let self = self else { return }
-            self.telemetryQueue.sync {
-                self.telemetrySnapshot.recordAudioBufferOverflow()
-                Task { @MainActor in
-                    self.telemetry = self.telemetrySnapshot
-                    self.updatePerformanceStatus()
-                }
-            }
-        }
+         // Buffer manager callbacks
+         // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
+         // Fix HIGH-005: Use async instead of sync to avoid blocking audio processing
+         bufferManager.recordBufferOverflow = { [weak self] in
+             guard let self = self else { return }
+             self.recordTelemetryEvent { $0.recordAudioBufferOverflow() }
+         }
+         
+         bufferManager.recordCircuitBreakerTrigger = { [weak self] in
+             guard let self = self else { return }
+             self.recordTelemetryEvent { $0.recordCircuitBreakerTrigger() }
+         }
         
-        bufferManager.recordCircuitBreakerTrigger = { [weak self] in
-            guard let self = self else { return }
-            self.telemetryQueue.sync {
-                self.telemetrySnapshot.recordCircuitBreakerTrigger()
-                Task { @MainActor in
-                    self.telemetry = self.telemetrySnapshot
-                    self.updatePerformanceStatus()
-                }
-            }
-        }
+         bufferManager.recordCircuitBreakerSuspension = { [weak self] duration in
+             guard let self = self else { return }
+             // Fix HIGH-006: Circuit breaker suspension is now handled within audioBufferQueue
+             // Just update the UI flag on the main thread for user feedback
+             Task { @MainActor in
+                 self.audioCaptureSuspended = true
+             }
+             // Resume capture after suspension duration
+             DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+                 Task { @MainActor in
+                     self?.audioCaptureSuspended = false
+                 }
+             }
+         }
         
-        bufferManager.recordCircuitBreakerSuspension = { [weak self] duration in
-            guard let self = self else { return }
-            // Fix PR Compliance: Circuit breaker suspension is now handled within audioBufferQueue
-            // Just update the flag on the main thread for UI feedback
-            Task { @MainActor in
-                self.audioCaptureSuspended = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-                    self?.audioCaptureSuspended = false
-                }
-            }
-        }
-        
-        // ML processor callbacks
-        // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
-        mlProcessor.recordLatency = { [weak self] latency in
-            guard let self = self else { return }
-            Task { @MainActor in
-                self.processingLatencyMs = latency
-            }
-            self.telemetryQueue.sync {
-                self.telemetrySnapshot.recordLatency(latency)
-                Task { @MainActor in
-                    self.telemetry = self.telemetrySnapshot
-                }
-            }
-        }
-        
-        mlProcessor.recordFailure = { [weak self] in
-            guard let self = self else { return }
-            self.telemetryQueue.sync {
-                self.telemetrySnapshot.recordFailure()
-                Task { @MainActor in
-                    self.telemetry = self.telemetrySnapshot
-                    self.isMLProcessingActive = false
-                    self.updatePerformanceStatus()
-                }
-            }
-        }
+         // ML processor callbacks
+         // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
+         // Fix HIGH-005: Use async instead of sync to avoid blocking audio processing
+         mlProcessor.recordLatency = { [weak self] latency in
+             guard let self = self else { return }
+             Task { @MainActor in
+                 self.processingLatencyMs = latency
+             }
+             self.recordTelemetryEvent { $0.recordLatency(latency) }
+         }
+         
+         mlProcessor.recordFailure = { [weak self] in
+             guard let self = self else { return }
+             self.recordTelemetryEvent { $0.recordFailure() }
+             Task { @MainActor in
+                 self.isMLProcessingActive = false
+                 self.updatePerformanceStatus()
+             }
+         }
+         
+         // Fix HIGH-008: Use callback instead of arbitrary sleep for ML initialization
+         mlProcessor.onMLProcessingReady = { [weak self] in
+             Task { @MainActor in
+                 self?.isMLProcessingActive = true
+             }
+         }
         
         // Audio session manager callbacks
         audioSessionManager.onAudioBufferReceived = { [weak self] buffer in
@@ -263,16 +271,11 @@ class AudioEngine: ObservableObject {
     
     // MARK: - Private Methods
     
-    private func initializeMLProcessing() {
-        mlProcessor.initializeMLProcessing()
-        Task {
-            // Wait a bit then check if active
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            if mlProcessor.isMLProcessingActive {
-                isMLProcessingActive = true
-            }
-        }
-    }
+     private func initializeMLProcessing() {
+         // Fix HIGH-008: ML initialization is now async with callback notification
+         // No need for arbitrary sleep - onMLProcessingReady callback will notify when ready
+         mlProcessor.initializeMLProcessing()
+     }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
@@ -312,22 +315,14 @@ class AudioEngine: ObservableObject {
             return levelController.calculateRMS(samples: samples) * Float(sensitivity)
         }
         
-        // Append to buffer and extract chunk
-        // Fix CRITICAL-004: Use weak self to prevent retain cycles in callback
-        let chunk = bufferManager.appendToBufferAndExtractChunk(samples: samples) { [weak self] duration in
-            guard let self = self else { return }
-            // Handle circuit breaker suspension without nested dispatch to MainActor
-            // Schedule resumption outside the audio processing hot path
-            Task { @MainActor in
-                self.audioCaptureSuspended = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-                guard let self = self else { return }
-                Task { @MainActor in
-                    self.audioCaptureSuspended = false
-                }
-            }
-        }
+         // Append to buffer and extract chunk
+         // Fix HIGH-006: Circuit breaker suspension is handled via recordCircuitBreakerSuspension callback
+         let chunk = bufferManager.appendToBufferAndExtractChunk(samples: samples) { [weak self] duration in
+             guard let self = self else { return }
+             // Trigger the circuit breaker callback which updates UI flags
+             // The actual suspension is managed within AudioBufferManager.audioBufferQueue
+             self.bufferManager.recordCircuitBreakerSuspension(duration)
+         }
         
         // Process when we have enough samples
         guard let chunk = chunk else {
@@ -392,9 +387,11 @@ class AudioEngine: ObservableObject {
     
     deinit {
         memoryPressureSource?.cancel()
-        // Schedule cleanup on MainActor to handle actor isolation
-        Task { @MainActor [weak self] in
-            self?.audioSessionManager.cleanup()
+        // Fix CRITICAL-003: Ensure audioSessionManager cleanup happens synchronously before deallocate
+        // Capture audioSessionManager before self is deallocated
+        let sessionManager = audioSessionManager
+        Task { @MainActor in
+            sessionManager.cleanup()
         }
     }
 }

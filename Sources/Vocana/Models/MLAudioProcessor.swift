@@ -15,11 +15,12 @@ class MLAudioProcessor {
     private let mlStateQueue = DispatchQueue(label: "com.vocana.mlstate", qos: .userInitiated)
     private var mlProcessingSuspendedDueToMemory = false
     
-    // Telemetry and callbacks
-    var telemetry: AudioEngine.ProductionTelemetry = .init()
-    var recordLatency: (Double) -> Void = { _ in }
-    var recordFailure: () -> Void = {}
-    var recordMemoryPressure: () -> Void = {}
+     // Telemetry and callbacks
+     var telemetry: AudioEngine.ProductionTelemetry = .init()
+     var recordLatency: (Double) -> Void = { _ in }
+     var recordFailure: () -> Void = {}
+     var recordMemoryPressure: () -> Void = {}
+     var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
     
     // Public state
     var isMLProcessingActive = false
@@ -73,6 +74,9 @@ class MLAudioProcessor {
                     self.denoiser = denoiser
                     self.isMLProcessingActive = true
                     Self.logger.info("DeepFilterNet ML processing enabled")
+                    
+                    // Fix HIGH-008: Notify that ML processing is ready
+                    self.onMLProcessingReady()
                 }
             } catch {
                 guard !Task.isCancelled else { return }

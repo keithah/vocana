@@ -7,6 +7,9 @@ import os.log
 class AudioLevelController {
     private static let logger = Logger(subsystem: "Vocana", category: "AudioLevelController")
     
+    // Fix HIGH-007: Dedicated queue for thread-safe currentLevels access
+    // currentLevels is accessed from both audio processing thread and MainActor
+    private let levelQueue = DispatchQueue(label: "com.vocana.audiolevels", qos: .userInteractive)
     private var currentLevels = AudioLevels.zero
     
     /// Calculate RMS level from unsafe buffer pointer (avoids array allocation)
@@ -97,35 +100,43 @@ class AudioLevelController {
         return true
     }
     
-    /// Apply level decay for visual smoothing
-    /// - Returns: Decayed audio levels
-    func applyDecay() -> AudioLevels {
-        let decayedInput = max(currentLevels.input * AppConstants.levelDecayRate, 0)
-        let decayedOutput = max(currentLevels.output * AppConstants.levelDecayRate, 0)
-        currentLevels = AudioLevels(input: decayedInput, output: decayedOutput)
-        return currentLevels
-    }
+     /// Apply level decay for visual smoothing
+     /// - Returns: Decayed audio levels
+     func applyDecay() -> AudioLevels {
+         return levelQueue.sync {
+             let decayedInput = max(currentLevels.input * AppConstants.levelDecayRate, 0)
+             let decayedOutput = max(currentLevels.output * AppConstants.levelDecayRate, 0)
+             currentLevels = AudioLevels(input: decayedInput, output: decayedOutput)
+             return currentLevels
+         }
+     }
+     
+     /// Update current levels (thread-safe)
+     /// - Parameters:
+     ///   - input: Input level (0-1)
+     ///   - output: Output level (0-1)
+     func updateLevels(input: Float, output: Float) {
+         levelQueue.sync {
+             currentLevels = AudioLevels(input: input, output: output)
+         }
+     }
+     
+     /// Get current levels (thread-safe)
+     /// - Returns: Current audio levels
+     func getLevels() -> AudioLevels {
+         return levelQueue.sync {
+             return currentLevels
+         }
+     }
     
-    /// Update current levels
-    /// - Parameters:
-    ///   - input: Input level (0-1)
-    ///   - output: Output level (0-1)
-    func updateLevels(input: Float, output: Float) {
-        currentLevels = AudioLevels(input: input, output: output)
-    }
-    
-    /// Get current levels
-    /// - Returns: Current audio levels
-    func getLevels() -> AudioLevels {
-        return currentLevels
-    }
-    
-    /// Update simulated levels for testing
-    /// Used during simulated audio playback
-    func updateSimulatedLevels() {
-        // Generate random levels for UI testing
-        let randomInput = Float.random(in: 0.1...0.8)
-        let randomOutput = Float.random(in: 0.05...0.6)
-        updateLevels(input: randomInput, output: randomOutput)
-    }
+     /// Update simulated levels for testing (thread-safe)
+     /// Used during simulated audio playback
+     func updateSimulatedLevels() {
+         levelQueue.sync {
+             // Generate random levels for UI testing
+             let randomInput = Float.random(in: 0.1...0.8)
+             let randomOutput = Float.random(in: 0.05...0.6)
+             currentLevels = AudioLevels(input: randomInput, output: randomOutput)
+         }
+     }
 }

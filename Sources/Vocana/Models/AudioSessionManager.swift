@@ -44,18 +44,37 @@ class AudioSessionManager {
             let inputNode = audioEngine.inputNode
             let inputFormat = inputNode.outputFormat(forBus: 0)
             
-            // Fix HIGH: Track tap installation to prevent crash
-            // Install tap to monitor audio levels
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-                // Fix HIGH-001: Process on dedicated audio queue instead of crossing MainActor
-                // This prevents blocking the main thread with audio processing
-                guard let self = self else { return }
-                self.audioProcessingQueue.async { [weak self] in
-                    guard let self = self else { return }
-                    // Call the callback, which handles its own dispatch if needed
-                    self.onAudioBufferReceived?(buffer)
-                }
-            }
+             // Fix HIGH: Track tap installation to prevent crash
+             // Install tap to monitor audio levels
+             inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+                 // Fix CRITICAL-004: Copy buffer data immediately within tap closure
+                 // AVAudioPCMBuffer objects are reused by the audio engine, so we must copy the contents
+                 // before passing to async contexts to prevent data races
+                 guard let self = self else { return }
+                 
+                 // Create a copy of the buffer to avoid reuse-after-free race condition
+                 let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength)
+                 guard let copiedBuffer = copiedBuffer else { return }
+                 
+                 // Copy the audio data
+                 copiedBuffer.frameLength = buffer.frameLength
+                 if let sourceChannels = buffer.floatChannelData,
+                    let destChannels = copiedBuffer.floatChannelData {
+                     for channel in 0..<Int(buffer.format.channelCount) {
+                         memcpy(destChannels[channel], sourceChannels[channel], Int(buffer.frameLength) * MemoryLayout<Float>.size)
+                     }
+                 }
+                 
+                  // Fix HIGH-001: Process on dedicated audio queue instead of crossing MainActor
+                  // This prevents blocking the main thread with audio processing
+                  self.audioProcessingQueue.async { [weak self] in
+                      guard let self = self else { return }
+                      // Dispatch back to MainActor to call the callback
+                      Task { @MainActor in
+                          self.onAudioBufferReceived?(copiedBuffer)
+                      }
+                  }
+             }
             isTapInstalled = true
             
             try audioEngine.start()

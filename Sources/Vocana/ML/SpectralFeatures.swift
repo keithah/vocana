@@ -2,6 +2,21 @@ import Foundation
 import Accelerate
 import os.log
 
+/// SpectralFeatures processing errors
+enum SpectralFeaturesError: Error, LocalizedError {
+    case dimensionMismatch(frame: Int, real: Int, imag: Int)
+    case invalidInput(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .dimensionMismatch(let frame, let real, let imag):
+            return "Frame \(frame) dimension mismatch: real=\(real), imag=\(imag)"
+        case .invalidInput(let message):
+            return "Invalid input: \(message)"
+        }
+    }
+}
+
 /// Spectral feature extraction for DeepFilterNet
 /// Extracts first N frequency bins with unit normalization
 ///
@@ -29,7 +44,7 @@ final class SpectralFeatures {
     
     // MARK: - Initialization
     
-    init(dfBands: Int = 96, sampleRate: Int = 48000, fftSize: Int = 960) {
+    init(dfBands: Int = AppConstants.dfBands, sampleRate: Int = AppConstants.sampleRate, fftSize: Int = AppConstants.fftSize) {
         // Fix HIGH: Validate dfBands doesn't exceed available FFT bins
         let maxBands = fftSize / 2 + 1
         precondition(dfBands > 0 && dfBands <= maxBands, 
@@ -57,13 +72,13 @@ final class SpectralFeatures {
     ///   - spectrogramReal: Real part of spectrogram [numFrames, numBins]
     ///   - spectrogramImag: Imaginary part of spectrogram [numFrames, numBins]
     /// - Returns: Spectral features [numFrames, 2, dfBands] (2 channels: real, imag)
-    func extract(spectrogramReal: [[Float]], spectrogramImag: [[Float]]) -> [[[Float]]] {
+    func extract(spectrogramReal: [[Float]], spectrogramImag: [[Float]]) throws -> [[[Float]]] {
         // Fix CRITICAL: Don't silently fail - precondition for dimension mismatch
         precondition(spectrogramReal.count == spectrogramImag.count,
                     "Spectrogram dimension mismatch: real=\(spectrogramReal.count), imag=\(spectrogramImag.count)")
         
         // Fix HIGH: Validate input isn't excessively large (prevent DoS)
-        let maxFrames = 100_000  // ~35 minutes at 48kHz with 480 hop
+        let maxFrames = AppConstants.maxSpectralFrames
         precondition(spectrogramReal.count <= maxFrames,
                     "Too many frames: \(spectrogramReal.count) (max: \(maxFrames))")
         
@@ -83,12 +98,14 @@ final class SpectralFeatures {
             let realPart = spectrogramReal[frameIndex]
             let imagPart = spectrogramImag[frameIndex]
             
-            // Fix CRITICAL: Replace preconditionFailure with recoverable error handling
+            // Fix HIGH: Throw error instead of returning partial results
             guard realPart.count == imagPart.count else {
                 Self.logger.error("Frame \(frameIndex) dimension mismatch: real=\(realPart.count), imag=\(imagPart.count)")
-                // Return partial results to prevent crash - caller should validate output
-                Self.logger.warning("Returning partial spectral features due to dimension mismatch")
-                return spectralFeatures
+                throw SpectralFeaturesError.dimensionMismatch(
+                    frame: frameIndex,
+                    real: realPart.count,
+                    imag: imagPart.count
+                )
             }
             
             // Extract first dfBands bins
@@ -140,25 +157,31 @@ final class SpectralFeatures {
         // Fix CRITICAL: Allocate buffers per-frame to avoid race condition with variable sizes
         // Previous approach reused buffers which could cause data corruption if frame sizes differ
         
+        // Pre-allocate empty result for error cases to prevent memory allocation in error paths
+        let emptyFrameResult = [[Float](), [Float]()]
+        
         for frame in features {
             let realPart = frame[0]
             let imagPart = frame[1]
             
-            // Allocate fresh buffers for this frame
+            // Fix CRITICAL: Validate dimensions before any buffer allocation to prevent memory leak
+            guard !realPart.isEmpty, 
+                  !imagPart.isEmpty, 
+                  realPart.count == imagPart.count,
+                  realPart.count < Int32.max else {
+                Self.logger.error("Invalid frame dimensions: real=\(realPart.count), imag=\(imagPart.count)")
+                // Use pre-allocated empty result to avoid allocation in error path
+                normalized.append(emptyFrameResult)
+                continue
+            }
+            
+            // Allocate fresh buffers for this frame only after validation
             let frameSize = realPart.count
             var magnitudeBuffer = [Float](repeating: 0, count: frameSize)
             var realSquaredBuffer = [Float](repeating: 0, count: frameSize)
             var imagSquaredBuffer = [Float](repeating: 0, count: frameSize)
             var normalizedRealBuffer = [Float](repeating: 0, count: frameSize)
             var normalizedImagBuffer = [Float](repeating: 0, count: frameSize)
-            
-            // Fix CRITICAL: Replace preconditionFailure with recoverable error handling
-            guard !realPart.isEmpty, !imagPart.isEmpty, realPart.count == imagPart.count else {
-                Self.logger.error("Invalid frame dimensions: real=\(realPart.count), imag=\(imagPart.count)")
-                // Skip this frame instead of crashing
-                normalized.append([[Float](), [Float]()])
-                continue
-            }
             
             let length = vDSP_Length(realPart.count)
             
@@ -170,16 +193,8 @@ final class SpectralFeatures {
             // Fix CRITICAL: Replace preconditionFailure with recoverable error handling
             guard magnitudeBuffer.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
                 Self.logger.error("Invalid magnitude buffer (NaN/Inf/negative)")
-                // Skip this frame with zero output instead of crashing
-                normalized.append([[Float](repeating: 0, count: realPart.count), [Float](repeating: 0, count: realPart.count)])
-                continue
-            }
-            
-            // Fix CRITICAL: Safe sqrt with separate output buffer and Int32 overflow protection
-            guard realPart.count < Int32.max else {
-                Self.logger.error("Buffer too large for vvsqrtf: \(realPart.count)")
-                // Skip this frame with zeros
-                normalized.append([[Float](repeating: 0, count: realPart.count), [Float](repeating: 0, count: realPart.count)])
+                // Use pre-allocated empty result to prevent allocation in error path
+                normalized.append(emptyFrameResult)
                 continue
             }
             var count = Int32(realPart.count)

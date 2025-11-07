@@ -18,6 +18,7 @@ final class ONNXModel {
         case shapeOverflow(String)
         case emptyInputs
         case emptyOutputs
+        case invalidInput(String)
     }
     
     private let modelPath: String
@@ -79,6 +80,19 @@ final class ONNXModel {
             // Convert Tensor to TensorData with safe type conversion
             var tensorInputs: [String: TensorData] = [:]
             for (name, tensor) in inputs {
+                // Fix HIGH: Security validation of tensor data
+                guard !tensor.data.isEmpty else {
+                    throw ONNXError.invalidInput("Tensor '\(name)' has empty data")
+                }
+                
+                guard tensor.data.allSatisfy({ $0.isFinite }) else {
+                    throw ONNXError.invalidInput("Tensor '\(name)' contains NaN or infinite values")
+                }
+                
+                guard tensor.data.allSatisfy({ abs($0) <= 1e6 }) else {
+                    throw ONNXError.invalidInput("Tensor '\(name)' values exceed safe range (±1e6)")
+                }
+                
                 // Fix CRITICAL: Safe Int to Int64 conversion with proper error handling
                 let shape = try tensor.shape.map { value in
                     guard let int64Value = Int64(exactly: value) else {
@@ -112,6 +126,16 @@ final class ONNXModel {
             // Fix CRITICAL: Validate element count before Tensor construction to avoid precondition failure
             var expectedCount = 1
             for dim in shape {
+                // Fix CRITICAL: Validate individual dimensions before multiplication
+                guard dim > 0 && dim < 100_000 else {
+                    throw ONNXError.invalidOutputShape("Output '\(name)' dimension too large: \(dim)")
+                }
+                
+                // Check if multiplication would exceed reasonable limits before overflow check
+                guard expectedCount <= Int.max / max(dim, 1) else {
+                    throw ONNXError.invalidOutputShape("Output '\(name)' shape \(shape) would exceed memory limits")
+                }
+                
                 let (product, overflow) = expectedCount.multipliedReportingOverflow(by: dim)
                 guard !overflow else {
                     throw ONNXError.invalidOutputShape("Output '\(name)' shape \(shape) causes overflow")

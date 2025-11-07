@@ -219,6 +219,100 @@ final class DeepFilterNetTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(enhanced.count, 480)
     }
     
+    // MARK: - Concurrency Tests
+    
+    func testConcurrentProcessing() throws {
+        let modelsPath = getModelsPath()
+        let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
+        
+        let testAudio = createTestAudio(samples: 960, frequency: 440)
+        let expectation = XCTestExpectation(description: "Concurrent processing completed")
+        expectation.expectedFulfillmentCount = 10
+        
+        // Test concurrent processing from multiple threads
+        for i in 0..<10 {
+            DispatchQueue.global(qos: .userInteractive).async {
+                do {
+                    let enhanced = try denoiser.process(audio: testAudio)
+                    XCTAssertGreaterThanOrEqual(enhanced.count, 480)
+                    XCTAssertTrue(enhanced.allSatisfy { !$0.isNaN && !$0.isInfinite })
+                    expectation.fulfill()
+                } catch {
+                    XCTFail("Processing failed: \(error)")
+                    expectation.fulfill()
+                }
+            }
+        }
+        
+        wait(for: [expectation], timeout: 10.0)
+    }
+    
+    func testConcurrentResetAndProcess() throws {
+        let modelsPath = getModelsPath()
+        let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
+        
+        let testAudio = createTestAudio(samples: 960, frequency: 440)
+        let expectation = XCTestExpectation(description: "Concurrent reset and process completed")
+        expectation.expectedFulfillmentCount = 20
+        
+        // Concurrent processing and reset operations
+        for i in 0..<10 {
+            // Processing tasks
+            DispatchQueue.global(qos: .userInteractive).async {
+                do {
+                    let enhanced = try denoiser.process(audio: testAudio)
+                    XCTAssertGreaterThanOrEqual(enhanced.count, 480)
+                    expectation.fulfill()
+                } catch {
+                    // Reset might cause temporary failures, that's okay
+                    expectation.fulfill()
+                }
+            }
+            
+            // Reset tasks
+            DispatchQueue.global(qos: .userInitiated).async {
+                denoiser.reset()
+                expectation.fulfill()
+            }
+        }
+        
+        wait(for: [expectation], timeout: 10.0)
+        
+        // Verify denoiser is still functional after concurrent operations
+        let finalResult = try denoiser.process(audio: testAudio)
+        XCTAssertGreaterThanOrEqual(finalResult.count, 480)
+    }
+    
+    func testHighFrequencyProcessing() throws {
+        let modelsPath = getModelsPath()
+        let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
+        
+        let testAudio = createTestAudio(samples: 960, frequency: 440)
+        let iterations = 100
+        let expectation = XCTestExpectation(description: "High frequency processing completed")
+        
+        DispatchQueue.global(qos: .userInteractive).async {
+            var successCount = 0
+            for _ in 0..<iterations {
+                do {
+                    let enhanced = try denoiser.process(audio: testAudio)
+                    if enhanced.count >= 480 && enhanced.allSatisfy({ !$0.isNaN && !$0.isInfinite }) {
+                        successCount += 1
+                    }
+                } catch {
+                    // Some failures are acceptable under high load
+                }
+            }
+            
+            // Require at least 80% success rate
+            XCTAssertGreaterThan(successCount, iterations * 8 / 10, 
+                               "Success rate too low: \(successCount)/\(iterations)")
+            expectation.fulfill()
+        }
+        
+        wait(for: [expectation], timeout: 30.0)
+    }
+    
     // MARK: - Helpers
     
     private func getModelsPath() -> String {

@@ -90,7 +90,7 @@ final class FeatureExtractionTests: XCTestCase {
     
     // MARK: - Spectral Features Tests
     
-    func testSpectralFeatureExtraction() {
+    func testSpectralFeatureExtraction() throws {
         // Generate test signal
         let duration: Float = 0.5
         let sampleRate: Float = 48000
@@ -107,7 +107,7 @@ final class FeatureExtractionTests: XCTestCase {
         let (real, imag) = stft.transform(testSignal)
         
         // Extract spectral features
-        let features = spectralFeatures.extract(spectrogramReal: real, spectrogramImag: imag)
+        let features = try spectralFeatures.extract(spectrogramReal: real, spectrogramImag: imag)
         
         // Verify output shape: [numFrames, 2, 96]
         XCTAssertGreaterThan(features.count, 0, "Should have frames")
@@ -148,7 +148,7 @@ final class FeatureExtractionTests: XCTestCase {
     
     // MARK: - Integration Tests
     
-    func testFullFeatureExtractionPipeline() {
+    func testFullFeatureExtractionPipeline() throws {
         // Generate test signal (440 Hz sine wave)
         let duration: Float = 1.0
         let sampleRate: Float = 48000
@@ -173,7 +173,7 @@ final class FeatureExtractionTests: XCTestCase {
         XCTAssertEqual(normalizedErb.count, erbFeats.count)
         
         // Step 3: Spectral features
-        let specFeats = spectralFeatures.extract(spectrogramReal: real, spectrogramImag: imag)
+        let specFeats = try spectralFeatures.extract(spectrogramReal: real, spectrogramImag: imag)
         let normalizedSpec = spectralFeatures.normalize(specFeats)
         
         XCTAssertEqual(specFeats.count, real.count, "Spectral features should match number of frames")

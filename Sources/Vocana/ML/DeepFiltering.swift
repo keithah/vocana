@@ -14,11 +14,11 @@ import os.log
 /// Typical performance: ~1ms for 480 samples (10ms audio) on Apple Silicon.
 enum DeepFiltering {
     
-    /// Number of deep filtering frequency bins (first 96 bins)
-    static let dfBins = 96
+    /// Number of deep filtering frequency bins (first dfBands bins)
+    static let dfBins = AppConstants.dfBands
     
-    /// Filter order (number of taps in FIR filter)
-    static let dfOrder = 5
+    /// Deep filtering FIR filter order (dfOrder-tap filter)
+    static let dfOrder = AppConstants.dfOrder
     
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "DeepFiltering")
@@ -78,7 +78,7 @@ enum DeepFiltering {
         var filteredReal = spectrum.real
         var filteredImag = spectrum.imag
         
-        // Apply filtering to first 96 bins only
+        // Apply filtering to first dfBins bins only
         for t in 0..<timeSteps {
             // Fix MEDIUM: Add Task cancellation support
             #if canImport(Darwin)
@@ -89,12 +89,29 @@ enum DeepFiltering {
             #endif
             
             for f in 0..<DeepFiltering.dfBins {
-                // Get filter coefficients for this time-frequency point
-                let coefOffset = (t * DeepFiltering.dfBins + f) * DeepFiltering.dfOrder
+                // Fix CRITICAL: Validate bounds before calculating offset to prevent overflow
+                // Ensure we don't have integer overflow in offset calculation
+                let baseOffset = t * DeepFiltering.dfBins
+                guard baseOffset >= 0 && baseOffset / DeepFiltering.dfBins == t else {
+                    logger.error("Integer overflow in coefficient offset calculation: t=\(t), dfBins=\(DeepFiltering.dfBins)")
+                    continue
+                }
                 
-                // Bounds check on coefficients
-                guard coefOffset + DeepFiltering.dfOrder <= coefficients.count else {
-                    logger.error("Coefficient offset out of bounds: \(coefOffset + DeepFiltering.dfOrder) > \(coefficients.count)")
+                let freqOffset = baseOffset + f
+                guard freqOffset >= baseOffset else {
+                    logger.error("Integer overflow adding frequency index: \(baseOffset) + \(f)")
+                    continue
+                }
+                
+                let coefOffset = freqOffset * DeepFiltering.dfOrder
+                guard coefOffset >= freqOffset else {
+                    logger.error("Integer overflow in final coefficient offset: \(freqOffset) * \(DeepFiltering.dfOrder)")
+                    continue
+                }
+                
+                // Bounds check on coefficients array access
+                guard coefOffset >= 0 && coefOffset + DeepFiltering.dfOrder <= coefficients.count else {
+                    logger.error("Coefficient offset out of bounds: \(coefOffset) + \(DeepFiltering.dfOrder) > \(coefficients.count)")
                     continue
                 }
                 
@@ -141,13 +158,16 @@ enum DeepFiltering {
         let totalTimeSteps = real.count / freqBins
         
         for tap in 0..<DeepFiltering.dfOrder {
-            // Fix MEDIUM: Use wrapping arithmetic to prevent overflow
-            let t = timeIndex &- halfOrder &+ tap
+            // Fix CRITICAL: Use safe arithmetic instead of wrapping to prevent boundary violations
+            let tSigned = timeIndex - halfOrder + tap
             
-            // Handle boundary conditions with zero-padding
-            guard t >= 0 && t < totalTimeSteps else {
-                continue
+            // Ensure t is within valid bounds before using as array index
+            guard tSigned >= 0 && tSigned < totalTimeSteps else {
+                continue  // Skip invalid time indices
             }
+            let t = tSigned  // Now safe to use
+            
+
             
             let idx = t * freqBins + freqIndex
             
@@ -281,7 +301,7 @@ enum DeepFiltering {
         }
         
         // Fix CRITICAL: Add max gain limit to prevent overflow
-        let maxGain: Float = 10.0
+        let maxGain: Float = AppConstants.maxProcessingGain
         var gain = min(targetGain / magnitude, maxGain)
         
         // Fix MEDIUM: Allocate output buffers

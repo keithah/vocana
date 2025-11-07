@@ -75,6 +75,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Ensure proper resource cleanup before app termination
+        Task { @MainActor in
+            // Close popover and clean up UI resources
+            popover?.close()
+            popover = nil
+            
+            // Remove status bar item
+            if let statusItem = statusItem {
+                NSStatusBar.system.removeStatusItem(statusItem)
+                self.statusItem = nil
+            }
+            
+            // Note: ContentView and AudioEngine will be cleaned up via deinit
+            // when popover is deallocated, ensuring proper audio session cleanup
+        }
+        
         return .terminateNow
     }
     

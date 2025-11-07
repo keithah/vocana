@@ -36,12 +36,33 @@ final class ERBFeatures {
         var normalizedFrame: [Float]
     }
     
+    // Reusable buffers for extract method to reduce allocation overhead
+    // Thread-local storage ensures thread safety
+    private struct ExtractBuffers {
+        var magnitudeSpectrum: [Float]
+        var realSquared: [Float]
+        var imagSquared: [Float]
+        var sqrtResult: [Float]
+        var erbFrame: [Float]
+        
+        init(spectrumSize: Int, numBands: Int) {
+            self.magnitudeSpectrum = [Float](repeating: 0, count: spectrumSize)
+            self.realSquared = [Float](repeating: 0, count: spectrumSize)
+            self.imagSquared = [Float](repeating: 0, count: spectrumSize)
+            self.sqrtResult = [Float](repeating: 0, count: spectrumSize)
+            self.erbFrame = [Float](repeating: 0, count: numBands)
+        }
+    }
+    
+    // Note: Removed shared buffer state to eliminate thread safety issues.
+    // Extract method now uses local buffers for thread safety.
+    
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "ERBFeatures")
     
     // MARK: - Initialization
     
-    init(numBands: Int = 32, sampleRate: Int = 48000, fftSize: Int = 960) {
+    init(numBands: Int = AppConstants.erbBands, sampleRate: Int = AppConstants.sampleRate, fftSize: Int = AppConstants.fftSize) {
         precondition(numBands >= 2 && numBands <= 1000, 
                     "Number of ERB bands must be in range [2, 1000], got \(numBands)")
         precondition(sampleRate > 0 && sampleRate <= 192000, 
@@ -84,7 +105,7 @@ final class ERBFeatures {
         let freqResolution = Float(sampleRate) / Float(fftSize)
         
         // ERB scale parameters (Glasberg & Moore, 1990)
-        let minFreq: Float = 50.0  // Minimum frequency (Hz) - human hearing starts ~20Hz but 50Hz is more practical
+        let minFreq: Float = AppConstants.minFrequency  // Minimum frequency (Hz) - human hearing starts ~20Hz but 50Hz is more practical
         let maxFreq = min(nyquistFreq, 20000.0)  // Maximum frequency - human hearing limit ~20kHz
         
         // Convert to ERB scale
@@ -201,9 +222,14 @@ final class ERBFeatures {
         var erbFeatures: [[Float]] = []
         erbFeatures.reserveCapacity(numFrames)
         
-        // Fix HIGH: Allocate buffers per-frame to ensure thread safety
-        // Note: This trades performance for correctness. For thread-safe concurrent
-        // calls, each frame needs its own buffers.
+        // OPTIMIZED: Use reusable buffers to reduce allocation overhead
+        // Thread safety: Use local buffers for each extract() call to ensure thread safety
+        let spectrumSize = fftSize / 2 + 1
+        var magnitudeSpectrum = [Float](repeating: 0, count: spectrumSize)
+        var realSquared = [Float](repeating: 0, count: spectrumSize)
+        var imagSquared = [Float](repeating: 0, count: spectrumSize)
+        var sqrtResult = [Float](repeating: 0, count: spectrumSize)
+        var erbFrame = [Float](repeating: 0, count: numBands)
         
         for frameIndex in 0..<numFrames {
             let realPart = spectrogramReal[frameIndex]
@@ -217,11 +243,7 @@ final class ERBFeatures {
                 continue
             }
             
-            // Fix HIGH: Allocate buffers per-frame for thread safety
-            let size = realPart.count
-            var magnitudeSpectrum = [Float](repeating: 0, count: size)
-            var realSquared = [Float](repeating: 0, count: size)
-            var imagSquared = [Float](repeating: 0, count: size)
+            // OPTIMIZED: Reuse pre-allocated buffers instead of allocating per frame
             
             // Calculate magnitude using Accelerate framework (much faster)
             let length = vDSP_Length(realPart.count)
@@ -229,7 +251,6 @@ final class ERBFeatures {
             vDSP_vsq(imagPart, 1, &imagSquared, 1, length)
             vDSP_vadd(realSquared, 1, imagSquared, 1, &magnitudeSpectrum, 1, length)
             
-            // Fix HIGH: Pre-allocate sqrtResult to avoid repeated allocation
             // Fix HIGH: Int32 overflow protection for vvsqrtf
             guard magnitudeSpectrum.count < Int32.max else {
                 Self.logger.error("Buffer too large for vvsqrtf: \(magnitudeSpectrum.count)")
@@ -238,11 +259,11 @@ final class ERBFeatures {
                 continue
             }
             var count = Int32(magnitudeSpectrum.count)
-            var sqrtResult = [Float](repeating: 0, count: magnitudeSpectrum.count)
             vvsqrtf(&sqrtResult, magnitudeSpectrum, &count)
             
             // Apply ERB filterbank using vDSP dot product (much faster)
-            var erbFrame = [Float](repeating: 0, count: numBands)
+            // Clear erbFrame for reuse
+            vDSP_vclr(&erbFrame, 1, vDSP_Length(numBands))
             for (bandIndex, filter) in erbFilterbank.enumerated() {
                 var bandEnergy: Float = 0
                 
@@ -259,7 +280,8 @@ final class ERBFeatures {
                 erbFrame[bandIndex] = bandEnergy
             }
             
-            erbFeatures.append(erbFrame)
+            // Copy the erbFrame to avoid reference sharing
+            erbFeatures.append(Array(erbFrame))
         }
         
         return erbFeatures

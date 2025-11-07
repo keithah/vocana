@@ -15,6 +15,41 @@ class AudioEngine: ObservableObject {
     @Published var isUsingRealAudio = false
     @Published var isMLProcessingActive = false
     @Published var processingLatencyMs: Double = 0
+    @Published var memoryPressureLevel: MemoryPressureLevel = .normal
+    
+    // Fix CRITICAL: Memory pressure monitoring for production safety
+    enum MemoryPressureLevel: Int {
+        case normal = 0
+        case warning = 1
+        case urgent = 2
+        case critical = 3
+    }
+    
+    // Fix CRITICAL: Production telemetry for monitoring and debugging
+    struct ProductionTelemetry {
+        var totalFramesProcessed: UInt64 = 0
+        var mlProcessingFailures: UInt64 = 0
+        var memoryPressureEvents: UInt64 = 0
+        var averageLatencyMs: Double = 0
+        var peakMemoryUsageMB: Double = 0
+        var audioQualityScore: Double = 1.0  // SNR-based quality metric
+        
+        mutating func recordLatency(_ latencyMs: Double) {
+            totalFramesProcessed += 1
+            // Exponentially weighted moving average
+            averageLatencyMs = (averageLatencyMs * 0.9) + (latencyMs * 0.1)
+        }
+        
+        mutating func recordFailure() {
+            mlProcessingFailures += 1
+        }
+        
+        mutating func recordMemoryPressure() {
+            memoryPressureEvents += 1
+        }
+    }
+    
+    @Published var telemetry = ProductionTelemetry()
     
     private var timer: Timer?
     private var audioEngine: AVAudioEngine?
@@ -26,13 +61,25 @@ class AudioEngine: ObservableObject {
     
     // Fix CRITICAL: Thread-safe audioBuffer access with dedicated queue
     private let audioBufferQueue = DispatchQueue(label: "com.vocana.audiobuffer", qos: .userInteractive)
-    private var _audioBuffer: [Float] = []
+    private nonisolated(unsafe) var _audioBuffer: [Float] = []
     private var audioBuffer: [Float] {
         get { audioBufferQueue.sync { _audioBuffer } }
         set { audioBufferQueue.sync { _audioBuffer = newValue } }
     }
     
     private let minimumBufferSize = 960  // FFT size for DeepFilterNet
+    
+    // Fix CRITICAL: Memory pressure monitoring and circuit breaker  
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private var isMemoryPressureHandlerActive = false
+    private var mlProcessingSuspendedDueToMemory = false
+    
+    // Fix CRITICAL: Thread-safe ML state management
+    private let mlStateQueue = DispatchQueue(label: "com.vocana.mlstate", qos: .userInitiated)
+    
+    init() {
+        setupMemoryPressureMonitoring()
+    }
     
     func startSimulation(isEnabled: Bool, sensitivity: Double) {
         self.isEnabled = isEnabled
@@ -69,11 +116,18 @@ class AudioEngine: ObservableObject {
                 // Create DeepFilterNet instance (potentially slow model loading)
                 let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
                 
-                // Fix CRITICAL #4: Update state on main actor atomically
+                // Fix CRITICAL #4: Update state atomically with proper synchronization
                 await MainActor.run {
-                    self.denoiser = denoiser
-                    self.isMLProcessingActive = true
-                    print("✓ DeepFilterNet ML processing enabled")
+                    self.mlStateQueue.sync {
+                        // Check if ML was suspended during initialization
+                        if !self.mlProcessingSuspendedDueToMemory {
+                            self.denoiser = denoiser
+                            self.isMLProcessingActive = true
+                            print("✓ DeepFilterNet ML processing enabled")
+                        } else {
+                            print("⚠️ ML initialization completed but suspended due to memory pressure")
+                        }
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -190,6 +244,13 @@ class AudioEngine: ObservableObject {
         audioEngine = nil
         
         // Fix HIGH: Deactivate audio session on iOS to prevent resource leak
+        // 
+        // ⚠️  IMPORTANT: This deactivates the shared AVAudioSession for the entire app.
+        // If other parts of the app are using audio (music playback, other recording, etc.),
+        // this may interfere with their functionality.
+        // 
+        // Consider making this configurable or coordinating with a global audio session manager
+        // for production apps that use audio in multiple places.
         #if os(iOS) || os(tvOS) || os(watchOS)
         do {
             try AVAudioSession.sharedInstance().setActive(false)
@@ -251,7 +312,7 @@ class AudioEngine: ObservableObject {
         let rms = sqrt(sumOfSquares / Float(samplesPtr.count))
         
         // Convert to 0-1 range
-        return min(1.0, rms * 10.0)
+        return min(1.0, rms * AppConstants.rmsAmplificationFactor)
     }
     
     private func calculateRMS(samples: [Float]) -> Float {
@@ -265,14 +326,17 @@ class AudioEngine: ObservableObject {
         let rms = sqrt(sum / Float(samples.count))
         
         // Convert to 0-1 range (typical audio is -1 to 1, RMS will be much smaller)
-        return min(1.0, rms * 10.0)
+        return min(1.0, rms * AppConstants.rmsAmplificationFactor)
     }
     
     private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
         // Fix CRITICAL: Capture denoiser to prevent race condition where it becomes nil
         // between guard check and actual use
-        guard let capturedDenoiser = denoiser, isMLProcessingActive else {
-            // Fallback to simple level-based processing
+        // Fix CRITICAL: Check memory pressure before ML processing
+        guard let capturedDenoiser = denoiser, 
+              isMLProcessingActive, 
+              !mlProcessingSuspendedDueToMemory else {
+            // Fallback to simple level-based processing during memory pressure or when ML disabled
             return calculateRMS(samples: samples) * Float(sensitivity)
         }
         
@@ -291,16 +355,30 @@ class AudioEngine: ObservableObject {
             let enhanced = try capturedDenoiser.process(audio: chunk)
             let endTime = CFAbsoluteTimeGetCurrent()
             
-            // Update latency measurement
-            processingLatencyMs = (endTime - startTime) * 1000.0
+            let latencyMs = (endTime - startTime) * 1000.0
+            processingLatencyMs = latencyMs
+            
+            // Fix CRITICAL: Record telemetry for production monitoring
+            telemetry.recordLatency(latencyMs)
+            
+            // Monitor for SLA violations (target <1ms)
+            if latencyMs > 1.0 {
+                print("⚠️ Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
+            }
             
             // Calculate output level from enhanced audio
             return calculateRMS(samples: enhanced)
         } catch {
             print("⚠️  ML processing error: \(error.localizedDescription)")
+            
+            // Fix CRITICAL: Record telemetry for production monitoring
+            telemetry.recordFailure()
+            
             isMLProcessingActive = false
             // Fix HIGH: Clear buffer on error to prevent unbounded growth
-            audioBuffer.removeAll()
+            audioBufferQueue.async { [weak self] in
+                self?._audioBuffer.removeAll(keepingCapacity: false)
+            }
             // Fix HIGH: Set denoiser to nil for consistency
             denoiser = nil
             
@@ -314,12 +392,25 @@ class AudioEngine: ObservableObject {
     private func appendToBufferAndExtractChunk(samples: [Float]) -> [Float]? {
         return audioBufferQueue.sync {
             // Fix CRITICAL: Simplified buffer overflow handling with logging
-            let maxBufferSize = 48000  // 1 second at 48kHz
+            //
+            // ⚠️  AUDIO DROPPING BEHAVIOR:
+            // When the buffer exceeds maxAudioBufferSize samples (1 second at 48kHz), old audio data is DROPPED
+            // to maintain real-time processing. This prevents memory growth but may cause:
+            // - Audio discontinuities during ML model loading/initialization
+            // - Brief audio artifacts when switching between ML and fallback processing
+            // - Loss of audio data during heavy system load
+            //
+            // This is designed for real-time applications where maintaining low latency is more
+            // important than preserving every audio sample. For applications requiring perfect
+            // audio preservation, consider increasing maxBufferSize or implementing backpressure.
+            
+            let maxBufferSize = AppConstants.maxAudioBufferSize
             let projectedSize = _audioBuffer.count + samples.count
             
             if projectedSize > maxBufferSize {
                 // Log buffer overflow for debugging
                 print("⚠️ Audio buffer overflow: \(_audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
+                print("   Dropping old audio data to maintain real-time processing")
                 
                 // Keep only the newest samples to maintain real-time processing
                 let totalNeeded = samples.count + 960  // Leave room for one frame
@@ -369,6 +460,99 @@ class AudioEngine: ObservableObject {
         } else {
             // Fix HIGH: Use extracted decay method
             currentLevels = applyDecay()
+        }
+    }
+    
+    // MARK: - Memory Pressure Monitoring (Production Safety)
+    
+    private func setupMemoryPressureMonitoring() {
+        guard memoryPressureSource == nil else { return }
+        
+        memoryPressureSource = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical],
+            queue: DispatchQueue.global(qos: .userInitiated)
+        )
+        
+        memoryPressureSource?.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            
+            let pressureLevel = self.memoryPressureSource?.mask
+            Task { @MainActor in
+                self.handleMemoryPressure(pressureLevel)
+            }
+        }
+        
+        memoryPressureSource?.resume()
+        isMemoryPressureHandlerActive = true
+    }
+    
+    private func handleMemoryPressure(_ pressureLevel: DispatchSource.MemoryPressureEvent?) {
+        guard let pressureLevel = pressureLevel else { return }
+        
+        // Record telemetry for production monitoring
+        telemetry.recordMemoryPressure()
+        
+        if pressureLevel.contains(.critical) {
+            memoryPressureLevel = .critical
+            // Immediately suspend ML processing to prevent iOS process termination
+            suspendMLProcessing(reason: "Critical memory pressure")
+            
+        } else if pressureLevel.contains(.warning) {
+            memoryPressureLevel = .warning
+            // Reduce buffer sizes but continue processing
+            optimizeMemoryUsage()
+        }
+        
+        print("⚠️ Memory pressure detected: \(memoryPressureLevel) - ML suspended: \(mlProcessingSuspendedDueToMemory)")
+    }
+    
+    private func suspendMLProcessing(reason: String) {
+        // Fix CRITICAL: Atomic check-and-set to prevent race conditions
+        var shouldSuspend = false
+        mlStateQueue.sync {
+            if isMLProcessingActive && !mlProcessingSuspendedDueToMemory {
+                mlProcessingSuspendedDueToMemory = true
+                shouldSuspend = true
+            }
+        }
+        
+        if shouldSuspend {
+            denoiser = nil // Release ML models to free memory
+            print("🔴 ML processing suspended: \(reason)")
+        }
+        
+        // Schedule memory pressure recovery check
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            self?.checkMemoryPressureRecovery()
+        }
+    }
+    
+    private func optimizeMemoryUsage() {
+        // Reduce audio buffer size during memory pressure
+        audioBufferQueue.async { [weak self] in
+            guard let self = self else { return }
+            if self._audioBuffer.count > self.minimumBufferSize * 2 {
+                // Keep only essential buffer size during memory pressure
+                let excessSamples = self._audioBuffer.count - self.minimumBufferSize
+                self._audioBuffer.removeFirst(excessSamples)
+            }
+        }
+    }
+    
+    private func clearAudioBuffers() {
+        audioBufferQueue.async { [weak self] in
+            self?._audioBuffer.removeAll(keepingCapacity: false)
+        }
+    }
+    
+    private func checkMemoryPressureRecovery() {
+        if memoryPressureLevel == .normal && mlProcessingSuspendedDueToMemory {
+            mlProcessingSuspendedDueToMemory = false
+            // Attempt to re-initialize ML processing
+            if isEnabled {
+                initializeMLProcessing()
+            }
+            print("✅ Memory pressure recovered - attempting to resume ML processing")
         }
     }
 }

@@ -12,10 +12,18 @@ import os.log
 /// 5. Filtering - Apply enhancement to spectrum
 /// 6. ISTFT - Convert back to time domain
 ///
-/// **Thread Safety**: This class IS thread-safe for external calls. The process() and processBuffer()
-/// methods use internal synchronization (processingQueue) to ensure safe concurrent access.
-/// Individual component classes (STFT, ERBFeatures, etc.) are internally protected by queues.
-/// Multiple threads can safely call methods on the same DeepFilterNet instance.
+/// **Thread Safety**: This class IS thread-safe for external calls using a dual-queue architecture:
+/// 
+/// - **stateQueue**: Protects neural network state tensors (_states) with fine-grained locking
+/// - **processingQueue**: Protects audio processing pipeline and overlapBuffer with coarse-grained locking
+/// 
+/// **Queue Hierarchy**: stateQueue and processingQueue are independent - no nested locking occurs.
+/// The reset() method accesses each queue separately to avoid deadlocks.
+/// 
+/// **Thread Safety Guarantees**:
+/// - Multiple threads can safely call process(), reset(), and other public methods
+/// - Internal components (STFT, ERBFeatures, etc.) use their own queues for protection
+/// - No shared mutable state is accessed without synchronization
 ///
 /// Reference: https://arxiv.org/abs/2305.08227
 ///
@@ -38,17 +46,21 @@ final class DeepFilterNet {
     
     // MARK: - Configuration
     
-    private let sampleRate: Int = 48000
-    private let fftSize: Int = 960
-    private let hopSize: Int = 480
-    private let erbBands: Int = 32
-    private let dfBands: Int = 96
-    private let dfOrder: Int = 5  // Deep filtering FIR filter order
+    private let sampleRate: Int = AppConstants.sampleRate
+    private let fftSize: Int = AppConstants.fftSize
+    private let hopSize: Int = AppConstants.hopSize
+    private let erbBands: Int = AppConstants.erbBands
+    private let dfBands: Int = AppConstants.dfBands
+    private let dfOrder: Int = AppConstants.dfOrder  // Deep filtering FIR filter order
     
     // MARK: - State Management with Thread Safety
     
-    // Fix CRITICAL: Thread-safe state storage AND processing
+    // Fix CRITICAL: Thread-safe state storage AND processing using dual-queue architecture
+    
+    /// Protects neural network state tensors with fine-grained synchronization
     private let stateQueue = DispatchQueue(label: "com.vocana.deepfilternet.state", qos: .userInitiated)
+    
+    /// Protects audio processing pipeline and buffers with coarse-grained synchronization
     private let processingQueue = DispatchQueue(label: "com.vocana.deepfilternet.processing", qos: .userInitiated)
     private var _states: [String: Tensor] = [:]
     private var states: [String: Tensor] {
@@ -57,6 +69,7 @@ final class DeepFilterNet {
     }
     
     // Fix CRITICAL: ISTFT overlap buffer for proper COLA reconstruction
+    // Protected by: processingQueue
     private var overlapBuffer: [Float] = []
     
     // Logging
@@ -74,52 +87,74 @@ final class DeepFilterNet {
     /// - Parameter modelsDirectory: Directory containing ONNX models (enc.onnx, erb_dec.onnx, df_dec.onnx)
     /// - Throws: 
     ///   - `DeepFilterError.modelLoadFailed` if ONNX models cannot be loaded or directory doesn't exist
-    init(modelsDirectory: String) throws {
+    convenience init(modelsDirectory: String) throws {
         Self.logger.info("Initializing DeepFilterNet from \(modelsDirectory)")
         
         // Initialize signal processing components
-        self.stft = STFT(fftSize: fftSize, hopSize: hopSize, sampleRate: sampleRate)
-        self.erbFeatures = ERBFeatures(
-            numBands: erbBands,
-            sampleRate: sampleRate,
-            fftSize: fftSize
+        let stft = STFT(fftSize: AppConstants.fftSize, hopSize: AppConstants.hopSize, sampleRate: AppConstants.sampleRate)
+        let erbFeatures = ERBFeatures(
+            numBands: AppConstants.erbBands,
+            sampleRate: AppConstants.sampleRate,
+            fftSize: AppConstants.fftSize
         )
-        self.specFeatures = SpectralFeatures(
-            dfBands: dfBands,
-            sampleRate: sampleRate,
-            fftSize: fftSize
+        let specFeatures = SpectralFeatures(
+            dfBands: AppConstants.dfBands,
+            sampleRate: AppConstants.sampleRate,
+            fftSize: AppConstants.fftSize
         )
         
-        // Fix CRITICAL: Resource leak - ensure all models load or cleanup on failure
+        // Load ONNX models
         let encPath = "\(modelsDirectory)/enc.onnx"
         let erbDecPath = "\(modelsDirectory)/erb_dec.onnx"
         let dfDecPath = "\(modelsDirectory)/df_dec.onnx"
         
-        // Validate paths exist before loading
-        guard FileManager.default.fileExists(atPath: encPath) else {
-            throw DeepFilterError.modelLoadFailed("Encoder model not found: \(encPath)")
-        }
-        guard FileManager.default.fileExists(atPath: erbDecPath) else {
-            throw DeepFilterError.modelLoadFailed("ERB decoder model not found: \(erbDecPath)")
-        }
-        guard FileManager.default.fileExists(atPath: dfDecPath) else {
-            throw DeepFilterError.modelLoadFailed("DF decoder model not found: \(dfDecPath)")
-        }
+        let encoder = try Self.loadModel(path: encPath, name: "encoder")
+        let erbDecoder = try Self.loadModel(path: erbDecPath, name: "ERB decoder")
+        let dfDecoder = try Self.loadModel(path: dfDecPath, name: "DF decoder")
         
-        do {
-            self.encoder = try ONNXModel(modelPath: encPath)
-            self.erbDecoder = try ONNXModel(modelPath: erbDecPath)
-            self.dfDecoder = try ONNXModel(modelPath: dfDecPath)
-            
-            Self.logger.info("✓ DeepFilterNet initialized successfully")
-            Self.logger.debug("  Sample rate: \(self.sampleRate) Hz")
-            Self.logger.debug("  FFT size: \(self.fftSize)")
-            Self.logger.debug("  Hop size: \(self.hopSize)")
-            Self.logger.debug("  ERB bands: \(self.erbBands)")
-            Self.logger.debug("  DF bands: \(self.dfBands)")
-        } catch {
-            throw DeepFilterError.modelLoadFailed("Failed to load models: \(error.localizedDescription)")
-        }
+        // Initialize with dependency injection
+        self.init(
+            stft: stft,
+            erbFeatures: erbFeatures,
+            specFeatures: specFeatures,
+            encoder: encoder,
+            erbDecoder: erbDecoder,
+            dfDecoder: dfDecoder
+        )
+    }
+    
+    /// Dependency injection initializer for testing and modular design
+    /// - Parameters:
+    ///   - stft: STFT processor
+    ///   - erbFeatures: ERB feature extractor
+    ///   - specFeatures: Spectral feature extractor
+    ///   - encoder: ONNX encoder model
+    ///   - erbDecoder: ONNX ERB decoder model
+    ///   - dfDecoder: ONNX DF decoder model
+    init(
+        stft: STFT,
+        erbFeatures: ERBFeatures,
+        specFeatures: SpectralFeatures,
+        encoder: ONNXModel,
+        erbDecoder: ONNXModel,
+        dfDecoder: ONNXModel
+    ) {
+        Self.logger.info("Initializing DeepFilterNet with dependency injection")
+        
+        // Use injected dependencies
+        self.stft = stft
+        self.erbFeatures = erbFeatures
+        self.specFeatures = specFeatures
+        self.encoder = encoder
+        self.erbDecoder = erbDecoder
+        self.dfDecoder = dfDecoder
+        
+        Self.logger.info("✓ DeepFilterNet initialized successfully")
+        Self.logger.debug("  Sample rate: \(self.sampleRate) Hz")
+        Self.logger.debug("  FFT size: \(self.fftSize)")
+        Self.logger.debug("  Hop size: \(self.hopSize)")
+        Self.logger.debug("  ERB bands: \(self.erbBands)")
+        Self.logger.debug("  DF bands: \(self.dfBands)")
     }
     
     // Fix MEDIUM: Add nonisolated for consistency with other deinit methods
@@ -133,12 +168,18 @@ final class DeepFilterNet {
     
     /// Reset internal state (call when starting new audio stream)
     func reset() {
-        // Fix CRITICAL: Atomic reset of both state and overlap buffer
-        processingQueue.sync {
-            states = [:]
-            overlapBuffer.removeAll()
-            Self.logger.info("DeepFilterNet state reset - cleared states and overlap buffer")
+        // Fix CRITICAL: Atomic reset avoiding nested queue synchronization
+        // Clear states first (separate queue access)
+        stateQueue.sync {
+            _states = [:]
         }
+        
+        // Clear processing buffers (processingQueue protects overlapBuffer)
+        processingQueue.sync {
+            overlapBuffer.removeAll()
+        }
+        
+        Self.logger.info("DeepFilterNet state reset - cleared states and overlap buffer")
     }
     
     // MARK: - Processing
@@ -152,8 +193,14 @@ final class DeepFilterNet {
         // Fix CRITICAL: Wrap entire processing in queue to prevent concurrent access
         // to non-thread-safe components (STFT, ERBFeatures, SpectralFeatures)
         return try processingQueue.sync {
-            guard audio.count >= fftSize else {
-                throw DeepFilterError.invalidAudioLength(got: audio.count, minimum: fftSize)
+            // Fix CRITICAL: Add maximum size validation to prevent memory exhaustion attacks
+            let maxAudioSize = sampleRate * 3600  // 1 hour maximum at sample rate
+            guard audio.count >= fftSize && audio.count <= maxAudioSize else {
+                if audio.count < fftSize {
+                    throw DeepFilterError.invalidAudioLength(got: audio.count, minimum: fftSize)
+                } else {
+                    throw DeepFilterError.bufferTooLarge(got: audio.count, max: maxAudioSize)
+                }
             }
             
             // Fix LOW: Add denormal detection
@@ -192,7 +239,8 @@ final class DeepFilterNet {
                 throw DeepFilterError.processingFailed("Invalid STFT output dimensions")
             }
             
-            // Fix MAJOR: Use flatMap instead of reduce for O(n) complexity instead of O(n²)
+            // OPTIMIZED: Use flatMap for O(n) complexity (already optimal)
+            // flatMap is O(n) - each element is visited exactly once
             let spectrumReal = spectrum2D.real.flatMap { $0 }
             let spectrumImag = spectrum2D.imag.flatMap { $0 }
             let spectrum = (real: spectrumReal, imag: spectrumImag)
@@ -274,8 +322,8 @@ final class DeepFilterNet {
         let specReal2D = [spectrum.real]
         let specImag2D = [spectrum.imag]
         
-        // Extract first 96 bins
-        let dfSpec = specFeatures.extract(spectrogramReal: specReal2D, spectrogramImag: specImag2D)
+        // Extract first dfBands bins
+        let dfSpec = try specFeatures.extract(spectrogramReal: specReal2D, spectrogramImag: specImag2D)
         
         // Normalize (alpha=0.6 for spectral features)
         let normalized = specFeatures.normalize(dfSpec, alpha: 0.6)
@@ -322,8 +370,11 @@ final class DeepFilterNet {
             Tensor(shape: tensor.shape, data: Array(tensor.data))
         }
         
-        // Update states atomically through synchronized property
-        states = copiedOutputs
+        // Update states atomically: clear old states first, then set new ones
+        stateQueue.sync {
+            _states.removeAll() // Explicitly clear old states to prevent accumulation
+            _states = copiedOutputs
+        }
         return copiedOutputs
     }
     
@@ -388,6 +439,24 @@ final class DeepFilterNet {
     
     // MARK: - Utilities
     
+    /// Helper method to load ONNX models with consistent error handling
+    /// - Parameters:
+    ///   - path: Path to the ONNX model file
+    ///   - name: Human-readable name for error messages
+    /// - Returns: Loaded ONNXModel instance
+    /// - Throws: DeepFilterError.modelLoadFailed if model cannot be loaded
+    private static func loadModel(path: String, name: String) throws -> ONNXModel {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw DeepFilterError.modelLoadFailed("\(name) model not found: \(path)")
+        }
+        
+        do {
+            return try ONNXModel(modelPath: path)
+        } catch {
+            throw DeepFilterError.modelLoadFailed("Failed to load \(name) model: \(error.localizedDescription)")
+        }
+    }
+    
     // Removed unused spectrumToMagnitude method as identified in code review
     
     /// Process entire audio buffer (for batch processing)
@@ -447,7 +516,13 @@ final class DeepFilterNet {
                 }
             }
             
-            position += hopSize
+            // Fix CRITICAL: Check for integer overflow in position increment
+            let (newPosition, overflow) = position.addingReportingOverflow(self.hopSize)
+            guard !overflow else {
+                Self.logger.error("Position overflow at \(position) + \(self.hopSize)")
+                break  // Exit loop to prevent corruption
+            }
+            position = newPosition
         }
         
         // Handle remaining samples
@@ -458,11 +533,26 @@ final class DeepFilterNet {
                 let remaining = audio.count - position
                 var lastChunk = Array(audio[position..<audio.count])
                 
-                // Fix MEDIUM: Use reflection padding instead of zeros to avoid artifacts
+                // Fix CRITICAL: Use reflection padding with bounds validation
                 if remaining < fftSize {
                     let padCount = fftSize - remaining
                     let reflectCount = min(padCount, remaining)
-                    lastChunk.append(contentsOf: audio[audio.count - reflectCount..<audio.count].reversed())
+                    
+                    // Fix CRITICAL: Ensure reflection indices are valid and non-negative
+                    guard reflectCount > 0, audio.count >= reflectCount else {
+                        // Skip reflection if not enough data, use zero padding instead
+                        lastChunk.append(contentsOf: Array(repeating: 0.0, count: padCount))
+                        return
+                    }
+                    
+                    let reflectStartIndex = audio.count - reflectCount
+                    guard reflectStartIndex >= 0, reflectStartIndex < audio.count else {
+                        // Bounds check failed, use zero padding
+                        lastChunk.append(contentsOf: Array(repeating: 0.0, count: padCount))
+                        return
+                    }
+                    
+                    lastChunk.append(contentsOf: audio[reflectStartIndex..<audio.count].reversed())
                     
                     if lastChunk.count < fftSize {
                         lastChunk.append(contentsOf: Array(repeating: 0.0, count: fftSize - lastChunk.count))

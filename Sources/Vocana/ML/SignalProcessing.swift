@@ -53,7 +53,7 @@ final class STFT {
     
     // MARK: - Initialization
     
-    init(fftSize: Int = 960, hopSize: Int = 480, sampleRate: Int = 48000) {
+    init(fftSize: Int = AppConstants.fftSize, hopSize: Int = AppConstants.hopSize, sampleRate: Int = AppConstants.sampleRate) {
         precondition(fftSize > 0 && fftSize <= 16384, 
                     "FFT size must be in range [1, 16384], got \(fftSize)")
         precondition(hopSize > 0 && hopSize <= fftSize, 
@@ -102,9 +102,12 @@ final class STFT {
         self.frameBuffer = [Float](repeating: 0, count: fftSize)
     }
     
-    // Fix MEDIUM: Mark deinit as nonisolated for consistency
-    nonisolated deinit {
-        vDSP_destroy_fftsetup(fftSetup)
+    // Fix CRITICAL: Ensure proper FFT setup cleanup
+    // Note: deinit cannot be marked nonisolated since it accesses stored properties
+    deinit {
+        transformQueue.sync {
+            vDSP_destroy_fftsetup(fftSetup)
+        }
     }
     
     // MARK: - Forward Transform (Time → Frequency)
@@ -142,39 +145,25 @@ final class STFT {
             
             guard endSample <= numSamples else { break }
             
-            // Fix CRITICAL: Use success flag to ensure we skip frame on pointer failure
-            var windowingSucceeded = false
-            audio[startSample..<endSample].withUnsafeBufferPointer { audioPtr in
-                guard let audioBase = audioPtr.baseAddress else {
-                    Self.logger.error("Audio buffer pointer is nil at frame \(frameIndex)")
-                    return
-                }
-                vDSP_vmul(audioBase, 1, window, 1, &windowedInput, 1, vDSP_Length(fftSize))
-                windowingSucceeded = true
+            // Fix CRITICAL: Eliminate nested UnsafeBufferPointer calls to prevent race conditions
+            // Validate bounds before any unsafe operations
+            guard endSample <= audio.count, 
+                  windowedInput.count >= fftSize,
+                  inputReal.count >= fftSize else {
+                Self.logger.error("Buffer size validation failed at frame \(frameIndex)")
+                continue
             }
-            guard windowingSucceeded else { continue }
+            
+            // Perform windowing operation with direct array access
+            let audioChunk = Array(audio[startSample..<endSample])
+            vDSP_vmul(audioChunk, 1, window, 1, &windowedInput, 1, vDSP_Length(fftSize))
             
             // Zero-fill buffers using vDSP
             vDSP_vclr(&inputReal, 1, vDSP_Length(fftSizePowerOf2))
             vDSP_vclr(&inputImag, 1, vDSP_Length(fftSizePowerOf2))
             
-            // Fix CRITICAL: Use success flags at each level to propagate failures
-            var copySucceeded = false
-            windowedInput.withUnsafeBufferPointer { windowedPtr in
-                guard let windowedBase = windowedPtr.baseAddress, windowedPtr.count >= fftSize else {
-                    Self.logger.error("Windowed input pointer invalid at frame \(frameIndex)")
-                    return
-                }
-                inputReal.withUnsafeMutableBufferPointer { inputPtr in
-                    guard let inputBase = inputPtr.baseAddress, inputPtr.count >= fftSize else {
-                        Self.logger.error("Input real pointer invalid at frame \(frameIndex)")
-                        return
-                    }
-                    vDSP_mmov(windowedBase, inputBase, vDSP_Length(fftSize), 1, 1, 1)
-                    copySucceeded = true
-                }
-            }
-            guard copySucceeded else { continue }
+            // Copy windowed input to real buffer for FFT
+            vDSP_mmov(windowedInput, &inputReal, vDSP_Length(fftSize), 1, 1, 1)
             
             // Perform FFT with safe pointer handling
             var fftSucceeded = false

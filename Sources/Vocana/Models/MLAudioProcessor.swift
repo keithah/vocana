@@ -50,24 +50,29 @@ class MLAudioProcessor {
                 // Fix HIGH: Atomic cancellation and state check to prevent TOCTOU race
                 let wasCancelled = Task.isCancelled
                 
-                // Fix CRITICAL: Update state atomically with proper synchronization
+                // Fix CRITICAL & HIGH-003: Update state atomically with proper synchronization
+                // First check if we can activate on MainActor, avoiding nested queue calls
                 await MainActor.run { [weak self] in
                     guard let self = self else { return }
-                    self.mlStateQueue.sync {
-                        // Atomic check: verify both task cancellation AND ML suspension state
-                        guard !wasCancelled && !self.mlProcessingSuspendedDueToMemory else {
-                            if wasCancelled {
-                                Self.logger.info("ML initialization cancelled")
-                            } else {
-                                Self.logger.warning("ML initialization completed but suspended due to memory pressure")
-                            }
-                            return
-                        }
-                        
-                        self.denoiser = denoiser
-                        self.isMLProcessingActive = true
-                        Self.logger.info("DeepFilterNet ML processing enabled")
+                    
+                    // Check memory pressure state atomically
+                    let canActivateML = self.mlStateQueue.sync {
+                        !self.mlProcessingSuspendedDueToMemory
                     }
+                    
+                    // Atomic check: verify both task cancellation AND ML suspension state
+                    guard !wasCancelled && canActivateML else {
+                        if wasCancelled {
+                            Self.logger.info("ML initialization cancelled")
+                        } else {
+                            Self.logger.warning("ML initialization completed but suspended due to memory pressure")
+                        }
+                        return
+                    }
+                    
+                    self.denoiser = denoiser
+                    self.isMLProcessingActive = true
+                    Self.logger.info("DeepFilterNet ML processing enabled")
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -89,6 +94,11 @@ class MLAudioProcessor {
         mlInitializationTask = nil
         denoiser = nil
         isMLProcessingActive = false
+    }
+    
+    deinit {
+        // Fix PR Compliance: Ensure detached task is cancelled on deallocation
+        mlInitializationTask?.cancel()
     }
     
     /// Process audio chunk with DeepFilterNet if available

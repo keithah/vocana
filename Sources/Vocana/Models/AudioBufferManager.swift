@@ -52,8 +52,16 @@ class AudioBufferManager {
                     Self.logger.warning("Circuit breaker triggered: \(self.bufferState.consecutiveOverflows) consecutive overflows")
                     Self.logger.info("Suspending audio capture for \(AppConstants.circuitBreakerSuspensionSeconds)s to allow ML to catch up")
                     
-                    // Schedule resumption
+                    // Schedule resumption - important: update state within queue, then schedule callback
                     let suspensionDuration = AppConstants.circuitBreakerSuspensionSeconds
+                    let suspensionStartTime = DispatchTime.now()
+                    
+                    // Schedule the resumption update within the audioBufferQueue to ensure atomicity
+                    audioBufferQueue.asyncAfter(deadline: suspensionStartTime + suspensionDuration) { [weak self] in
+                        self?.bufferState.audioCaptureSuspended = false
+                        Self.logger.info("Resuming audio capture after circuit breaker suspension")
+                    }
+                    
                     onCircuitBreakerTriggered(suspensionDuration)
                     return nil // Skip this buffer append to help recovery
                 }

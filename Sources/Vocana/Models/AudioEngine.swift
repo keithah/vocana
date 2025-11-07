@@ -173,6 +173,8 @@ class AudioEngine: ObservableObject {
         
         bufferManager.recordCircuitBreakerSuspension = { [weak self] duration in
             guard let self = self else { return }
+            // Fix PR Compliance: Circuit breaker suspension is now handled within audioBufferQueue
+            // Just update the flag on the main thread for UI feedback
             Task { @MainActor in
                 self.audioCaptureSuspended = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
@@ -346,10 +348,12 @@ class AudioEngine: ObservableObject {
             queue: DispatchQueue.global(qos: .userInitiated)
         )
         
+        // Fix HIGH-002: Capture mask within handler to prevent TOCTOU race
         memoryPressureSource?.setEventHandler { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, let source = self.memoryPressureSource else { return }
             
-            let pressureLevel = self.memoryPressureSource?.mask
+            // Capture the pressure level immediately to prevent stale state
+            let pressureLevel = source.mask
             Task { @MainActor in
                 self.handleMemoryPressure(pressureLevel)
             }

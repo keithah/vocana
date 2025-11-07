@@ -92,11 +92,13 @@ final class ERBFeatures {
     private static func generateERBFilterbank(numBands: Int, sampleRate: Int, fftSize: Int) -> ([[Float]], [Float]) {
         let numFreqBins = fftSize / 2 + 1
         
-        // Fix HIGH: Add memory usage validation to prevent exhaustion
+        // Fix HIGH: More realistic memory usage validation based on actual ML models
         let estimatedMemoryBytes = numBands * numFreqBins * MemoryLayout<Float>.size
         let estimatedMemoryMB = estimatedMemoryBytes / (1024 * 1024)
-        precondition(estimatedMemoryMB < 100, 
-                    "Filterbank would require \(estimatedMemoryMB)MB (max: 100MB)")
+        // DeepFilterNet models typically use 32 bands × 481 bins = ~60KB, allow headroom for larger models
+        let maxMemoryMB = 500 // 500MB limit allows for much larger spectrograms while preventing abuse
+        precondition(estimatedMemoryMB < maxMemoryMB, 
+                    "Filterbank would require \(estimatedMemoryMB)MB (max: \(maxMemoryMB)MB)")
         
         Self.logger.debug("Generating ERB filterbank: \(numBands) bands × \(numFreqBins) bins = \(estimatedMemoryMB)MB")
         

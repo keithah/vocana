@@ -88,10 +88,18 @@ final class SpectralFeatures {
         var spectralFeatures: [[[Float]]] = []
         spectralFeatures.reserveCapacity(numFrames)
         
-        // Fix MEDIUM: Validate frame dimensions match expected
+        // Fix HIGH: Validate frame dimensions and throw error if mismatch is critical
         let expectedBins = fftSize / 2 + 1
         if let firstReal = spectrogramReal.first, firstReal.count != expectedBins {
-            Self.logger.warning("Spectrogram has \(firstReal.count) bins, expected \(expectedBins)")
+            let message = "Spectrogram has \(firstReal.count) bins, expected \(expectedBins)"
+            if firstReal.count < self.dfBands {
+                // Critical: Not enough bins for required dfBands
+                Self.logger.error("\(message) - Cannot extract \(self.dfBands) bands")
+                throw SpectralFeaturesError.invalidInput("Insufficient frequency bins: need \(self.dfBands), have \(firstReal.count)")
+            } else {
+                // Warning: More bins than expected, but we can proceed
+                Self.logger.warning("\(message) - Will use first \(self.dfBands) bands")
+            }
         }
         
         for frameIndex in 0..<numFrames {

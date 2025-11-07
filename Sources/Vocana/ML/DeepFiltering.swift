@@ -80,19 +80,16 @@ enum DeepFiltering {
         
         // Apply filtering to first dfBins bins only
         for t in 0..<timeSteps {
-            // Fix MEDIUM: Add Task cancellation support
-            #if canImport(Darwin)
+            // Fix HIGH: Cross-platform Task cancellation support  
             if Task.isCancelled {
                 logger.warning("Deep filtering cancelled at time step \(t)")
                 return (filteredReal, filteredImag)
             }
-            #endif
             
             for f in 0..<DeepFiltering.dfBins {
-                // Fix CRITICAL: Validate bounds before calculating offset to prevent overflow
-                // Ensure we don't have integer overflow in offset calculation
-                let baseOffset = t * DeepFiltering.dfBins
-                guard baseOffset >= 0 && baseOffset / DeepFiltering.dfBins == t else {
+                // Fix CRITICAL: Simplified bounds checking - use safe multiplication
+                let (baseOffset, overflowed) = t.multipliedReportingOverflow(by: DeepFiltering.dfBins)
+                guard !overflowed else {
                     logger.error("Integer overflow in coefficient offset calculation: t=\(t), dfBins=\(DeepFiltering.dfBins)")
                     continue
                 }

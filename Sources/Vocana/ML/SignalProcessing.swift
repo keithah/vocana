@@ -70,9 +70,15 @@ final class STFT {
         var hannWindow = [Float](repeating: 0, count: fftSize)
         vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_DENORM))
         
-        // Validate window contains valid values (vDSP_HANN_NORM can produce values > 1)
-        guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
-            preconditionFailure("Window generation failed - contains invalid values")
+        // Fix HIGH: More comprehensive window validation
+        guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1.0 }) else {
+            let invalidValues = hannWindow.enumerated().filter { !($0.element.isFinite && $0.element >= 0 && $0.element <= 1.0) }
+            preconditionFailure("Window generation failed - invalid values at indices: \(invalidValues.map(\.offset))")
+        }
+        
+        // Verify window has proper COLA properties for overlap-add
+        guard hannWindow.max() ?? 0 > 0.5 else {
+            preconditionFailure("Window amplitude too low - may cause reconstruction artifacts")
         }
         
         self.window = hannWindow

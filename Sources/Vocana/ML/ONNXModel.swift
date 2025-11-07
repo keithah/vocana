@@ -89,8 +89,12 @@ final class ONNXModel {
                     throw ONNXError.invalidInput("Tensor '\(name)' contains NaN or infinite values")
                 }
                 
-                guard tensor.data.allSatisfy({ abs($0) <= 1e6 }) else {
-                    throw ONNXError.invalidInput("Tensor '\(name)' values exceed safe range (±1e6)")
+                // Fix CRITICAL: Use more appropriate range validation for audio ML models
+                // Audio spectrograms can have large magnitude values, especially for loud signals
+                let maxSafeValue: Float = 1e8 // Allow large spectral values but prevent overflow
+                guard tensor.data.allSatisfy({ abs($0) <= maxSafeValue }) else {
+                    let maxValue = tensor.data.max { abs($0) < abs($1) } ?? 0
+                    throw ONNXError.invalidInput("Tensor '\(name)' max value \(maxValue) exceeds safe range (±\(maxSafeValue))")
                 }
                 
                 // Fix CRITICAL: Safe Int to Int64 conversion with proper error handling
@@ -126,9 +130,11 @@ final class ONNXModel {
             // Fix CRITICAL: Validate element count before Tensor construction to avoid precondition failure
             var expectedCount = 1
             for dim in shape {
-                // Fix CRITICAL: Validate individual dimensions before multiplication
-                guard dim > 0 && dim < 100_000 else {
-                    throw ONNXError.invalidOutputShape("Output '\(name)' dimension too large: \(dim)")
+                // Fix CRITICAL: Use reasonable limits based on ML model constraints
+                // DeepFilterNet models typically have dimensions: batch(1), channels(32-96), time(1), freq(481)
+                let maxReasonableDim = 1_000_000 // Allow for large spectrograms but prevent memory exhaustion
+                guard dim > 0 && dim <= maxReasonableDim else {
+                    throw ONNXError.invalidOutputShape("Output '\(name)' dimension \(dim) outside valid range [1, \(maxReasonableDim)]")
                 }
                 
                 // Check if multiplication would exceed reasonable limits before overflow check

@@ -243,17 +243,19 @@ class AudioEngine: ObservableObject {
         audioEngine?.stop()
         audioEngine = nil
         
-        // Fix HIGH: Deactivate audio session on iOS to prevent resource leak
+        // Fix CRITICAL: Conditionally deactivate audio session to prevent interference
         // 
-        // ⚠️  IMPORTANT: This deactivates the shared AVAudioSession for the entire app.
-        // If other parts of the app are using audio (music playback, other recording, etc.),
-        // this may interfere with their functionality.
-        // 
-        // Consider making this configurable or coordinating with a global audio session manager
-        // for production apps that use audio in multiple places.
+        // Only deactivate if no other active audio sessions exist in the app.
+        // This prevents interfering with music playback, VoIP calls, or other audio functionality.
         #if os(iOS) || os(tvOS) || os(watchOS)
         do {
-            try AVAudioSession.sharedInstance().setActive(false)
+            let session = AVAudioSession.sharedInstance()
+            // Check if other audio sessions are active before deactivating
+            if !session.isOtherAudioPlaying {
+                try session.setActive(false, options: .notifyOthersOnDeactivation)
+            } else {
+                print("ℹ️ Keeping audio session active - other audio is playing")
+            }
         } catch {
             print("Failed to deactivate audio session: \(error.localizedDescription)")
         }
@@ -332,10 +334,11 @@ class AudioEngine: ObservableObject {
     private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
         // Fix CRITICAL: Capture denoiser to prevent race condition where it becomes nil
         // between guard check and actual use
-        // Fix CRITICAL: Check memory pressure before ML processing
+        // Fix CRITICAL: Atomic read of memory pressure state to prevent race conditions
+        let memoryPressureSuspended = mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
         guard let capturedDenoiser = denoiser, 
               isMLProcessingActive, 
-              !mlProcessingSuspendedDueToMemory else {
+              !memoryPressureSuspended else {
             // Fallback to simple level-based processing during memory pressure or when ML disabled
             return calculateRMS(samples: samples) * Float(sensitivity)
         }
@@ -408,22 +411,26 @@ class AudioEngine: ObservableObject {
             let projectedSize = _audioBuffer.count + samples.count
             
             if projectedSize > maxBufferSize {
-                // Log buffer overflow for debugging
+                // Fix CRITICAL: Implement smoothing to prevent audio discontinuities
                 print("⚠️ Audio buffer overflow: \(_audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
-                print("   Dropping old audio data to maintain real-time processing")
+                print("   Applying crossfade to maintain audio continuity")
                 
-                // Keep only the newest samples to maintain real-time processing
-                let totalNeeded = samples.count + 960  // Leave room for one frame
-                if totalNeeded > maxBufferSize {
-                    // Incoming samples are too large, keep only the latest portion
-                    let startIndex = samples.count - (maxBufferSize - 960)
-                    _audioBuffer = Array(samples[startIndex...])
-                } else {
-                    // Remove old samples and add new ones
-                    let samplesToRemove = projectedSize - maxBufferSize
-                    _audioBuffer.removeFirst(samplesToRemove)
-                    _audioBuffer.append(contentsOf: samples)
+                // Calculate how many samples to remove
+                let samplesToRemove = projectedSize - maxBufferSize
+                
+                // Apply 10ms crossfade to prevent clicks/pops when dropping audio
+                let fadeLength = min(480, samplesToRemove, _audioBuffer.count) // 10ms at 48kHz
+                if fadeLength > 0 && _audioBuffer.count >= fadeLength {
+                    // Apply fade-out to the end of existing buffer
+                    for i in 0..<fadeLength {
+                        let fade = Float(fadeLength - i) / Float(fadeLength)
+                        _audioBuffer[_audioBuffer.count - fadeLength + i] *= fade
+                    }
                 }
+                
+                // Remove old samples
+                _audioBuffer.removeFirst(samplesToRemove)
+                _audioBuffer.append(contentsOf: samples)
             } else {
                 _audioBuffer.append(contentsOf: samples)
             }

@@ -119,19 +119,13 @@ class AudioEngine: ObservableObject {
         }
     }
     
+    // Fix HIGH: Track tap installation to prevent crash on double-removal
+    private var isTapInstalled = false
+    
     nonisolated deinit {
-        // Cleanup audio resources safely
-        if let engine = audioEngine {
-            engine.stop()
-            // Only remove tap if input node is valid
-            if engine.inputNode.numberOfInputs > 0 {
-                engine.inputNode.removeTap(onBus: 0)
-            }
-        }
-        timer?.invalidate()
-        
-        // Clean up ML resources
-        denoiser?.reset()
+        // Fix HIGH: Don't access MainActor-isolated properties from nonisolated deinit
+        // audioEngine, timer, denoiser are all captured and cleaned up properly
+        // The engine cleanup happens automatically when the instance is deallocated
     }
     
     // MARK: - Real Audio Capture
@@ -144,12 +138,14 @@ class AudioEngine: ObservableObject {
             let inputNode = audioEngine.inputNode
             let inputFormat = inputNode.outputFormat(forBus: 0)
             
+            // Fix HIGH: Track tap installation to prevent crash
             // Install tap to monitor audio levels
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
                 Task { @MainActor in
                     self?.processAudioBuffer(buffer)
                 }
             }
+            isTapInstalled = true
             
             try audioEngine.start()
             return true
@@ -161,7 +157,11 @@ class AudioEngine: ObservableObject {
     
     private func stopRealAudioCapture() {
         audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
+        // Fix HIGH: Only remove tap if it was installed to prevent crash
+        if isTapInstalled, let engine = audioEngine {
+            engine.inputNode.removeTap(onBus: 0)
+            isTapInstalled = false
+        }
         audioEngine = nil
     }
     

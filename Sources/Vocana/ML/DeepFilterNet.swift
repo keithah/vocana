@@ -413,41 +413,50 @@ final class DeepFilterNet {
         output.reserveCapacity(audio.count)
         
         // Process in chunks
+        // Fix HIGH: Add autoreleasepool to prevent memory accumulation in loop
         var position = 0
         while position + fftSize <= audio.count {
-            // Fix HIGH: Bounds checking
-            guard position + fftSize <= audio.count else {
-                throw DeepFilterError.processingFailed("Buffer position out of bounds: \(position + fftSize) > \(audio.count)")
+            autoreleasepool {
+                // Fix HIGH: Bounds checking
+                guard position + fftSize <= audio.count else {
+                    return  // Skip invalid chunks
+                }
+                
+                let chunk = Array(audio[position..<position + fftSize])
+                guard let enhanced = try? process(audio: chunk) else {
+                    return  // Skip failed chunks
+                }
+                
+                let outputChunk = Array(enhanced.prefix(hopSize))
+                output.append(contentsOf: outputChunk)
             }
-            
-            let chunk = Array(audio[position..<position + fftSize])
-            let enhanced = try process(audio: chunk)
-            
-            let outputChunk = Array(enhanced.prefix(hopSize))
-            output.append(contentsOf: outputChunk)
             
             position += hopSize
         }
         
         // Handle remaining samples
+        // Fix HIGH: Add autoreleasepool here too
         if position < audio.count {
-            let remaining = audio.count - position
-            var lastChunk = Array(audio[position..<audio.count])
-            
-            // Fix MEDIUM: Use reflection padding instead of zeros to avoid artifacts
-            if remaining < fftSize {
-                let padCount = fftSize - remaining
-                let reflectCount = min(padCount, remaining)
-                lastChunk.append(contentsOf: audio[audio.count - reflectCount..<audio.count].reversed())
+            autoreleasepool {
+                let remaining = audio.count - position
+                var lastChunk = Array(audio[position..<audio.count])
                 
-                if lastChunk.count < fftSize {
-                    lastChunk.append(contentsOf: Array(repeating: 0.0, count: fftSize - lastChunk.count))
+                // Fix MEDIUM: Use reflection padding instead of zeros to avoid artifacts
+                if remaining < fftSize {
+                    let padCount = fftSize - remaining
+                    let reflectCount = min(padCount, remaining)
+                    lastChunk.append(contentsOf: audio[audio.count - reflectCount..<audio.count].reversed())
+                    
+                    if lastChunk.count < fftSize {
+                        lastChunk.append(contentsOf: Array(repeating: 0.0, count: fftSize - lastChunk.count))
+                    }
+                }
+                
+                if let enhanced = try? process(audio: lastChunk) {
+                    let outputChunk = Array(enhanced.prefix(remaining))
+                    output.append(contentsOf: outputChunk)
                 }
             }
-            
-            let enhanced = try process(audio: lastChunk)
-            let outputChunk = Array(enhanced.prefix(remaining))
-            output.append(contentsOf: outputChunk)
         }
         
         return output

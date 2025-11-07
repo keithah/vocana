@@ -180,20 +180,22 @@ final class SpectralFeatures {
             
             let variance = (sumMagSquared / Float(sqrtResult.count)) - meanSquared
             
-            // Fix MEDIUM: Better epsilon for Float32
-            guard !variance.isNaN && !variance.isInfinite && variance >= 0 else {
-                Self.logger.error("Invalid variance: \(variance)")
-                preconditionFailure("Variance calculation produced invalid value: \(variance)")
+            // Fix HIGH: Don't fail on invalid variance - use epsilon fallback to maintain frame count
+            let epsilon: Float = 1e-6
+            let validVariance: Float
+            if variance.isNaN || variance.isInfinite || variance < 0 {
+                Self.logger.error("Invalid variance: \(variance), using epsilon fallback")
+                validVariance = epsilon
+            } else {
+                validVariance = variance
             }
             
-            let std = sqrt(max(variance, Float.leastNonzeroMagnitude))
+            let std = sqrt(max(validVariance, epsilon))
             
             // Fix MEDIUM: Remove redundant NaN/Inf check after epsilon
             // std is guaranteed valid after sqrt(max(...))
             
             // Normalize real and imaginary parts using vDSP
-            // Fix CRITICAL: Use reasonable epsilon to prevent division issues with silent frames
-            let epsilon: Float = 1e-6
             var invStd = 1.0 / max(std, epsilon)
             vDSP_vsmul(realPart, 1, &invStd, &normalizedRealBuffer, 1, vDSP_Length(realPart.count))
             vDSP_vsmul(imagPart, 1, &invStd, &normalizedImagBuffer, 1, vDSP_Length(imagPart.count))

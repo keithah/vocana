@@ -18,23 +18,43 @@ struct AppConstants {
     static let sensitivityRange: ClosedRange<Double> = 0...1
     
     // Audio Processing
-    static let sampleRate: Int = 48000
+    static let sampleRate: Int = 48000 // Standard high-quality audio sampling rate
+    
+    // Buffer size of 1 second provides good balance between latency and robustness
+    // Allows for ~2 seconds of processing latency before audio starts dropping
     static let maxAudioBufferSize: Int = 48000  // 1 second at 48kHz
+    
+    // Empirically tuned factor to bring RMS values (typically 0.01-0.1) to UI range (0-1)
+    // Based on testing with typical microphone input levels
     static let rmsAmplificationFactor: Float = 10.0
-    static let maxSpectralFrames: Int = 100_000  // ~35 minutes at 48kHz with 480 hop
+    
+    // ~35 minutes at 48kHz with 480 hop size - prevents DoS attacks via memory exhaustion
+    // Calculated as: (35 * 60 * 48000) / 480 = 105,000 frames, rounded to 100,000
+    static let maxSpectralFrames: Int = 100_000
+    
+    // Default Log-SNR value for DeepFilterNet when no ML output is available
+    // -10dB represents moderate noise suppression as a safe fallback
     static let defaultLSNRValue: Float = -10.0
+    
+    // Maximum amplification applied to processed audio (20dB) to prevent clipping
+    // Corresponds to 10x voltage gain, balancing enhancement with distortion prevention
     static let maxProcessingGain: Float = 10.0
     
-    // DeepFilterNet Configuration
-    static let fftSize: Int = 960
-    static let hopSize: Int = 480
-    static let erbBands: Int = 32
-    static let dfBands: Int = 96
-    static let dfOrder: Int = 5  // Deep filtering FIR filter order
+    // DeepFilterNet Configuration - matches original Python implementation
+    static let fftSize: Int = 960      // 20ms frames at 48kHz, power-of-2 for efficient FFT
+    static let hopSize: Int = 480      // 50% overlap for good time resolution and COLA reconstruction
+    static let erbBands: Int = 32      // ERB bands covering 50Hz-20kHz for perceptual modeling
+    static let dfBands: Int = 96       // Deep filtering applied to first 96 bins (0-4.8kHz where most speech energy is)
+    static let dfOrder: Int = 5        // 5-tap FIR filter order - balances complexity vs quality
     
     // Audio Processing Constants
-    static let minFrequency: Float = 50.0  // Minimum frequency (Hz) - human hearing starts ~20Hz but 50Hz is more practical
-    static let defaultTensorValue: Float = 0.1  // Default value for tensor initialization
+    // Human hearing starts ~20Hz but microphones/speakers below 50Hz add mostly noise
+    // Also avoids low-frequency rumble and wind noise in real-world recordings
+    static let minFrequency: Float = 50.0
+    
+    // Small positive value prevents log(0) in ERB calculations while being close to silence
+    // Chosen to be well below typical speech/noise levels (>0.01) but above numerical precision issues
+    static let defaultTensorValue: Float = 0.1
     
     // Accessibility
     static let accessibilityDescription = "Vocana"

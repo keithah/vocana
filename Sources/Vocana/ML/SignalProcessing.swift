@@ -299,9 +299,15 @@ final class STFT {
             let bufferSize = min(fullReal.count, fullImag.count, fftSizePowerOf2)
             let mirrorBinsToUse = min(binsToUse, frameSize)
             
+            // Fix CRITICAL: Add bounds checking for frame array access to prevent crashes
             for i in 1..<mirrorBinsToUse {
                 let mirrorIndex = fftSizePowerOf2 - i
-                guard mirrorIndex > 0 && mirrorIndex < bufferSize else {
+                guard mirrorIndex > 0 && mirrorIndex < bufferSize,
+                      i < frameReal.count, i < frameImag.count else {
+                    // Log potential issue for debugging
+                    if i >= frameReal.count || i >= frameImag.count {
+                        Self.logger.warning("Mirror loop bounds error: i=\(i), frameReal.count=\(frameReal.count), frameImag.count=\(frameImag.count)")
+                    }
                     continue
                 }
                 fullReal[mirrorIndex] = frameReal[i]

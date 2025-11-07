@@ -1,4 +1,5 @@
 import XCTest
+import Accelerate
 @testable import Vocana
 
 @MainActor
@@ -130,6 +131,80 @@ final class SignalProcessingTests: XCTestCase {
             let magnitude = sqrt(firstFrame[expectedBin] * firstFrame[expectedBin] + 
                                imag[0][expectedBin] * imag[0][expectedBin])
             XCTAssertGreaterThan(magnitude, 50, "Expected high magnitude at 1kHz bin")
+        }
+    }
+    
+    // MARK: - Window Normalization Validation
+    
+    /// Test that validates STFT window normalization matches expected behavior
+    /// This ensures our switch from vDSP_HANN_NORM to vDSP_HANN_DENORM is correct
+    func testWindowAmplitudeValidation() {
+        // Create an impulse signal (Dirac delta)
+        var impulse = [Float](repeating: 0, count: 960)
+        impulse[0] = 1.0  // Single unit impulse
+        
+        let (real, imag) = stft.transform(impulse)
+        
+        // For vDSP_HANN_DENORM, the peak amplitude should be close to the window peak
+        // Hann window peak is ~0.5, so we expect the transform peak to be similar
+        XCTAssertGreaterThan(real.count, 0, "Should have at least one frame")
+        
+        if let firstFrame = real.first {
+            // Find peak magnitude in frequency domain
+            var maxMagnitude: Float = 0
+            for bin in 0..<firstFrame.count {
+                let magnitude = sqrt(firstFrame[bin] * firstFrame[bin] + 
+                                   (bin < imag[0].count ? imag[0][bin] * imag[0][bin] : 0))
+                maxMagnitude = max(maxMagnitude, magnitude)
+            }
+            
+            // With vDSP_HANN_DENORM, peak should be approximately the window peak (~0.5)
+            // Allow some tolerance for FFT scaling and numerical precision
+            XCTAssertGreaterThan(maxMagnitude, 0.3, "Peak magnitude too low: \(maxMagnitude)")
+            XCTAssertLessThan(maxMagnitude, 0.8, "Peak magnitude too high: \(maxMagnitude)")
+            
+            print("Window validation: Peak magnitude = \(maxMagnitude)")
+        }
+    }
+    
+    /// Test window COLA (Constant Overlap-Add) property for perfect reconstruction
+    func testWindowCOLAProperty() {
+        let stft = STFT(fftSize: 960, hopSize: 480)
+        let windowSize = 960
+        let hopSize = 480
+        let numHops = 10
+        
+        // Create overlapping windows and sum them
+        var colaSum = [Float](repeating: 0, count: windowSize + (numHops - 1) * hopSize)
+        
+        for hop in 0..<numHops {
+            let offset = hop * hopSize
+            
+            // Simulate the windowing that happens in STFT
+            // The window is private, so we recreate the same Hann window
+            var hannWindow = [Float](repeating: 0, count: windowSize)
+            vDSP_hann_window(&hannWindow, vDSP_Length(windowSize), Int32(vDSP_HANN_DENORM))
+            
+            // Add this window to the COLA sum
+            for i in 0..<windowSize {
+                if offset + i < colaSum.count {
+                    colaSum[offset + i] += hannWindow[i] * hannWindow[i] // Power of window for COLA
+                }
+            }
+        }
+        
+        // Check COLA property in the steady-state region (away from edges)
+        let steadyStateStart = windowSize
+        let steadyStateEnd = colaSum.count - windowSize
+        
+        if steadyStateStart < steadyStateEnd {
+            let steadyStateSum = colaSum[steadyStateStart]
+            
+            // For 50% overlap with Hann window, COLA sum should be constant ≈ 0.375
+            XCTAssertGreaterThan(steadyStateSum, 0.3, "COLA sum too low: \(steadyStateSum)")
+            XCTAssertLessThan(steadyStateSum, 0.5, "COLA sum too high: \(steadyStateSum)")
+            
+            print("COLA validation: Steady-state sum = \(steadyStateSum)")
         }
     }
 }

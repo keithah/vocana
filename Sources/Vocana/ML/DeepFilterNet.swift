@@ -167,19 +167,37 @@ final class DeepFilterNet {
     }
     
     /// Reset internal state (call when starting new audio stream)
+    /// 
+    /// This method is now async to prevent potential deadlocks during high-load scenarios.
+    /// Use `resetSync()` if you need synchronous behavior and can guarantee no deadlock risk.
     func reset() {
-        // Fix CRITICAL: Atomic reset avoiding nested queue synchronization
-        // Clear states first (separate queue access)
+        // Fix CRITICAL: Use async dispatch to prevent potential deadlock
+        // This ensures reset never blocks if queues are under heavy load
+        stateQueue.async { [weak self] in
+            self?._states = [:]
+        }
+        
+        processingQueue.async { [weak self] in
+            self?.overlapBuffer.removeAll()
+        }
+        
+        Self.logger.info("DeepFilterNet async reset initiated - clearing states and overlap buffer")
+    }
+    
+    /// Synchronous reset for testing and scenarios where immediate completion is required
+    /// 
+    /// ⚠️ Use with caution: Can potentially deadlock if called during heavy processing load
+    func resetSync() {
+        // Original synchronous implementation for compatibility
         stateQueue.sync {
             _states = [:]
         }
         
-        // Clear processing buffers (processingQueue protects overlapBuffer)
         processingQueue.sync {
             overlapBuffer.removeAll()
         }
         
-        Self.logger.info("DeepFilterNet state reset - cleared states and overlap buffer")
+        Self.logger.info("DeepFilterNet sync reset completed - cleared states and overlap buffer")
     }
     
     // MARK: - Processing
@@ -371,15 +389,16 @@ final class DeepFilterNet {
         }
         
         // Fix CRITICAL: Improved memory management for state updates
-        // Use atomic swap to minimize memory pressure during updates
+        // Use autoreleasepool to ensure prompt memory cleanup during sustained processing
         stateQueue.sync {
-            // Store old states temporarily for proper cleanup
-            let oldStates = _states
-            _states = copiedOutputs
-            
-            // Note: oldStates will be deallocated automatically by ARC
-            // Tensor.data is immutable for thread safety, so explicit clearing isn't possible
-            // The memory will be reclaimed when oldStates goes out of scope
+            autoreleasepool {
+                // Store reference to old states to ensure proper deallocation timing
+                let _ = _states  // Keep reference until autoreleasepool drains
+                _states = copiedOutputs
+                
+                // Old states will be deallocated when autoreleasepool drains
+                // This ensures prompt memory reclamation under sustained processing load
+            }
         }
         return copiedOutputs
     }

@@ -58,6 +58,7 @@ class AudioEngine: ObservableObject {
     
     // ML processing
     private var denoiser: DeepFilterNet?
+    private var mlInitializationTask: Task<Void, Never>?
     
     // Fix CRITICAL: Thread-safe audioBuffer access with dedicated queue
     private let audioBufferQueue = DispatchQueue(label: "com.vocana.audiobuffer", qos: .userInteractive)
@@ -66,6 +67,12 @@ class AudioEngine: ObservableObject {
         get { audioBufferQueue.sync { _audioBuffer } }
         set { audioBufferQueue.sync { _audioBuffer = newValue } }
     }
+    
+    // Fix HIGH: Circuit breaker for sustained buffer overflows
+    private var consecutiveOverflows = 0
+    private let maxConsecutiveOverflows = 10 // Allow 10 consecutive overflows before circuit breaking
+    private var audioCaptureSuspended = false
+    private var audioCaptureSuspensionTimer: Timer?
     
     private let minimumBufferSize = 960  // FFT size for DeepFilterNet
     
@@ -104,21 +111,34 @@ class AudioEngine: ObservableObject {
     // MARK: - ML Processing
     
     private func initializeMLProcessing() {
+        // Fix CRITICAL: Cancel any existing initialization to prevent race conditions
+        mlInitializationTask?.cancel()
+        
         // Fix HIGH: Make ML initialization async to avoid blocking UI
         // Fix CRITICAL #4: Use MainActor.run to ensure isMLProcessingActive updates are synchronized
-        Task.detached(priority: .userInitiated) { [weak self] in
+        mlInitializationTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
             
             do {
+                // Check for cancellation before each expensive operation
+                guard !Task.isCancelled else { return }
+                
                 // Find models directory (can be slow with file system checks)
                 let modelsPath = self.findModelsDirectory()
+                
+                guard !Task.isCancelled else { return }
                 
                 // Create DeepFilterNet instance (potentially slow model loading)
                 let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
                 
+                guard !Task.isCancelled else { return }
+                
                 // Fix CRITICAL #4: Update state atomically with proper synchronization
                 await MainActor.run {
                     self.mlStateQueue.sync {
+                        // Double-check cancellation after context switch
+                        guard !Task.isCancelled else { return }
+                        
                         // Check if ML was suspended during initialization
                         if !self.mlProcessingSuspendedDueToMemory {
                             self.denoiser = denoiser
@@ -130,6 +150,8 @@ class AudioEngine: ObservableObject {
                     }
                 }
             } catch {
+                guard !Task.isCancelled else { return }
+                
                 await MainActor.run {
                     print("⚠️  Could not initialize ML processing: \(error.localizedDescription)")
                     print("   Falling back to simple level-based processing")
@@ -161,6 +183,10 @@ class AudioEngine: ObservableObject {
     }
     
     func stopSimulation() {
+        // Fix CRITICAL: Cancel ML initialization to prevent race conditions
+        mlInitializationTask?.cancel()
+        mlInitializationTask = nil
+        
         stopRealAudioCapture()
         stopSimulatedAudio()
         
@@ -263,6 +289,9 @@ class AudioEngine: ObservableObject {
     }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+        // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
+        guard !audioCaptureSuspended else { return }
+        
         guard let channelData = buffer.floatChannelData else { return }
         let channelDataValue = channelData.pointee
         let frames = buffer.frameLength
@@ -411,8 +440,18 @@ class AudioEngine: ObservableObject {
             let projectedSize = _audioBuffer.count + samples.count
             
             if projectedSize > maxBufferSize {
+                // Fix HIGH: Circuit breaker for sustained buffer overflows
+                consecutiveOverflows += 1
+                
+                if consecutiveOverflows > maxConsecutiveOverflows && !audioCaptureSuspended {
+                    print("🔴 Circuit breaker triggered: \(consecutiveOverflows) consecutive overflows")
+                    print("   Suspending audio capture for 1 second to allow ML to catch up")
+                    suspendAudioCapture(duration: 1.0)
+                    return nil // Skip this buffer append to help recovery
+                }
+                
                 // Fix CRITICAL: Implement smoothing to prevent audio discontinuities
-                print("⚠️ Audio buffer overflow: \(_audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
+                print("⚠️ Audio buffer overflow \(consecutiveOverflows): \(_audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
                 print("   Applying crossfade to maintain audio continuity")
                 
                 // Calculate how many samples to remove
@@ -432,6 +471,8 @@ class AudioEngine: ObservableObject {
                 _audioBuffer.removeFirst(samplesToRemove)
                 _audioBuffer.append(contentsOf: samples)
             } else {
+                // Reset overflow counter on successful append
+                consecutiveOverflows = 0
                 _audioBuffer.append(contentsOf: samples)
             }
             
@@ -561,5 +602,28 @@ class AudioEngine: ObservableObject {
             }
             print("✅ Memory pressure recovered - attempting to resume ML processing")
         }
+    }
+    
+    // Fix HIGH: Audio capture suspension for circuit breaker
+    private func suspendAudioCapture(duration: TimeInterval) {
+        audioCaptureSuspended = true
+        
+        // Cancel any existing suspension timer
+        audioCaptureSuspensionTimer?.invalidate()
+        
+        // Schedule resumption
+        audioCaptureSuspensionTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.resumeAudioCapture()
+            }
+        }
+    }
+    
+    private func resumeAudioCapture() {
+        audioCaptureSuspended = false
+        consecutiveOverflows = 0 // Reset counter on resume
+        audioCaptureSuspensionTimer?.invalidate()
+        audioCaptureSuspensionTimer = nil
+        print("✅ Audio capture resumed after circuit breaker recovery")
     }
 }

@@ -167,31 +167,49 @@ final class ONNXModel {
     
     // Fix CRITICAL: Path sanitization to prevent directory traversal attacks
     private static func sanitizeModelPath(_ path: String) throws -> String {
-        // Convert to URL for proper path handling
+// Fix CRITICAL: Improve path sanitization with proper URL resolution and component checking
         let url = URL(fileURLWithPath: path)
         
-        // Get the resolved path (removes .. and . components)
-        let resolvedPath = url.standardized.path
+        // Resolve symlinks and standardize path
+        let resolvedURL = url.standardizedFileURL
+        let resolvedPath = resolvedURL.path
         
-        // Define allowed directories for model files
-        let allowedDirectories = [
-            "Resources/Models",
-            Bundle.main.resourcePath?.appending("/Models"),
-            NSHomeDirectory().appending("/Documents/Models"),
-            FileManager.default.temporaryDirectory.appendingPathComponent("Models").path
-        ].compactMap { $0 }.filter { !$0.isEmpty }
+        // Build allowed directories with proper URL resolution
+        var allowedDirectories: [URL] = []
         
-        // Check if the resolved path is within allowed directories
-        let isPathAllowed = allowedDirectories.contains { allowedDir in
-            resolvedPath.hasPrefix(allowedDir)
+        // Add Resources/Models relative path
+        let currentDir = FileManager.default.currentDirectoryPath
+        allowedDirectories.append(URL(fileURLWithPath: currentDir).appendingPathComponent("Models"))
+        
+        // Add Bundle resources path
+        if let resourcePath = Bundle.main.resourcePath {
+            allowedDirectories.append(URL(fileURLWithPath: resourcePath).appendingPathComponent("Models"))
+        }
+        
+        // Add Documents/Models
+        if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            allowedDirectories.append(documentsPath.appendingPathComponent("Models"))
+        }
+        
+        // Add temp/Models
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("Models")
+        allowedDirectories.append(tempURL)
+        
+        // Get path components for comparison
+        let resolvedComponents = resolvedURL.pathComponents
+        let allowedComponents = allowedDirectories.map { $0.pathComponents }
+        
+        // Check if resolved path is within allowed directories using component comparison
+        let isPathAllowed = allowedComponents.contains { allowedComp in
+            resolvedComponents.starts(with: allowedComp)
         }
         
         guard isPathAllowed else {
             throw ONNXError.modelNotFound("Model path not in allowed directories: \(resolvedPath)")
         }
         
-        // Ensure it's an .onnx file
-        guard resolvedPath.hasSuffix(".onnx") else {
+        // Ensure it's an .onnx file (case-insensitive)
+        guard resolvedPath.lowercased().hasSuffix(".onnx") else {
             throw ONNXError.modelNotFound("Model file must have .onnx extension: \(resolvedPath)")
         }
         

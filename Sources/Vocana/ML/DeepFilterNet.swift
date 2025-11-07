@@ -161,9 +161,8 @@ final class DeepFilterNet {
     deinit {
         // Note: deinit is nonisolated, logger is thread-safe
         // State cleanup handled by ARC - manual cleanup should be done via reset() before deallocation
-        Task { @MainActor in
-            Self.logger.debug("DeepFilterNet deinitialized")
-        }
+        // Logger calls are generally safe in deinit - no Task wrapper needed
+        Self.logger.debug("DeepFilterNet deinitialized")
     }
     
     /// Reset internal state (call when starting new audio stream)

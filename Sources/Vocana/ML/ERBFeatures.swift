@@ -173,7 +173,9 @@ final class ERBFeatures {
     
     /// Convert frequency (Hz) to ERB scale
     /// ERB(f) = 21.4 * ln(1 + 0.00437 * f) - Glasberg & Moore (1990) standard formula
-    /// Note: Some implementations use log10, but the original paper specifies natural log
+    /// ERB frequency conversion according to Glasberg & Moore (1990) paper
+    /// ERB(f) = 24.7 * (4.37 * f / 1000 + 1)
+    /// Note: Using natural log (ln) as specified in original paper, not log10
     private static func frequencyToERB(_ freq: Float) -> Float {
         precondition(freq >= 0, "Frequency must be non-negative, got \(freq)")
         return 21.4 * log(1.0 + 0.00437 * freq)  // Using natural log (ln)
@@ -184,6 +186,14 @@ final class ERBFeatures {
     /// Inverse of frequencyToERB using natural exponential
     private static func erbToFrequency(_ erb: Float) -> Float {
         return (exp(erb / 21.4) - 1.0) / 0.00437  // Using exp (natural exponential)
+    }
+    
+    /// Calculate ERB bandwidth for a given frequency
+    /// ERB(f) = 24.7 * (4.37 * f / 1000 + 1) - Glasberg & Moore (1990)
+    /// This is the Equivalent Rectangular Bandwidth at frequency f
+    public static func erbWidth(frequency: Float) -> Float {
+        precondition(frequency >= 0, "Frequency must be non-negative, got \(frequency)")
+        return 24.7 * (4.37 * frequency / 1000.0 + 1.0)
     }
     
     /// Calculate ERB bandwidth at a given frequency

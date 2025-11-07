@@ -25,6 +25,14 @@ final class STFT {
     private let window: [Float]
     private let fftSizePowerOf2: Int  // Stored to avoid recalculation
     
+    // MARK: - Test Accessors
+    
+    /// Test accessor for window function (testing only)
+    var testWindow: [Float] { window }
+    
+    /// Test accessor for hop size (testing only)
+    var testHopSize: Int { hopSize }
+    
     // MARK: - FFT Setup
     
     private let fftSetup: FFTSetup  // Non-optional - required for operation
@@ -58,6 +66,10 @@ final class STFT {
                     "FFT size must be in range [1, 16384], got \(fftSize)")
         precondition(hopSize > 0 && hopSize <= fftSize, 
                     "Hop size must be positive and <= FFT size, got hopSize=\(hopSize), fftSize=\(fftSize)")
+        // Fix CRITICAL: Add COLA validation for STFT window change
+        // vDSP_HANN_DENORM requires 50% overlap (hop=fft/2) for proper reconstruction
+        precondition(hopSize == fftSize / 2, 
+                    "vDSP_HANN_DENORM requires 50% overlap (hop=fft/2). Got hop=\(hopSize), fft=\(fftSize)")
         precondition(sampleRate > 0 && sampleRate <= 192000, 
                     "Sample rate must be in range [1, 192000], got \(sampleRate)")
         
@@ -70,9 +82,10 @@ final class STFT {
         var hannWindow = [Float](repeating: 0, count: fftSize)
         vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_DENORM))
         
-        // Fix HIGH: More comprehensive window validation
-        guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1.0 }) else {
-            let invalidValues = hannWindow.enumerated().filter { !($0.element.isFinite && $0.element >= 0 && $0.element <= 1.0) }
+        // Fix CRITICAL: Fix Hann window amplitude validation for DENORM output
+        // vDSP_HANN_DENORM yields samples up to 2.0, so validate against correct range
+        guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 2.0 }) else {
+            let invalidValues = hannWindow.enumerated().filter { !($0.element.isFinite && $0.element >= 0 && $0.element <= 2.0) }
             preconditionFailure("Window generation failed - invalid values at indices: \(invalidValues.map(\.offset))")
         }
         

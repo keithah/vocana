@@ -41,8 +41,8 @@ struct AppConstants {
     static let maxFilterbankMemoryMB: Int = 500
     
     // Duration in seconds to suspend audio capture when circuit breaker triggers
-    // 1 second allows ML pipeline to catch up without noticeable audio interruption
-    static let circuitBreakerSuspensionSeconds: Double = 1.0
+    // 150ms allows ML pipeline to catch up with minimal audio interruption
+    static let circuitBreakerSuspensionSeconds: Double = 0.15
     
     // Default Log-SNR value for DeepFilterNet when no ML output is available
     // -10dB represents moderate noise suppression as a safe fallback
@@ -58,6 +58,12 @@ struct AppConstants {
     static let erbBands: Int = 32      // ERB bands covering 50Hz-20kHz for perceptual modeling
     static let dfBands: Int = 96       // Deep filtering applied to first 96 bins (0-4.8kHz where most speech energy is)
     static let dfOrder: Int = 5        // 5-tap FIR filter order - balances complexity vs quality
+    
+    // Audio Processing Constants
+    static let crossfadeLengthSamples: Int = 480  // 10ms crossfade at 48kHz to prevent audio artifacts
+    static let maxConsecutiveOverflows: Int = 10   // Circuit breaker threshold for sustained buffer overflows
+    static let memoryPressureRecoveryDelaySeconds: Double = 30.0  // Timeout for forced memory pressure recovery
+    static let memoryPressureCheckDelaySeconds: Double = 5.0     // Delay before checking memory pressure recovery
     
     // Audio Processing Constants
     // Human hearing starts ~20Hz but microphones/speakers below 50Hz add mostly noise

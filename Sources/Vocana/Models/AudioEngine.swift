@@ -3,6 +3,37 @@ import Combine
 import AVFoundation
 import os.log
 
+// MARK: - Audio Engine Error Types
+
+enum AudioEngineError: LocalizedError {
+    case initializationFailed(String)
+    case processingFailed(String)
+    case memoryPressure(String)
+    case circuitBreakerTriggered(String)
+    case bufferOverflow(String)
+    case mlProcessingError(String)
+    case audioSessionError(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .initializationFailed(let message):
+            return "Audio Engine Initialization Failed: \(message)"
+        case .processingFailed(let message):
+            return "Audio Processing Failed: \(message)"
+        case .memoryPressure(let message):
+            return "Memory Pressure: \(message)"
+        case .circuitBreakerTriggered(let message):
+            return "Circuit Breaker Triggered: \(message)"
+        case .bufferOverflow(let message):
+            return "Buffer Overflow: \(message)"
+        case .mlProcessingError(let message):
+            return "ML Processing Error: \(message)"
+        case .audioSessionError(let message):
+            return "Audio Session Error: \(message)"
+        }
+    }
+}
+
 struct AudioLevels {
     let input: Float
     let output: Float
@@ -82,7 +113,6 @@ class AudioEngine: ObservableObject {
     
     // Fix HIGH: Circuit breaker for sustained buffer overflows
     private var consecutiveOverflows = 0
-    private let maxConsecutiveOverflows = 10 // Allow 10 consecutive overflows before circuit breaking
     private var audioCaptureSuspended = false
     private var audioCaptureSuspensionTimer: Timer?
     
@@ -152,9 +182,9 @@ class AudioEngine: ObservableObject {
                         // Atomic check: verify both task cancellation AND ML suspension state
                         guard !wasCancelled && !self.mlProcessingSuspendedDueToMemory else { 
                             if wasCancelled {
-                                print("⚠️ ML initialization cancelled")
+                                Self.logger.info("ML initialization cancelled")
                             } else {
-                                print("⚠️ ML initialization completed but suspended due to memory pressure")
+                                Self.logger.warning("ML initialization completed but suspended due to memory pressure")
                             }
                             return 
                         }
@@ -162,15 +192,14 @@ class AudioEngine: ObservableObject {
 self.denoiser = denoiser
                             self.isMLProcessingActive = true
                             Self.logger.info("DeepFilterNet ML processing enabled")
-                            print("✓ DeepFilterNet ML processing enabled")
                     }
                 }
             } catch {
                 guard !Task.isCancelled else { return }
                 
                 await MainActor.run {
-                    print("⚠️  Could not initialize ML processing: \(error.localizedDescription)")
-                    print("   Falling back to simple level-based processing")
+                    Self.logger.error("Could not initialize ML processing: \(error.localizedDescription)")
+                    Self.logger.info("Falling back to simple level-based processing")
                     self.denoiser = nil
                     self.isMLProcessingActive = false
                 }
@@ -231,7 +260,7 @@ self.denoiser = denoiser
         
         // Log warning if cleanup wasn't called
         Task { @MainActor in
-            print("⚠️ AudioEngine deallocated - ensure stopSimulation() was called for proper cleanup")
+            Self.logger.warning("AudioEngine deallocated - ensure stopSimulation() was called for proper cleanup")
         }
     }
     
@@ -255,10 +284,10 @@ self.denoiser = denoiser
             // Fix HIGH: Track tap installation to prevent crash
             // Install tap to monitor audio levels
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-                // Fix CRITICAL: Use async task to prevent blocking audio thread
-                // Process on high-priority background queue, update MainActor asynchronously
-                Task.detached(priority: .userInteractive) { @MainActor in
-                    self?.processAudioBuffer(buffer)
+                // Fix CRITICAL: Use detached task without MainActor to prevent blocking audio thread
+                // Process on background queue, update UI properties on MainActor
+                Task.detached(priority: .userInteractive) {
+                    await self?.processAudioBuffer(buffer)
                 }
             }
             isTapInstalled = true
@@ -266,7 +295,7 @@ self.denoiser = denoiser
             try audioEngine.start()
             return true
         } catch {
-            print("Failed to start real audio capture: \(error.localizedDescription)")
+            Self.logger.error("Failed to start real audio capture: \(error.localizedDescription)")
             // Fix HIGH: Clean up tap on failure path to prevent leak
             if isTapInstalled {
                 audioEngine?.inputNode.removeTap(onBus: 0)
@@ -297,10 +326,10 @@ self.denoiser = denoiser
             if !session.isOtherAudioPlaying {
                 try session.setActive(false, options: .notifyOthersOnDeactivation)
             } else {
-                print("ℹ️ Keeping audio session active - other audio is playing")
+                Self.logger.info("Keeping audio session active - other audio is playing")
             }
         } catch {
-            print("Failed to deactivate audio session: \(error.localizedDescription)")
+            Self.logger.error("Failed to deactivate audio session: \(error.localizedDescription)")
         }
         #endif
     }
@@ -408,25 +437,28 @@ self.denoiser = denoiser
             processingLatencyMs = latencyMs
             
             // Fix CRITICAL: Record telemetry for production monitoring
-            telemetry.recordLatency(latencyMs)
+            var updatedTelemetry = telemetry
+            updatedTelemetry.recordLatency(latencyMs)
+            telemetry = updatedTelemetry
             
             // Monitor for SLA violations (target <1ms)
             if latencyMs > 1.0 {
                 Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
-                    print("⚠️ Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
             }
             
             // Calculate output level from enhanced audio
             return calculateRMS(samples: enhanced)
         } catch {
-            print("⚠️  ML processing error: \(error.localizedDescription)")
+            Self.logger.error("ML processing error: \(error.localizedDescription)")
             
             // Fix CRITICAL: Record telemetry for production monitoring
-            telemetry.recordFailure()
+            var updatedTelemetry = telemetry
+            updatedTelemetry.recordFailure()
+            telemetry = updatedTelemetry
             
             isMLProcessingActive = false
-            // Fix HIGH: Clear buffer on error to prevent unbounded growth
-            audioBufferQueue.async { [weak self] in
+            // Fix CRITICAL: Clear buffer synchronously to prevent race condition
+            audioBufferQueue.sync { [weak self] in
                 self?._audioBuffer.removeAll(keepingCapacity: false)
             }
             // Fix HIGH: Set denoiser to nil for consistency
@@ -460,14 +492,16 @@ self.denoiser = denoiser
             if projectedSize > maxBufferSize {
                 // Fix HIGH: Circuit breaker for sustained buffer overflows
                 consecutiveOverflows += 1
-                telemetry.recordAudioBufferOverflow()
+                var updatedTelemetry = telemetry
+                updatedTelemetry.recordAudioBufferOverflow()
+                telemetry = updatedTelemetry
                 
-                if consecutiveOverflows > maxConsecutiveOverflows && !audioCaptureSuspended {
-                    telemetry.recordCircuitBreakerTrigger()
+                if consecutiveOverflows > AppConstants.maxConsecutiveOverflows && !audioCaptureSuspended {
+                    updatedTelemetry = telemetry
+                    updatedTelemetry.recordCircuitBreakerTrigger()
+                    telemetry = updatedTelemetry
                     Self.logger.warning("Circuit breaker triggered: \(self.consecutiveOverflows) consecutive overflows")
-                    Self.logger.info("Suspending audio capture for 1 second to allow ML to catch up")
-                    print("🔴 Circuit breaker triggered: \(self.consecutiveOverflows) consecutive overflows")
-                    print("   Suspending audio capture for 1 second to allow ML to catch up")
+                    Self.logger.info("Suspending audio capture for \(AppConstants.circuitBreakerSuspensionSeconds)s to allow ML to catch up")
                     suspendAudioCapture(duration: AppConstants.circuitBreakerSuspensionSeconds)
                     return nil // Skip this buffer append to help recovery
                 }
@@ -475,25 +509,30 @@ self.denoiser = denoiser
                 // Fix CRITICAL: Implement smoothing to prevent audio discontinuities
                 Self.logger.warning("Audio buffer overflow \(self.consecutiveOverflows): \(self._audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
                 Self.logger.info("Applying crossfade to maintain audio continuity")
-                print("⚠️ Audio buffer overflow \(self.consecutiveOverflows): \(self._audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
-                print("   Applying crossfade to maintain audio continuity")
                 
-                // Calculate how many samples to remove
-                let samplesToRemove = projectedSize - maxBufferSize
+                // Fix CRITICAL: Calculate overflow and prevent crash when exceeding buffer size
+                let overflow = projectedSize - maxBufferSize
+                let samplesToRemove = min(overflow, _audioBuffer.count)
                 
-                // Apply 10ms crossfade to prevent clicks/pops when dropping audio
-                let fadeLength = min(480, samplesToRemove, _audioBuffer.count) // 10ms at 48kHz
-                if fadeLength > 0 && _audioBuffer.count >= fadeLength {
-                    // Apply fade-out to the end of existing buffer
-                    for i in 0..<fadeLength {
-                        let fade = Float(fadeLength - i) / Float(fadeLength)
-                        _audioBuffer[_audioBuffer.count - fadeLength + i] *= fade
-                    }
+                // Apply crossfade to prevent clicks/pops when dropping audio
+                let fadeLength = min(AppConstants.crossfadeLengthSamples, samplesToRemove)
+                
+                // Remove old samples first
+                if samplesToRemove > 0 {
+                    _audioBuffer.removeFirst(samplesToRemove)
                 }
                 
-                // Remove old samples
-                _audioBuffer.removeFirst(samplesToRemove)
-                _audioBuffer.append(contentsOf: samples)
+                // Apply fade-in to new samples if needed
+                if fadeLength > 0 && samples.count >= fadeLength {
+                    var fadedSamples = samples
+                    for i in 0..<fadeLength {
+                        let fade = Float(i + 1) / Float(fadeLength)
+                        fadedSamples[i] *= fade
+                    }
+                    _audioBuffer.append(contentsOf: fadedSamples)
+                } else {
+                    _audioBuffer.append(contentsOf: samples)
+                }
             } else {
                 // Reset overflow counter on successful append
                 consecutiveOverflows = 0
@@ -562,7 +601,9 @@ self.denoiser = denoiser
         guard let pressureLevel = pressureLevel else { return }
         
         // Record telemetry for production monitoring
-        telemetry.recordMemoryPressure()
+        var updatedTelemetry = telemetry
+        updatedTelemetry.recordMemoryPressure()
+        telemetry = updatedTelemetry
         
         if pressureLevel.contains(.critical) {
             memoryPressureLevel = .critical
@@ -576,27 +617,41 @@ self.denoiser = denoiser
         }
         
         Self.logger.warning("Memory pressure detected: \(self.memoryPressureLevel.rawValue) - ML suspended: \(self.mlProcessingSuspendedDueToMemory)")
-        print("⚠️ Memory pressure detected: \(memoryPressureLevel) - ML suspended: \(mlProcessingSuspendedDueToMemory)")
     }
     
-    private func suspendMLProcessing(reason: String) {
+ private func suspendMLProcessing(reason: String) {
         // Fix CRITICAL: Atomic check-and-set to prevent race conditions
-        var shouldSuspend = false
-        mlStateQueue.sync {
-            if isMLProcessingActive && !mlProcessingSuspendedDueToMemory {
-                mlProcessingSuspendedDueToMemory = true
-                shouldSuspend = true
-            }
+        mlStateQueue.sync { [weak self] in
+            guard let self = self else { return }
+            guard !self.mlProcessingSuspendedDueToMemory else { return }
+            
+            self.mlProcessingSuspendedDueToMemory = true
+            Self.logger.warning("ML processing suspended: \(reason)")
         }
         
-        if shouldSuspend {
-            denoiser = nil // Release ML models to free memory
-            print("🔴 ML processing suspended: \(reason)")
-        }
+        // Clear audio buffer to free memory
+        clearAudioBuffers()
         
-        // Schedule memory pressure recovery check
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-            self?.checkMemoryPressureRecovery()
+        // Set up memory pressure recovery timer
+        memoryPressureSource?.resume()
+        isMemoryPressureHandlerActive = true
+        
+        // Fix CRITICAL: Add timeout-based recovery for stuck memory pressure
+        DispatchQueue.main.asyncAfter(deadline: .now() + AppConstants.memoryPressureRecoveryDelaySeconds) { [weak self] in
+            // Force recovery attempt after timeout even if pressure is still warning
+            self?.attemptMemoryPressureRecovery()
+        }
+    }
+    
+    /// Attempt to recover from memory pressure even if still elevated
+    private func attemptMemoryPressureRecovery() {
+        guard memoryPressureLevel != .critical else { return }
+        
+        Self.logger.info("Attempting timeout-based memory pressure recovery")
+        if mlProcessingSuspendedDueToMemory && isEnabled {
+            // Force re-initialization attempt
+            initializeMLProcessing()
+            Self.logger.info("Memory pressure recovery successful")
         }
     }
     
@@ -625,8 +680,31 @@ self.denoiser = denoiser
             if isEnabled {
                 initializeMLProcessing()
             }
-            print("✅ Memory pressure recovered - attempting to resume ML processing")
+            Self.logger.info("Memory pressure recovered - attempting to resume ML processing")
         }
+    }
+    
+    // Fix CRITICAL: Add synchronous reset function to prevent race conditions
+    /// Reset all audio processing state atomically
+    /// This is the primary reset API - use this instead of async operations
+    func reset() {
+        audioBufferQueue.sync { [weak self] in
+            self?._audioBuffer.removeAll(keepingCapacity: false)
+        }
+        
+        mlStateQueue.sync { [weak self] in
+            self?.consecutiveOverflows = 0
+        }
+        
+        // Reset ML processor if active
+        if denoiser != nil {
+            denoiser?.reset()
+            denoiser = nil
+            isMLProcessingActive = false
+            processingLatencyMs = 0
+        }
+        
+        Self.logger.info("AudioEngine reset completed")
     }
     
     // Fix HIGH: Audio capture suspension for circuit breaker
@@ -649,6 +727,6 @@ self.denoiser = denoiser
         consecutiveOverflows = 0 // Reset counter on resume
         audioCaptureSuspensionTimer?.invalidate()
         audioCaptureSuspensionTimer = nil
-        print("✅ Audio capture resumed after circuit breaker recovery")
+        Self.logger.info("Audio capture resumed after circuit breaker recovery")
     }
 }

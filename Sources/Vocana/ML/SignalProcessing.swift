@@ -160,9 +160,11 @@ final class STFT {
                 continue
             }
             
-            // Perform windowing operation with direct array access
-            let audioChunk = Array(audio[startSample..<endSample])
-            vDSP_vmul(audioChunk, 1, window, 1, &windowedInput, 1, vDSP_Length(fftSize))
+            // Fix CRITICAL: Eliminate array allocation in hot path - use direct pointer access
+            audio[startSample..<endSample].withUnsafeBufferPointer { audioChunkPtr in
+                guard let audioChunkBase = audioChunkPtr.baseAddress else { return }
+                vDSP_vmul(audioChunkBase, 1, window, 1, &windowedInput, 1, vDSP_Length(fftSize))
+            }
             
             // Zero-fill buffers using vDSP
             vDSP_vclr(&inputReal, 1, vDSP_Length(fftSizePowerOf2))

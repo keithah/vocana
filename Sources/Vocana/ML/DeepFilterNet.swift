@@ -290,10 +290,21 @@ final class DeepFilterNet {
             // Accumulate overlap and return exactly hopSize samples
             overlapBuffer.append(contentsOf: outputAudio)
             
-            // Need at least hopSize samples to output
+            // Fix CRITICAL: Handle first frame properly to avoid audio discontinuities
             guard overlapBuffer.count >= hopSize else {
-                // First frame, not enough overlap yet
-                return [Float](repeating: 0, count: hopSize)
+                // First frame: pad with zeros at beginning, use available samples
+                // This maintains temporal continuity instead of returning all zeros
+                let availableSamples = min(overlapBuffer.count, hopSize)
+                var frame = [Float](repeating: 0, count: hopSize)
+                
+                if availableSamples > 0 {
+                    // Copy available samples to the end of the frame (maintain timing)
+                    let startIndex = hopSize - availableSamples
+                    frame[startIndex..<hopSize] = ArraySlice(overlapBuffer.prefix(availableSamples))
+                    overlapBuffer.removeAll() // Clear the buffer since we used all samples
+                }
+                
+                return frame
             }
             
             // Extract hopSize samples and keep remainder for next frame

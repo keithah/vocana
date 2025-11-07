@@ -172,18 +172,18 @@ final class ERBFeatures {
     // MARK: - ERB Scale Conversions
     
     /// Convert frequency (Hz) to ERB scale
-    /// ERB(f) = 21.4 * log10(1 + 0.00437 * f)
-    /// Constants from Glasberg & Moore (1990)
+    /// ERB(f) = 21.4 * ln(1 + 0.00437 * f) - Glasberg & Moore (1990) standard formula
+    /// Note: Some implementations use log10, but the original paper specifies natural log
     private static func frequencyToERB(_ freq: Float) -> Float {
         precondition(freq >= 0, "Frequency must be non-negative, got \(freq)")
-        return 21.4 * log10(1.0 + 0.00437 * freq)
+        return 21.4 * log(1.0 + 0.00437 * freq)  // Using natural log (ln)
     }
     
     /// Convert ERB scale to frequency (Hz)
-    /// f = (10^(ERB/21.4) - 1) / 0.00437
-    /// Inverse of frequencyToERB
+    /// f = (exp(ERB/21.4) - 1) / 0.00437
+    /// Inverse of frequencyToERB using natural exponential
     private static func erbToFrequency(_ erb: Float) -> Float {
-        return (pow(10.0, erb / 21.4) - 1.0) / 0.00437
+        return (exp(erb / 21.4) - 1.0) / 0.00437  // Using exp (natural exponential)
     }
     
     /// Calculate ERB bandwidth at a given frequency

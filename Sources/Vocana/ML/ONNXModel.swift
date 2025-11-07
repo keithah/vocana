@@ -36,12 +36,15 @@ final class ONNXModel {
     ///   - modelPath: Path to .onnx model file
     ///   - useNative: If true, try to use native ONNX Runtime (falls back to mock if unavailable)
     init(modelPath: String, useNative: Bool = false) throws {
-        self.modelPath = modelPath
-        self.modelName = URL(fileURLWithPath: modelPath).deletingPathExtension().lastPathComponent
+        // Fix CRITICAL: Sanitize model path to prevent directory traversal attacks
+        let sanitizedPath = try Self.sanitizeModelPath(modelPath)
+        
+        self.modelPath = sanitizedPath
+        self.modelName = URL(fileURLWithPath: sanitizedPath).deletingPathExtension().lastPathComponent
         
         // Verify model exists
-        guard FileManager.default.fileExists(atPath: modelPath) else {
-            throw ONNXError.modelNotFound(modelPath)
+        guard FileManager.default.fileExists(atPath: sanitizedPath) else {
+            throw ONNXError.modelNotFound(sanitizedPath)
         }
         
         // Create ONNX Runtime session
@@ -160,6 +163,39 @@ final class ONNXModel {
         
         return outputs
         } // End sessionQueue.sync
+    }
+    
+    // Fix CRITICAL: Path sanitization to prevent directory traversal attacks
+    private static func sanitizeModelPath(_ path: String) throws -> String {
+        // Convert to URL for proper path handling
+        let url = URL(fileURLWithPath: path)
+        
+        // Get the resolved path (removes .. and . components)
+        let resolvedPath = url.standardized.path
+        
+        // Define allowed directories for model files
+        let allowedDirectories = [
+            "Resources/Models",
+            Bundle.main.resourcePath?.appending("/Models"),
+            NSHomeDirectory().appending("/Documents/Models"),
+            FileManager.default.temporaryDirectory.appendingPathComponent("Models").path
+        ].compactMap { $0 }.filter { !$0.isEmpty }
+        
+        // Check if the resolved path is within allowed directories
+        let isPathAllowed = allowedDirectories.contains { allowedDir in
+            resolvedPath.hasPrefix(allowedDir)
+        }
+        
+        guard isPathAllowed else {
+            throw ONNXError.modelNotFound("Model path not in allowed directories: \(resolvedPath)")
+        }
+        
+        // Ensure it's an .onnx file
+        guard resolvedPath.hasSuffix(".onnx") else {
+            throw ONNXError.modelNotFound("Model file must have .onnx extension: \(resolvedPath)")
+        }
+        
+        return resolvedPath
     }
 }
 

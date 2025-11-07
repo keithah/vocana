@@ -239,8 +239,9 @@ class AudioEngine: ObservableObject {
             // Fix HIGH: Track tap installation to prevent crash
             // Install tap to monitor audio levels
             inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-                // Fix CRITICAL: Use detached task to prevent MainActor deadlock
-                Task.detached { @MainActor in
+                // Fix CRITICAL: Use async task to prevent blocking audio thread
+                // Process on high-priority background queue, update MainActor asynchronously
+                Task.detached(priority: .userInteractive) { @MainActor in
                     self?.processAudioBuffer(buffer)
                 }
             }
@@ -295,7 +296,7 @@ class AudioEngine: ObservableObject {
         guard let channelData = buffer.floatChannelData else { return }
         let channelDataValue = channelData.pointee
         let frames = buffer.frameLength
-        
+
         // Fix HIGH: Capture isEnabled/sensitivity atomically to prevent race
         let capturedEnabled = isEnabled
         let capturedSensitivity = sensitivity

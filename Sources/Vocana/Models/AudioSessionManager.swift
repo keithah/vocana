@@ -151,7 +151,12 @@ class AudioSessionManager {
     }
     
     /// Suspend audio capture (circuit breaker)
-    /// - Parameter duration: How long to suspend for
+    /// 
+    /// NOTE: This method is currently unused but kept for future circuit breaker implementation.
+    /// It provides a mechanism to temporarily suspend audio capture for a specified duration,
+    /// which could be useful for handling system-level audio interruptions or memory pressure scenarios.
+    /// 
+    /// - Parameter duration: How long to suspend for (in seconds)
     func suspendAudioCapture(duration: TimeInterval) {
         audioCaptureSuspensionTimer?.invalidate()
         audioCaptureSuspensionTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in

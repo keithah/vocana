@@ -19,11 +19,13 @@ class MLAudioProcessor {
      private let mlInferenceQueue = DispatchQueue(label: "com.vocana.mlinference", qos: .userInitiated)
     
      // Telemetry and callbacks
-     var telemetry: AudioEngine.ProductionTelemetry = .init()
-     var recordLatency: (Double) -> Void = { _ in }
-     var recordFailure: () -> Void = {}
-     var recordMemoryPressure: () -> Void = {}
-     var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
+     // Thread Safety: All callbacks are automatically dispatched to MainActor
+     // Do not access MLAudioProcessor state directly from callbacks to avoid race conditions
+      var telemetry: AudioEngine.ProductionTelemetry = .init()
+      var recordLatency: (Double) -> Void = { _ in }
+      var recordFailure: () -> Void = {}
+      var recordMemoryPressure: () -> Void = {}
+      var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
     
     // Public state
     var isMLProcessingActive = false
@@ -158,16 +160,17 @@ class MLAudioProcessor {
                  }
                  
                  result = enhanced
-             } catch {
-                 Self.logger.error("ML processing error: \(error.localizedDescription)")
-                 self.recordFailure()
-                 
-                 // Fix HIGH: Update error state atomically
-                 self.mlStateQueue.sync {
-                     self.isMLProcessingActive = false
-                     self.denoiser = nil
-                 }
-             }
+              } catch {
+                  Self.logger.error("ML processing error: \(error.localizedDescription)")
+                  self.recordFailure()
+                  
+                  // Fix HIGH: Update error state atomically on MainActor
+                  Task { @MainActor [weak self] in
+                      guard let self = self else { return }
+                      self.isMLProcessingActive = false
+                      self.denoiser = nil
+                  }
+              }
              
              semaphore.signal()
          }

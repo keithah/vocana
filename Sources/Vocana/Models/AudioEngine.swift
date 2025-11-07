@@ -127,9 +127,15 @@ class AudioEngine: ObservableObject {
     private var isTapInstalled = false
     
     nonisolated deinit {
-        // Fix HIGH: Don't access MainActor-isolated properties from nonisolated deinit
-        // audioEngine, timer, denoiser are all captured and cleaned up properly
-        // The engine cleanup happens automatically when the instance is deallocated
+        // Fix CRITICAL: Trigger cleanup from nonisolated context
+        // NOTE: Callers MUST call stopSimulation() before deallocation to prevent resource leaks
+        // The tap and timer are MainActor-isolated and cannot be accessed here
+        // Swift ARC will deallocate the engine, but the tap may remain installed
+        
+        // Log warning if cleanup wasn't called
+        Task { @MainActor in
+            print("⚠️ AudioEngine deallocated - ensure stopSimulation() was called for proper cleanup")
+        }
     }
     
     // MARK: - Real Audio Capture

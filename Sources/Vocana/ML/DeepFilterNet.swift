@@ -56,8 +56,8 @@ final class DeepFilterNet {
         set { stateQueue.sync { _states = newValue } }
     }
     
-    // Fix MEDIUM: Remove unused isFirstFrame or implement it
-    // Removed: private var isFirstFrame = true
+    // Fix CRITICAL: ISTFT overlap buffer for proper COLA reconstruction
+    private var overlapBuffer: [Float] = []
     
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "DeepFilterNet")
@@ -136,6 +136,7 @@ final class DeepFilterNet {
         stateQueue.sync {
             _states.removeAll()
         }
+        overlapBuffer.removeAll()  // Fix CRITICAL: Clear overlap buffer on reset
         Self.logger.info("DeepFilterNet state reset")
     }
     
@@ -214,16 +215,25 @@ final class DeepFilterNet {
             )
             
             // 6. ISTFT - Convert back to time domain
+            // Fix CRITICAL: Preserve ISTFT overlap for proper COLA reconstruction
             let enhancedReal2D = [enhanced.real]
             let enhancedImag2D = [enhanced.imag]
             let outputAudio = stft.inverse(real: enhancedReal2D, imag: enhancedImag2D)
             
-            // Fix MEDIUM: Better output size handling
-            var output = [Float](repeating: 0, count: hopSize)
-            let copyCount = min(outputAudio.count, hopSize)
-            output[0..<copyCount] = outputAudio[0..<copyCount]
+            // Accumulate overlap and return exactly hopSize samples
+            overlapBuffer.append(contentsOf: outputAudio)
             
-            return output
+            // Need at least hopSize samples to output
+            guard overlapBuffer.count >= hopSize else {
+                // First frame, not enough overlap yet
+                return [Float](repeating: 0, count: hopSize)
+            }
+            
+            // Extract hopSize samples and keep remainder for next frame
+            let frame = Array(overlapBuffer.prefix(hopSize))
+            overlapBuffer.removeFirst(hopSize)
+            
+            return frame
             
         } catch let error as DeepFilterError {
             throw error

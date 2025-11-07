@@ -142,7 +142,16 @@ struct TensorData {
     
     var count: Int {
         get throws {
-            let product = shape.reduce(Int64(1), *)
+            // Fix CRITICAL: Check overflow during reduce, not after
+            var product = Int64(1)
+            for dim in shape {
+                let (result, overflow) = product.multipliedReportingOverflow(by: dim)
+                guard !overflow else {
+                    throw ONNXError.runtimeError("Tensor size overflow during multiplication: \(shape)")
+                }
+                product = result
+            }
+            
             guard let intValue = Int(exactly: product) else {
                 throw ONNXError.runtimeError("Tensor size exceeds Int range: \(product)")
             }
@@ -159,15 +168,15 @@ class MockInferenceSession: InferenceSession {
     private let options: SessionOptions
     
     /// Safe conversion from Int64 to Int with overflow checking
-    private func safeIntCount(_ values: Int64...) throws -> Int {
-        // Fix MEDIUM: Don't use Int64.max as sentinel - throw immediately on overflow
+    private func safeIntCount(_ values: [Int64]) throws -> Int {
+        // Fix CRITICAL: Safe overflow checking during multiplication
         var product = Int64(1)
-        for val in values {
-            let (p, overflow) = product.multipliedReportingOverflow(by: val)
+        for dim in values {
+            let (result, overflow) = product.multipliedReportingOverflow(by: dim)
             guard !overflow else {
-                throw ONNXError.runtimeError("Tensor size overflow during multiplication")
+                throw ONNXError.runtimeError("Shape dimensions overflow during multiplication: \(values)")
             }
-            product = p
+            product = result
         }
         
         guard let count = Int(exactly: product) else {
@@ -232,13 +241,13 @@ class MockInferenceSession: InferenceSession {
         
         // Use safe count calculation to prevent integer overflow
         return [
-            "e0": TensorData(unsafeShape: [1, 1, T, 96], data: Array(repeating: 0.1, count: try safeIntCount(1, 1, T, 96))),
-            "e1": TensorData(unsafeShape: [1, 32, T, 48], data: Array(repeating: 0.1, count: try safeIntCount(1, 32, T, 48))),
-            "e2": TensorData(unsafeShape: [1, 64, T, 24], data: Array(repeating: 0.1, count: try safeIntCount(1, 64, T, 24))),
-            "e3": TensorData(unsafeShape: [1, 128, T, 12], data: Array(repeating: 0.1, count: try safeIntCount(1, 128, T, 12))),
-            "emb": TensorData(unsafeShape: [1, 256, T, 6], data: Array(repeating: 0.1, count: try safeIntCount(1, 256, T, 6))),
-            "c0": TensorData(unsafeShape: [1, T, 256], data: Array(repeating: 0.1, count: try safeIntCount(1, T, 256))),
-            "lsnr": TensorData(unsafeShape: [1, T, 1], data: Array(repeating: -10.0, count: try safeIntCount(1, T, 1)))
+            "e0": TensorData(unsafeShape: [1, 1, T, 96], data: Array(repeating: 0.1, count: try safeIntCount([1, 1, T, 96]))),
+            "e1": TensorData(unsafeShape: [1, 32, T, 48], data: Array(repeating: 0.1, count: try safeIntCount([1, 32, T, 48]))),
+            "e2": TensorData(unsafeShape: [1, 64, T, 24], data: Array(repeating: 0.1, count: try safeIntCount([1, 64, T, 24]))),
+            "e3": TensorData(unsafeShape: [1, 128, T, 12], data: Array(repeating: 0.1, count: try safeIntCount([1, 128, T, 12]))),
+            "emb": TensorData(unsafeShape: [1, 256, T, 6], data: Array(repeating: 0.1, count: try safeIntCount([1, 256, T, 6]))),
+            "c0": TensorData(unsafeShape: [1, T, 256], data: Array(repeating: 0.1, count: try safeIntCount([1, T, 256]))),
+            "lsnr": TensorData(unsafeShape: [1, T, 1], data: Array(repeating: -10.0, count: try safeIntCount([1, T, 1])))
         ]
     }
     
@@ -256,7 +265,7 @@ class MockInferenceSession: InferenceSession {
         let F: Int64 = 481  // Full spectrum
         
         return [
-            "m": TensorData(unsafeShape: [1, 1, T, F], data: Array(repeating: 0.8, count: try safeIntCount(1, 1, T, F)))
+            "m": TensorData(unsafeShape: [1, 1, T, F], data: Array(repeating: 0.8, count: try safeIntCount([1, 1, T, F])))
         ]
     }
     
@@ -275,7 +284,7 @@ class MockInferenceSession: InferenceSession {
         let dfOrder: Int64 = 5
         
         return [
-            "coefs": TensorData(unsafeShape: [T, dfBins, dfOrder], data: Array(repeating: 0.01, count: try safeIntCount(T, dfBins, dfOrder)))
+            "coefs": TensorData(unsafeShape: [T, dfBins, dfOrder], data: Array(repeating: 0.01, count: try safeIntCount([T, dfBins, dfOrder])))
         ]
     }
 }

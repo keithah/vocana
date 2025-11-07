@@ -103,8 +103,23 @@ final class ONNXModel {
                 }
                 return intValue
             }
-            // Fix MAJOR: Tensor validates shape/data consistency with precondition
-            // Note: If throwing validation is needed, update Tensor init to throw
+            
+            // Fix CRITICAL: Validate element count before Tensor construction to avoid precondition failure
+            var expectedCount = 1
+            for dim in shape {
+                let (product, overflow) = expectedCount.multipliedReportingOverflow(by: dim)
+                guard !overflow else {
+                    throw ONNXError.invalidOutputShape("Output '\(name)' shape \(shape) causes overflow")
+                }
+                expectedCount = product
+            }
+            
+            guard tensorData.data.count == expectedCount else {
+                throw ONNXError.invalidOutputShape(
+                    "Output '\(name)' expected \(expectedCount) elements for shape \(shape), got \(tensorData.data.count)"
+                )
+            }
+            
             outputs[name] = Tensor(shape: shape, data: tensorData.data)
         }
         

@@ -12,8 +12,7 @@ let package = Package(
             targets: ["Vocana"]
         ),
     ],
-    dependencies: [
-    ],
+    dependencies: [],
     targets: [
         .executableTarget(
             name: "Vocana",

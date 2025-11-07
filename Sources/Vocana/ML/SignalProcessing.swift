@@ -135,22 +135,24 @@ final class STFT {
             
             guard endSample <= numSamples else { break }
             
-            // Fix CRITICAL: Check for nil pointer before vDSP call
-            // Apply window directly to avoid array copy
+            // Fix CRITICAL: Use success flag to ensure we skip frame on pointer failure
+            var windowingSucceeded = false
             audio[startSample..<endSample].withUnsafeBufferPointer { audioPtr in
                 guard let audioBase = audioPtr.baseAddress else {
                     Self.logger.error("Audio buffer pointer is nil at frame \(frameIndex)")
                     return
                 }
                 vDSP_vmul(audioBase, 1, window, 1, &windowedInput, 1, vDSP_Length(fftSize))
+                windowingSucceeded = true
             }
+            guard windowingSucceeded else { continue }
             
             // Zero-fill buffers using vDSP
             vDSP_vclr(&inputReal, 1, vDSP_Length(fftSizePowerOf2))
             vDSP_vclr(&inputImag, 1, vDSP_Length(fftSizePowerOf2))
             
-            // Fix CRITICAL: Use explicit pointer access with bounds checking for vDSP_mmov
-            // Copy windowed input using vDSP which is safer and faster
+            // Fix CRITICAL: Use success flags at each level to propagate failures
+            var copySucceeded = false
             windowedInput.withUnsafeBufferPointer { windowedPtr in
                 guard let windowedBase = windowedPtr.baseAddress, windowedPtr.count >= fftSize else {
                     Self.logger.error("Windowed input pointer invalid at frame \(frameIndex)")
@@ -162,8 +164,10 @@ final class STFT {
                         return
                     }
                     vDSP_mmov(windowedBase, inputBase, vDSP_Length(fftSize), 1, 1, 1)
+                    copySucceeded = true
                 }
             }
+            guard copySucceeded else { continue }
             
             // Perform FFT with safe pointer handling
             var fftSucceeded = false
@@ -241,10 +245,10 @@ final class STFT {
             // Positive frequencies (only use first fftSize bins)
             let binsToUse = min(frameReal.count, fftSize / 2 + 1)
             
-            // Fix CRITICAL: Use explicit pointer access with bounds checking for vDSP_mmov
-            // Copy positive frequencies safely
-            let safeBinsToUse = min(min(frameReal.count, frameImag.count), min(fullReal.count, fullImag.count), binsToUse)
+            // Fix CRITICAL: Use success flags to ensure frame is skipped on any pointer failure
+            let safeBinsToUse = min(frameReal.count, frameImag.count, binsToUse)
             
+            var realCopySucceeded = false
             frameReal.withUnsafeBufferPointer { realPtr in
                 guard let realBase = realPtr.baseAddress, safeBinsToUse <= realPtr.count else {
                     Self.logger.error("Frame real pointer invalid at frame \(frameIndex)")
@@ -256,9 +260,12 @@ final class STFT {
                         return
                     }
                     vDSP_mmov(realBase, fullRealBase, vDSP_Length(safeBinsToUse), 1, 1, 1)
+                    realCopySucceeded = true
                 }
             }
+            guard realCopySucceeded else { continue }
             
+            var imagCopySucceeded = false
             frameImag.withUnsafeBufferPointer { imagPtr in
                 guard let imagBase = imagPtr.baseAddress, safeBinsToUse <= imagPtr.count else {
                     Self.logger.error("Frame imag pointer invalid at frame \(frameIndex)")
@@ -270,8 +277,10 @@ final class STFT {
                         return
                     }
                     vDSP_mmov(imagBase, fullImagBase, vDSP_Length(safeBinsToUse), 1, 1, 1)
+                    imagCopySucceeded = true
                 }
             }
+            guard imagCopySucceeded else { continue }
             
             // Fix HIGH: Validate frame sizes match before mirroring
             guard frameReal.count == frameImag.count else {

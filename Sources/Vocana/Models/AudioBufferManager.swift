@@ -70,29 +70,34 @@ class AudioBufferManager {
                 Self.logger.warning("Audio buffer overflow \(self.bufferState.consecutiveOverflows): \(self.bufferState.audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
                 Self.logger.info("Applying crossfade to maintain audio continuity")
                 
-                // Fix CRITICAL: Calculate overflow and prevent crash when exceeding buffer size
-                let overflow = projectedSize - maxBufferSize
-                let samplesToRemove = min(overflow, bufferState.audioBuffer.count)
-                
-                // Apply crossfade to prevent clicks/pops when dropping audio
-                let fadeLength = min(AppConstants.crossfadeLengthSamples, samplesToRemove)
-                
-                // Remove old samples first
-                if samplesToRemove > 0 {
-                    bufferState.audioBuffer.removeFirst(samplesToRemove)
-                }
-                
-                // Apply fade-in to new samples if needed
-                if fadeLength > 0 && samples.count >= fadeLength {
-                    var fadedSamples = samples
-                    for i in 0..<fadeLength {
-                        let fade = Float(i + 1) / Float(fadeLength)
-                        fadedSamples[i] *= fade
-                    }
-                    bufferState.audioBuffer.append(contentsOf: fadedSamples)
-                } else {
-                    bufferState.audioBuffer.append(contentsOf: samples)
-                }
+                 // Fix CRITICAL: Calculate overflow and prevent crash when exceeding buffer size
+                 let overflow = projectedSize - maxBufferSize
+                 let samplesToRemove = min(overflow, bufferState.audioBuffer.count)
+                 
+                 // Apply crossfade to prevent clicks/pops when dropping audio
+                 // Note: In overflow scenarios, we prioritize latency and correctness over perfect audio continuity.
+                 // We fade in new samples to smooth the transition, but don't fade out removed samples since
+                 // they're being dropped due to buffer overflow (emergency situation).
+                 let fadeLength = min(AppConstants.crossfadeLengthSamples, samplesToRemove)
+                 
+                 // Remove old samples first to make room for new ones
+                 if samplesToRemove > 0 {
+                     bufferState.audioBuffer.removeFirst(samplesToRemove)
+                 }
+                 
+                 // Apply fade-in to new samples to smooth the discontinuity
+                 // This reduces clicks/pops that might occur from the sample deletion
+                 if fadeLength > 0 && samples.count >= fadeLength {
+                     var fadedSamples = samples
+                     for i in 0..<fadeLength {
+                         // Linear fade-in over fadeLength samples
+                         let fadeValue = Float(i + 1) / Float(fadeLength)
+                         fadedSamples[i] *= fadeValue
+                     }
+                     bufferState.audioBuffer.append(contentsOf: fadedSamples)
+                 } else {
+                     bufferState.audioBuffer.append(contentsOf: samples)
+                 }
             } else {
                 // Reset overflow counter on successful append
                 bufferState.consecutiveOverflows = 0

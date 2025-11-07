@@ -271,8 +271,7 @@ class AudioEngine: ObservableObject {
         self.sensitivity = sensitivity
 
         if isEnabled {
-            // For testing, prefer simulation over real audio to ensure reliable test behavior
-            isUsingRealAudio = false  // Force simulation for consistent test results
+            isUsingRealAudio = audioSessionManager.startRealAudioCapture()
 
             if !isUsingRealAudio {
                 audioSessionManager.isEnabled = isEnabled

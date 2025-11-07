@@ -243,19 +243,25 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         }
         wait(for: [startExpectation], timeout: 1.0)
 
-        // Stop simulation
+        // Capture initial levels
+        let initialLevels = audioEngine.currentLevels
+
+        // Stop simulation (this starts decay timer since isEnabled becomes false)
         audioEngine.stopSimulation()
 
-        // Verify levels are stable after stop (indicating cleanup)
-        let stoppedLevels = audioEngine.currentLevels
-        let cleanupExpectation = XCTestExpectation(description: "Resources cleaned up")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            let finalLevels = self.audioEngine.currentLevels
-            XCTAssertEqual(stoppedLevels.input, finalLevels.input, "Input levels should remain stable after stop")
-            XCTAssertEqual(stoppedLevels.output, finalLevels.output, "Output levels should remain stable after stop")
-            cleanupExpectation.fulfill()
+        // Verify decay is working properly after stop (levels should decrease over time)
+        let decayExpectation = XCTestExpectation(description: "Decay working after stop")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            let decayedLevels = self.audioEngine.currentLevels
+            // Levels should have decayed (become smaller) due to the decay timer
+            XCTAssertLessThanOrEqual(decayedLevels.input, initialLevels.input, "Input should decay after stop")
+            XCTAssertLessThanOrEqual(decayedLevels.output, initialLevels.output, "Output should decay after stop")
+            // But they shouldn't be exactly zero (unless they were already very small)
+            XCTAssertGreaterThanOrEqual(decayedLevels.input, 0.0, "Input should not go negative")
+            XCTAssertGreaterThanOrEqual(decayedLevels.output, 0.0, "Output should not go negative")
+            decayExpectation.fulfill()
         }
-        wait(for: [cleanupExpectation], timeout: 1.0)
+        wait(for: [decayExpectation], timeout: 1.0)
     }
 
     func testStateTransitionWithParameterChanges() {

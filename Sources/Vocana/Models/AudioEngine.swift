@@ -398,31 +398,75 @@ self.denoiser = denoiser
         return min(1.0, rms * AppConstants.rmsAmplificationFactor)
     }
     
-    private func calculateRMS(samples: [Float]) -> Float {
-        // Fix MAJOR: Guard against empty buffer causing division by zero
-        guard !samples.isEmpty else { return 0 }
-        
-        var sum: Float = 0
-        for sample in samples {
-            sum += sample * sample
-        }
-        let rms = sqrt(sum / Float(samples.count))
-        
-        // Convert to 0-1 range (typical audio is -1 to 1, RMS will be much smaller)
-        return min(1.0, rms * AppConstants.rmsAmplificationFactor)
-    }
+     // MARK: - Input Validation
+     
+     /// Validate audio samples for range and quality issues
+     /// - Parameter samples: Audio samples to validate
+     /// - Returns: true if audio is valid for processing, false if validation fails
+     private func validateAudioInput(_ samples: [Float]) -> Bool {
+         // Fix HIGH: Empty buffer validation
+         guard !samples.isEmpty else {
+             return false
+         }
+         
+         // Fix HIGH: Check for NaN or Infinity values (indicate processing errors upstream)
+         guard samples.allSatisfy({ !$0.isNaN && !$0.isInfinite }) else {
+             Self.logger.warning("Audio input contains NaN or Infinity values - skipping frame")
+             return false
+         }
+         
+         // Fix HIGH: Check for extreme amplitude values (potential DoS attack or distortion)
+         guard samples.allSatisfy({ abs($0) <= AppConstants.maxAudioAmplitude }) else {
+             Self.logger.warning("Audio input exceeds maximum amplitude \(AppConstants.maxAudioAmplitude) - possible clipping or attack")
+             return false
+         }
+         
+         // Fix HIGH: Calculate RMS and check for saturation
+         var sum: Float = 0
+         for sample in samples {
+             sum += sample * sample
+         }
+         let rms = sqrt(sum / Float(samples.count))
+         
+         guard rms <= AppConstants.maxRMSLevel else {
+             Self.logger.warning("Audio input RMS \(String(format: "%.3f", rms)) exceeds max level \(AppConstants.maxRMSLevel) - possible distortion")
+             return false
+         }
+         
+         return true
+     }
+     
+     private func calculateRMS(samples: [Float]) -> Float {
+         // Fix MAJOR: Guard against empty buffer causing division by zero
+         guard !samples.isEmpty else { return 0 }
+         
+         var sum: Float = 0
+         for sample in samples {
+             sum += sample * sample
+         }
+         let rms = sqrt(sum / Float(samples.count))
+         
+         // Convert to 0-1 range (typical audio is -1 to 1, RMS will be much smaller)
+         return min(1.0, rms * AppConstants.rmsAmplificationFactor)
+     }
     
-    private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
-        // Fix CRITICAL: Capture denoiser to prevent race condition where it becomes nil
-        // between guard check and actual use
-        // Fix CRITICAL: Atomic read of memory pressure state to prevent race conditions
-        let memoryPressureSuspended = mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
-        guard let capturedDenoiser = denoiser, 
-              isMLProcessingActive, 
-              !memoryPressureSuspended else {
-            // Fallback to simple level-based processing during memory pressure or when ML disabled
-            return calculateRMS(samples: samples) * Float(sensitivity)
-        }
+     private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
+         // Fix HIGH: Validate audio input before processing
+         guard validateAudioInput(samples) else {
+             // Invalid audio detected - skip ML processing but still calculate output level
+             return calculateRMS(samples: samples) * Float(sensitivity)
+         }
+         
+         // Fix CRITICAL: Capture denoiser to prevent race condition where it becomes nil
+         // between guard check and actual use
+         // Fix CRITICAL: Atomic read of memory pressure state to prevent race conditions
+         let memoryPressureSuspended = mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
+         guard let capturedDenoiser = denoiser, 
+               isMLProcessingActive, 
+               !memoryPressureSuspended else {
+             // Fallback to simple level-based processing during memory pressure or when ML disabled
+             return calculateRMS(samples: samples) * Float(sensitivity)
+         }
         
         // Fix CRITICAL: Atomic multi-step buffer operations to prevent race conditions
         let chunk = appendToBufferAndExtractChunk(samples: samples)

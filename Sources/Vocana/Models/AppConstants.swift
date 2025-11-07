@@ -85,6 +85,19 @@ struct AppConstants {
     // This prevents insufficient padding that could cause processing artifacts
     static let minBufferForReflectionRatio: Int = 2
     
+    // Audio Input Validation Constants
+    // Maximum absolute amplitude allowed in audio samples (prevents DoS via extreme values)
+    // Typical audio is -1.0 to 1.0, values beyond this indicate either clipping or attack
+    static let maxAudioAmplitude: Float = 2.0
+    
+    // Minimum audio amplitude threshold to process (below this is silence)
+    // Prevents unnecessary ML processing on barely-audible content
+    static let minAudioAmplitudeForProcessing: Float = 0.0001
+    
+    // Maximum RMS level allowed (corresponds to ~1.5x clipping prevention headroom)
+    // Prevents processing of distorted/clipped audio that would give poor results
+    static let maxRMSLevel: Float = 0.95
+    
     // Accessibility
     static let accessibilityDescription = "Vocana"
     

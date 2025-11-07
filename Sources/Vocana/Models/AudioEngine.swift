@@ -174,7 +174,6 @@ class AudioEngine: ObservableObject {
     
     private var isEnabled: Bool = false
     private var sensitivity: Double = 0.5
-    private var audioCaptureSuspended = false
     
     // Fix CRITICAL: Memory pressure monitoring
     private var memoryPressureSource: DispatchSourceMemoryPressure?
@@ -207,19 +206,10 @@ class AudioEngine: ObservableObject {
              }
          }
         
-         bufferManager.recordCircuitBreakerSuspension = { [weak self] duration in
-             guard let self = self else { return }
-             // Fix HIGH-006: Circuit breaker suspension is now handled within audioBufferQueue
-             // Just update the UI flag on the main thread for user feedback
-             Task { @MainActor in
-                 self.audioCaptureSuspended = true
-             }
-             // Resume capture after suspension duration
-             DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-                 Task { @MainActor in
-                     self?.audioCaptureSuspended = false
-                 }
-             }
+          bufferManager.recordCircuitBreakerSuspension = { duration in
+             // Fix HIGH-006: Circuit breaker suspension is handled within AudioBufferManager
+             // No need to maintain duplicate state - AudioBufferManager is single source of truth
+             Self.logger.info("Circuit breaker suspension triggered for \(duration)s")
          }
         
          // ML processor callbacks
@@ -272,21 +262,24 @@ class AudioEngine: ObservableObject {
     // MARK: - Public API
     
     func startSimulation(isEnabled: Bool, sensitivity: Double) {
+        // Always stop existing pipeline first to ensure clean state
+        if self.isEnabled {
+            stopSimulation()
+        }
+
         self.isEnabled = isEnabled
         self.sensitivity = sensitivity
-        
+
         if isEnabled {
             isUsingRealAudio = audioSessionManager.startRealAudioCapture()
-            
+
             if !isUsingRealAudio {
                 audioSessionManager.isEnabled = isEnabled
                 audioSessionManager.sensitivity = sensitivity
                 audioSessionManager.startSimulatedAudio()
             }
-            
+
             initializeMLProcessing()
-        } else {
-            audioSessionManager.stopSimulatedAudio()
         }
     }
     
@@ -301,7 +294,6 @@ class AudioEngine: ObservableObject {
         stopSimulation()
         levelController.updateLevels(input: 0, output: 0)
         bufferManager.clearAudioBuffers()
-        audioCaptureSuspended = false
     }
     
     // MARK: - Private Methods
@@ -321,7 +313,8 @@ class AudioEngine: ObservableObject {
     
     private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer) {
         // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
-        guard !audioCaptureSuspended else { return }
+        // Use AudioBufferManager as single source of truth for suspension state
+        guard !bufferManager.isAudioCaptureSuspended() else { return }
         
         guard let channelData = buffer.floatChannelData else { return }
         let channelDataValue = channelData.pointee

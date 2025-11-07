@@ -77,10 +77,11 @@ class AudioBufferManager {
                 // Fix CRITICAL: Implement smoothing to prevent audio discontinuities
                 Self.logger.warning("Audio buffer overflow \(self.bufferState.consecutiveOverflows): \(self.bufferState.audioBuffer.count) + \(samples.count) > \(maxBufferSize)")
                 Self.logger.info("Applying crossfade to maintain audio continuity")
-                
-                 // Fix CRITICAL: Calculate overflow and prevent crash when exceeding buffer size
-                 let overflow = projectedSize - maxBufferSize
-                 let samplesToRemove = min(overflow, bufferState.audioBuffer.count)
+
+                 // Fix CRITICAL: Calculate overflow safely without using wrapped values
+                 // Use checked arithmetic to compute required removal
+                 let requiredRemoval = max(0, bufferState.audioBuffer.count + samples.count - maxBufferSize)
+                 let samplesToRemove = min(requiredRemoval, bufferState.audioBuffer.count)
                  
                  // Apply crossfade to prevent clicks/pops when dropping audio
                  // Note: In overflow scenarios, we prioritize latency and correctness over perfect audio continuity.
@@ -142,5 +143,11 @@ class AudioBufferManager {
     /// - Returns: true if buffer has minimum samples
     func hasEnoughSamples() -> Bool {
         return audioBufferQueue.sync { bufferState.audioBuffer.count >= minimumBufferSize }
+    }
+
+    /// Check if audio capture is suspended due to circuit breaker
+    /// - Returns: true if suspended, false otherwise
+    func isAudioCaptureSuspended() -> Bool {
+        return audioBufferQueue.sync { bufferState.audioCaptureSuspended }
     }
 }

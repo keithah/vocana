@@ -5,71 +5,37 @@ struct ContentView: View {
     @StateObject private var audioEngine = AudioEngine()
     
     var body: some View {
-        VStack(spacing: 20) {
-            HeaderView()
+        VStack(spacing: 16) {
+            // Header with status indicator
+            HStack {
+                HeaderView()
+                Spacer()
+                StatusIndicatorView(audioEngine: audioEngine, settings: settings)
+            }
             
             Divider()
             
+            // Main controls
             PowerToggleView(isEnabled: $settings.isEnabled)
             
-            AudioLevelsView(levels: audioEngine.currentLevels)
+            // Real-time audio visualization
+            AudioVisualizerView(
+                inputLevel: audioEngine.currentLevels.input,
+                outputLevel: audioEngine.currentLevels.output,
+                isActive: settings.isEnabled
+            )
             
+            // Sensitivity control with visual feedback
             SensitivityControlView(sensitivity: $settings.sensitivity)
             
             Divider()
             
+            // Settings button
             SettingsButtonView {
                 // TODO: Open settings window
             }
             
             Spacer()
-            
-             // Status indicators
-             VStack(spacing: 4) {
-                 // Audio mode indicator
-                 HStack {
-                     Image(systemName: audioEngine.isUsingRealAudio ? "mic.fill" : "waveform")
-                         .font(.caption2)
-                         .foregroundColor(.secondary)
-                     Text(audioEngine.isUsingRealAudio ? "Real Audio" : "Simulated")
-                         .font(.caption2)
-                         .foregroundColor(.secondary)
-                 }
-                 
-                 // ML processing indicator
-                 if settings.isEnabled {
-                     HStack(spacing: 4) {
-                         Image(systemName: audioEngine.isMLProcessingActive ? "cpu.fill" : "cpu")
-                             .font(.caption2)
-                             .foregroundColor(audioEngine.isMLProcessingActive ? .green : .orange)
-                         
-                         Text(audioEngine.isMLProcessingActive ? "ML Active" : "ML Unavailable")
-                             .font(.caption2)
-                             .foregroundColor(.secondary)
-                         
-                         if audioEngine.isMLProcessingActive && audioEngine.processingLatencyMs > 0 {
-                             Text("(\(String(format: "%.1f", audioEngine.processingLatencyMs))ms)")
-                                 .font(.caption2)
-                                 .foregroundColor(.secondary)
-                         }
-                     }
-                 }
-                 
-                 // Buffer health indicator (shows when audio engine is under stress)
-                 // Fix: Add buffer overflow telemetry for UI visibility
-                 if audioEngine.hasPerformanceIssues {
-                     HStack(spacing: 4) {
-                         Image(systemName: "exclamationmark.triangle.fill")
-                             .font(.caption2)
-                             .foregroundColor(.orange)
-                         
-                         Text(audioEngine.bufferHealthMessage)
-                             .font(.caption2)
-                             .foregroundColor(.secondary)
-                     }
-                 }
-             }
-             .padding(.top, 4)
         }
         .padding()
         .frame(width: AppConstants.popoverWidth, height: AppConstants.popoverHeight)
@@ -85,6 +51,7 @@ struct ContentView: View {
         .onChange(of: settings.sensitivity) { newValue in
             audioEngine.startSimulation(isEnabled: settings.isEnabled, sensitivity: newValue)
         }
+        .keyboardShortcut("n", modifiers: [.command, .option])  // ⌥⌘N to toggle
     }
 }
 

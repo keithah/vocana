@@ -104,17 +104,50 @@ struct TensorData {
     let shape: [Int64]
     let data: [Float]
     
-    init(shape: [Int64], data: [Float]) {
+    /// Create tensor data with validation
+    /// - Parameters:
+    ///   - shape: Tensor shape dimensions
+    ///   - data: Flattened tensor data
+    /// - Throws: ONNXError if validation fails
+    init(shape: [Int64], data: [Float]) throws {
         self.shape = shape
         self.data = data
         
-        // Validate
-        let expectedSize = shape.reduce(1, *)
-        assert(data.count == expectedSize, "Data size mismatch")
+        // Validate with overflow checking
+        var expectedSize = Int64(1)
+        for dim in shape {
+            let (product, overflow) = expectedSize.multipliedReportingOverflow(by: dim)
+            if overflow {
+                throw ONNXError.runtimeError("Shape dimensions overflow Int64: \(shape)")
+            }
+            expectedSize = product
+        }
+        
+        // Safe conversion for comparison
+        guard let expectedInt = Int(exactly: expectedSize) else {
+            throw ONNXError.runtimeError("Expected size exceeds Int range: \(expectedSize)")
+        }
+        
+        guard data.count == expectedInt else {
+            throw ONNXError.runtimeError("Data size \(data.count) doesn't match shape (expected \(expectedSize))")
+        }
+    }
+    
+    /// Convenience initializer that uses precondition for cases where validation is guaranteed
+    /// Use this only when you're certain the shape and data are valid
+    init(unsafeShape shape: [Int64], data: [Float]) {
+        self.shape = shape
+        self.data = data
     }
     
     var count: Int {
-        Int(shape.reduce(1, *))
+        get throws {
+            let product = shape.reduce(Int64(1), *)
+            guard let intValue = Int(exactly: product) else {
+                throw ONNXError.runtimeError("Tensor size exceeds Int range: \(product)")
+            }
+            return intValue
+        }
     }
 }
 
@@ -124,6 +157,28 @@ class MockInferenceSession: InferenceSession {
     private let modelPath: String
     private let modelName: String
     private let options: SessionOptions
+    
+    /// Safe conversion from Int64 to Int with overflow checking
+    private func safeIntCount(_ values: Int64...) throws -> Int {
+        let product = values.reduce(Int64(1)) { result, val in
+            let (p, overflow) = result.multipliedReportingOverflow(by: val)
+            guard !overflow else {
+                // Changed from fatalError to throwing error
+                return Int64.max  // Signal overflow
+            }
+            return p
+        }
+        
+        // Check if overflow occurred
+        guard product != Int64.max else {
+            throw ONNXError.runtimeError("Tensor size overflow during multiplication")
+        }
+        
+        guard let count = Int(exactly: product) else {
+            throw ONNXError.runtimeError("Tensor size exceeds Int.max: \(product)")
+        }
+        return count
+    }
     
     var inputNames: [String] {
         switch modelName {
@@ -172,16 +227,22 @@ class MockInferenceSession: InferenceSession {
             throw ONNXError.invalidInput("Missing erb_feat")
         }
         
+        // Validate shape array bounds
+        guard erbFeat.shape.count >= 3 else {
+            throw ONNXError.invalidInput("erb_feat shape too small: \(erbFeat.shape.count)")
+        }
+        
         let T = erbFeat.shape[2]  // Time dimension
         
+        // Use safe count calculation to prevent integer overflow
         return [
-            "e0": TensorData(shape: [1, 1, T, 96], data: Array(repeating: 0.1, count: Int(1 * 1 * T * 96))),
-            "e1": TensorData(shape: [1, 32, T, 48], data: Array(repeating: 0.1, count: Int(1 * 32 * T * 48))),
-            "e2": TensorData(shape: [1, 64, T, 24], data: Array(repeating: 0.1, count: Int(1 * 64 * T * 24))),
-            "e3": TensorData(shape: [1, 128, T, 12], data: Array(repeating: 0.1, count: Int(1 * 128 * T * 12))),
-            "emb": TensorData(shape: [1, 256, T, 6], data: Array(repeating: 0.1, count: Int(1 * 256 * T * 6))),
-            "c0": TensorData(shape: [1, T, 256], data: Array(repeating: 0.1, count: Int(1 * T * 256))),
-            "lsnr": TensorData(shape: [1, T, 1], data: Array(repeating: -10.0, count: Int(1 * T * 1)))
+            "e0": TensorData(unsafeShape: [1, 1, T, 96], data: Array(repeating: 0.1, count: try safeIntCount(1, 1, T, 96))),
+            "e1": TensorData(unsafeShape: [1, 32, T, 48], data: Array(repeating: 0.1, count: try safeIntCount(1, 32, T, 48))),
+            "e2": TensorData(unsafeShape: [1, 64, T, 24], data: Array(repeating: 0.1, count: try safeIntCount(1, 64, T, 24))),
+            "e3": TensorData(unsafeShape: [1, 128, T, 12], data: Array(repeating: 0.1, count: try safeIntCount(1, 128, T, 12))),
+            "emb": TensorData(unsafeShape: [1, 256, T, 6], data: Array(repeating: 0.1, count: try safeIntCount(1, 256, T, 6))),
+            "c0": TensorData(unsafeShape: [1, T, 256], data: Array(repeating: 0.1, count: try safeIntCount(1, T, 256))),
+            "lsnr": TensorData(unsafeShape: [1, T, 1], data: Array(repeating: -10.0, count: try safeIntCount(1, T, 1)))
         ]
     }
     
@@ -190,11 +251,16 @@ class MockInferenceSession: InferenceSession {
             throw ONNXError.invalidInput("Missing e3")
         }
         
+        // Validate shape array bounds
+        guard e3.shape.count >= 3 else {
+            throw ONNXError.invalidInput("e3 shape too small: \(e3.shape.count)")
+        }
+        
         let T = e3.shape[2]
         let F: Int64 = 481  // Full spectrum
         
         return [
-            "m": TensorData(shape: [1, 1, T, F], data: Array(repeating: 0.8, count: Int(1 * 1 * T * F)))
+            "m": TensorData(unsafeShape: [1, 1, T, F], data: Array(repeating: 0.8, count: try safeIntCount(1, 1, T, F)))
         ]
     }
     
@@ -203,12 +269,17 @@ class MockInferenceSession: InferenceSession {
             throw ONNXError.invalidInput("Missing e3")
         }
         
+        // Validate shape array bounds
+        guard e3.shape.count >= 3 else {
+            throw ONNXError.invalidInput("e3 shape too small: \(e3.shape.count)")
+        }
+        
         let T = e3.shape[2]
         let dfBins: Int64 = 96
         let dfOrder: Int64 = 5
         
         return [
-            "coefs": TensorData(shape: [T, dfBins, dfOrder], data: Array(repeating: 0.01, count: Int(T * dfBins * dfOrder)))
+            "coefs": TensorData(unsafeShape: [T, dfBins, dfOrder], data: Array(repeating: 0.01, count: try safeIntCount(T, dfBins, dfOrder)))
         ]
     }
 }

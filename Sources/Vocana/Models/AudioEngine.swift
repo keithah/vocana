@@ -99,11 +99,19 @@ class AudioEngine: ObservableObject {
         }
     }
     
-    deinit {
-        // Cleanup audio resources
-        audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
+    nonisolated deinit {
+        // Cleanup audio resources safely
+        if let engine = audioEngine {
+            engine.stop()
+            // Only remove tap if input node is valid
+            if engine.inputNode.numberOfInputs > 0 {
+                engine.inputNode.removeTap(onBus: 0)
+            }
+        }
         timer?.invalidate()
+        
+        // Clean up ML resources
+        denoiser?.reset()
     }
     
     // MARK: - Real Audio Capture

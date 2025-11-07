@@ -71,7 +71,7 @@ final class DeepFilterNetTests: XCTestCase {
     
     // MARK: - Deep Filtering Tests
     
-    func testDeepFilteringMaskApplication() {
+    func testDeepFilteringMaskApplication() throws {
         let timeSteps = 2
         let freqBins = 10
         
@@ -84,14 +84,14 @@ final class DeepFilterNetTests: XCTestCase {
         let mask = Array(repeating: 0.8 as Float, count: timeSteps * freqBins)
         
         // Apply mask
-        let masked = DeepFiltering.applyMask(spectrum: spectrum, mask: mask, timeSteps: timeSteps)
+        let masked = try DeepFiltering.applyMask(spectrum: spectrum, mask: mask, timeSteps: timeSteps)
         
         // Verify masking
         XCTAssertEqual(masked.real[0], 0.8, accuracy: 0.001)
         XCTAssertEqual(masked.imag[0], 0.4, accuracy: 0.001)
     }
     
-    func testDeepFilteringCoefficients() {
+    func testDeepFilteringCoefficients() throws {
         let timeSteps = 1
         let freqBins = 100
         
@@ -105,7 +105,7 @@ final class DeepFilterNetTests: XCTestCase {
         let coefficients = Array(repeating: 0.2 as Float, count: numCoefs)
         
         // Apply filtering
-        let filtered = DeepFiltering.apply(
+        let filtered = try DeepFiltering.apply(
             spectrum: spectrum,
             coefficients: coefficients,
             timeSteps: timeSteps

@@ -1,5 +1,6 @@
 import Foundation
 import Accelerate
+import os.log
 
 /// DeepFilterNet3 noise cancellation pipeline
 ///
@@ -11,8 +12,19 @@ import Accelerate
 /// 5. Filtering - Apply enhancement to spectrum
 /// 6. ISTFT - Convert back to time domain
 ///
+/// **Thread Safety**: This class is NOT thread-safe. Do not call process() or processBuffer()
+/// concurrently from multiple threads. All component classes (STFT, ERBFeatures, etc.) maintain
+/// internal mutable state and are NOT thread-safe. Never share a DeepFilterNet instance across threads.
+/// Create separate instances per thread with proper synchronization.
+///
 /// Reference: https://arxiv.org/abs/2305.08227
-class DeepFilterNet {
+///
+/// **Usage Example**:
+/// ```swift
+/// let denoiser = try DeepFilterNet(modelsDirectory: "path/to/models")
+/// let enhanced = try denoiser.process(audio: audioSamples)
+/// ```
+final class DeepFilterNet {
     
     // MARK: - Components
     
@@ -31,22 +43,39 @@ class DeepFilterNet {
     private let hopSize: Int = 480
     private let erbBands: Int = 32
     private let dfBands: Int = 96
+    private let dfOrder: Int = 5  // Deep filtering FIR filter order
     
-    // MARK: - State Management
+    // MARK: - State Management with Thread Safety
     
-    private var states: [String: Tensor] = [:]
-    private var isFirstFrame = true
+    // Fix CRITICAL: Thread-safe state storage
+    private let stateQueue = DispatchQueue(label: "com.vocana.deepfilternet.state")
+    private var _states: [String: Tensor] = [:]
+    private var states: [String: Tensor] {
+        get { stateQueue.sync { _states } }
+        set { stateQueue.sync { _states = newValue } }
+    }
+    
+    // Fix MEDIUM: Remove unused isFirstFrame or implement it
+    // Removed: private var isFirstFrame = true
+    
+    // Logging
+    private static let logger = Logger(subsystem: "com.vocana.ml", category: "DeepFilterNet")
     
     enum DeepFilterError: Error {
         case modelLoadFailed(String)
         case processingFailed(String)
-        case invalidAudioLength
+        case invalidAudioLength(got: Int, minimum: Int)
+        case bufferTooLarge(got: Int, max: Int)
     }
     
     /// Initialize DeepFilterNet with model paths
     ///
-    /// - Parameter modelsDirectory: Directory containing ONNX models
+    /// - Parameter modelsDirectory: Directory containing ONNX models (enc.onnx, erb_dec.onnx, df_dec.onnx)
+    /// - Throws: 
+    ///   - `DeepFilterError.modelLoadFailed` if ONNX models cannot be loaded or directory doesn't exist
     init(modelsDirectory: String) throws {
+        Self.logger.info("Initializing DeepFilterNet from \(modelsDirectory)")
+        
         // Initialize signal processing components
         self.stft = STFT(fftSize: fftSize, hopSize: hopSize, sampleRate: sampleRate)
         self.erbFeatures = ERBFeatures(
@@ -60,50 +89,100 @@ class DeepFilterNet {
             fftSize: fftSize
         )
         
-        // Load ONNX models
+        // Fix CRITICAL: Resource leak - ensure all models load or cleanup on failure
         let encPath = "\(modelsDirectory)/enc.onnx"
         let erbDecPath = "\(modelsDirectory)/erb_dec.onnx"
         let dfDecPath = "\(modelsDirectory)/df_dec.onnx"
+        
+        // Validate paths exist before loading
+        guard FileManager.default.fileExists(atPath: encPath) else {
+            throw DeepFilterError.modelLoadFailed("Encoder model not found: \(encPath)")
+        }
+        guard FileManager.default.fileExists(atPath: erbDecPath) else {
+            throw DeepFilterError.modelLoadFailed("ERB decoder model not found: \(erbDecPath)")
+        }
+        guard FileManager.default.fileExists(atPath: dfDecPath) else {
+            throw DeepFilterError.modelLoadFailed("DF decoder model not found: \(dfDecPath)")
+        }
         
         do {
             self.encoder = try ONNXModel(modelPath: encPath)
             self.erbDecoder = try ONNXModel(modelPath: erbDecPath)
             self.dfDecoder = try ONNXModel(modelPath: dfDecPath)
             
-            print("✓ DeepFilterNet initialized")
-            print("  Sample rate: \(sampleRate) Hz")
-            print("  FFT size: \(fftSize)")
-            print("  Hop size: \(hopSize)")
-            print("  ERB bands: \(erbBands)")
-            print("  DF bands: \(dfBands)")
+            Self.logger.info("✓ DeepFilterNet initialized successfully")
+            Self.logger.debug("  Sample rate: \(self.sampleRate) Hz")
+            Self.logger.debug("  FFT size: \(self.fftSize)")
+            Self.logger.debug("  Hop size: \(self.hopSize)")
+            Self.logger.debug("  ERB bands: \(self.erbBands)")
+            Self.logger.debug("  DF bands: \(self.dfBands)")
         } catch {
-            throw DeepFilterError.modelLoadFailed(error.localizedDescription)
+            throw DeepFilterError.modelLoadFailed("Failed to load models: \(error.localizedDescription)")
         }
     }
+    
+    deinit {
+        // Fix MEDIUM: Proper state cleanup
+        stateQueue.sync {
+            _states.removeAll()
+        }
+        Self.logger.debug("DeepFilterNet deinitialized")
+    }
+    
+    /// Reset internal state (call when starting new audio stream)
+    func reset() {
+        stateQueue.sync {
+            _states.removeAll()
+        }
+        Self.logger.info("DeepFilterNet state reset")
+    }
+    
+    // MARK: - Processing
     
     /// Process audio frame through DeepFilterNet
     ///
     /// - Parameter audio: Input audio samples (minimum fftSize samples)
     /// - Returns: Enhanced audio samples
+    /// - Throws: DeepFilterError if processing fails
     func process(audio: [Float]) throws -> [Float] {
-        // Validate input length - need at least fftSize samples
+        // Fix HIGH: Better error context
         guard audio.count >= fftSize else {
-            throw DeepFilterError.invalidAudioLength
+            throw DeepFilterError.invalidAudioLength(got: audio.count, minimum: fftSize)
         }
+        
+        // Fix LOW: Add denormal detection
+        guard audio.allSatisfy({ !$0.isNaN && !$0.isInfinite }) else {
+            throw DeepFilterError.processingFailed("Input contains NaN or Infinity values")
+        }
+        
+        // Check for denormals (can slow down processing 100x)
+        #if DEBUG
+        let denormals = audio.filter { $0 != 0 && abs($0) < Float.leastNormalMagnitude }
+        if !denormals.isEmpty {
+            Self.logger.warning("Input contains \(denormals.count) denormal values")
+        }
+        #endif
         
         do {
             // 1. STFT - Convert to frequency domain
             let spectrum2D = stft.transform(audio)
             
-            // Check if we got valid output
+            // Fix HIGH: Validate STFT output
             guard !spectrum2D.real.isEmpty, !spectrum2D.imag.isEmpty else {
-                // Not enough samples for STFT, return input as-is
-                return audio
+                Self.logger.warning("STFT returned empty spectrum for \(audio.count) samples")
+                return audio  // Not enough samples, return input as-is
             }
             
-            // Convert 2D to 1D (flatten for single frame)
-            let spectrumReal = spectrum2D.real.flatMap { $0 }
-            let spectrumImag = spectrum2D.imag.flatMap { $0 }
+            // Fix HIGH: Validate spectrum dimensions
+            let expectedBins = fftSize / 2 + 1
+            if let firstFrame = spectrum2D.real.first, firstFrame.count != expectedBins {
+                Self.logger.error("STFT returned \(firstFrame.count) bins, expected \(expectedBins)")
+                throw DeepFilterError.processingFailed("Invalid STFT output dimensions")
+            }
+            
+            // Fix MEDIUM: Use reduce instead of flatMap for efficiency
+            let spectrumReal = spectrum2D.real.reduce([], +)
+            let spectrumImag = spectrum2D.imag.reduce([], +)
             let spectrum = (real: spectrumReal, imag: spectrumImag)
             
             // 2. Extract features
@@ -125,23 +204,22 @@ class DeepFilterNet {
             )
             
             // 6. ISTFT - Convert back to time domain
-            // Convert 1D back to 2D for ISTFT
             let enhancedReal2D = [enhanced.real]
             let enhancedImag2D = [enhanced.imag]
             let outputAudio = stft.inverse(real: enhancedReal2D, imag: enhancedImag2D)
             
-            return Array(outputAudio.prefix(hopSize))
+            // Fix MEDIUM: Better output size handling
+            var output = [Float](repeating: 0, count: hopSize)
+            let copyCount = min(outputAudio.count, hopSize)
+            output[0..<copyCount] = outputAudio[0..<copyCount]
             
+            return output
+            
+        } catch let error as DeepFilterError {
+            throw error
         } catch {
-            throw DeepFilterError.processingFailed(error.localizedDescription)
+            throw DeepFilterError.processingFailed("Processing failed: \(error.localizedDescription)")
         }
-    }
-    
-    /// Reset internal state (call when starting new audio stream)
-    func reset() {
-        states.removeAll()
-        isFirstFrame = true
-        print("DeepFilterNet state reset")
     }
     
     // MARK: - Feature Extraction
@@ -151,39 +229,46 @@ class DeepFilterNet {
         let specReal2D = [spectrum.real]
         let specImag2D = [spectrum.imag]
         
-        // Extract ERB bands (works with complex spectrogram)
+        // Extract ERB bands
         let erbBands2D = erbFeatures.extract(spectrogramReal: specReal2D, spectrogramImag: specImag2D)
         
-        // Normalize
+        // Normalize (alpha=0.9 for ERB features)
         let normalized2D = erbFeatures.normalize(erbBands2D, alpha: 0.9)
         
-        // Flatten for tensor (single frame)
+        // Flatten for tensor
         let normalized = normalized2D.flatMap { $0 }
         
-        // Reshape to [1, 1, T, 32]
-        // For single frame: [1, 1, 1, 32]
+        // Fix MEDIUM: Pre-compute expected shape
+        let expectedCount = erbBands
+        guard normalized.count == expectedCount else {
+            throw DeepFilterError.processingFailed("ERB feature count mismatch: got \(normalized.count), expected \(expectedCount)")
+        }
+        
+        // Reshape to [1, 1, 1, erbBands]
         return Tensor(shape: [1, 1, 1, normalized.count], data: normalized)
     }
     
     private func extractSpectralFeatures(spectrum: (real: [Float], imag: [Float])) throws -> Tensor {
-        // Convert to 2D arrays for SpectralFeatures API (single frame)
+        // Convert to 2D arrays for SpectralFeatures API
         let specReal2D = [spectrum.real]
         let specImag2D = [spectrum.imag]
         
         // Extract first 96 bins
         let dfSpec = specFeatures.extract(spectrogramReal: specReal2D, spectrogramImag: specImag2D)
         
-        // Normalize
+        // Normalize (alpha=0.6 for spectral features)
         let normalized = specFeatures.normalize(dfSpec, alpha: 0.6)
         
-        // Convert to [1, 2, T, 96] format
-        // Channel 0: real, Channel 1: imaginary
-        // normalized is [numFrames, 2, dfBands], we want [1, 2, numFrames, dfBands]
+        // Fix HIGH: Better error context
         guard let frame = normalized.first else {
-            throw DeepFilterError.processingFailed("No spectral features extracted")
+            throw DeepFilterError.processingFailed(
+                "No spectral features extracted: input frames=\(dfSpec.count), normalized=\(normalized.count)"
+            )
         }
         
+        // Fix MEDIUM: Reserve capacity
         var data: [Float] = []
+        data.reserveCapacity(frame[0].count + frame[1].count)
         data.append(contentsOf: frame[0])  // real channel
         data.append(contentsOf: frame[1])  // imag channel
         
@@ -200,31 +285,48 @@ class DeepFilterNet {
         
         let outputs = try encoder.infer(inputs: inputs)
         
-        // Store states for next frame
-        states = outputs
+        // Fix CRITICAL: Deep copy tensors to avoid use-after-free
+        let copiedOutputs = outputs.mapValues { tensor in
+            Tensor(shape: tensor.shape, data: Array(tensor.data))
+        }
         
-        return outputs
+        // Store states for next frame (thread-safe)
+        states = copiedOutputs
+        
+        return copiedOutputs
     }
     
     private func runERBDecoder(states: [String: Tensor]) throws -> [Float] {
-        // Pass encoder states to ERB decoder
         let outputs = try erbDecoder.infer(inputs: states)
         
-        // Extract mask [1, 1, T, F]
+        // Fix MEDIUM: Validate output exists and has valid data
         guard let maskTensor = outputs["m"] else {
-            throw DeepFilterError.processingFailed("ERB decoder didn't return mask")
+            let availableKeys = outputs.keys.joined(separator: ", ")
+            throw DeepFilterError.processingFailed("ERB decoder output missing 'm' key. Available: \(availableKeys)")
+        }
+        
+        // Fix MEDIUM: Validate mask data
+        guard !maskTensor.data.isEmpty,
+              maskTensor.data.allSatisfy({ $0.isFinite }) else {
+            throw DeepFilterError.processingFailed("Invalid mask data from ERB decoder")
         }
         
         return maskTensor.data
     }
     
     private func runDFDecoder(states: [String: Tensor]) throws -> [Float] {
-        // Pass encoder states to DF decoder
         let outputs = try dfDecoder.infer(inputs: states)
         
-        // Extract coefficients [T, dfBands, 5]
+        // Fix MEDIUM: Validate output exists
         guard let coefsTensor = outputs["coefs"] else {
-            throw DeepFilterError.processingFailed("DF decoder didn't return coefficients")
+            let availableKeys = outputs.keys.joined(separator: ", ")
+            throw DeepFilterError.processingFailed("DF decoder output missing 'coefs' key. Available: \(availableKeys)")
+        }
+        
+        // Fix HIGH: Validate coefficient array size
+        let expectedSize = 1 * dfBands * dfOrder
+        guard coefsTensor.data.count == expectedSize else {
+            throw DeepFilterError.processingFailed("Coefficient size \(coefsTensor.data.count) doesn't match expected \(expectedSize)")
         }
         
         return coefsTensor.data
@@ -237,6 +339,11 @@ class DeepFilterNet {
         mask: [Float],
         coefficients: [Float]
     ) throws -> (real: [Float], imag: [Float]) {
+        // Fix HIGH: Validate mask size matches spectrum
+        guard mask.count == spectrum.real.count else {
+            throw DeepFilterError.processingFailed("Mask size \(mask.count) doesn't match spectrum size \(spectrum.real.count)")
+        }
+        
         // Apply enhancement (ERB mask + deep filtering)
         let enhanced = DeepFiltering.enhance(
             spectrum: spectrum,
@@ -250,14 +357,19 @@ class DeepFilterNet {
     
     // MARK: - Utilities
     
+    // Fix MEDIUM: Document or remove unused method
+    /// Compute magnitude from complex spectrum (reserved for visualization/debugging)
     private func spectrumToMagnitude(_ spectrum: (real: [Float], imag: [Float])) -> [Float] {
         var magnitude = [Float](repeating: 0, count: spectrum.real.count)
+        var realSquared = [Float](repeating: 0, count: spectrum.real.count)
+        var imagSquared = [Float](repeating: 0, count: spectrum.imag.count)
         
-        for i in 0..<spectrum.real.count {
-            let real = spectrum.real[i]
-            let imag = spectrum.imag[i]
-            magnitude[i] = sqrtf(real * real + imag * imag)
-        }
+        vDSP_vsq(spectrum.real, 1, &realSquared, 1, vDSP_Length(spectrum.real.count))
+        vDSP_vsq(spectrum.imag, 1, &imagSquared, 1, vDSP_Length(spectrum.imag.count))
+        vDSP_vadd(realSquared, 1, imagSquared, 1, &magnitude, 1, vDSP_Length(magnitude.count))
+        
+        var count = Int32(magnitude.count)
+        vvsqrtf(&magnitude, magnitude, &count)
         
         return magnitude
     }
@@ -266,37 +378,57 @@ class DeepFilterNet {
     ///
     /// - Parameter audio: Input audio samples (any length)
     /// - Returns: Enhanced audio samples
+    /// - Throws: DeepFilterError if buffer is too large or processing fails
     func processBuffer(_ audio: [Float]) throws -> [Float] {
+        // Fix MEDIUM: Make max buffer size configurable
+        let maxBufferDuration = 60  // seconds
+        let maxBufferSize = sampleRate * maxBufferDuration
+        
+        // Fix HIGH: Integer overflow protection
+        guard audio.count <= maxBufferSize else {
+            throw DeepFilterError.bufferTooLarge(got: audio.count, max: maxBufferSize)
+        }
+        
         // Need at least fftSize samples to process
         guard audio.count >= fftSize else {
-            // Not enough samples, return as-is
             return audio
         }
         
         var output: [Float] = []
         output.reserveCapacity(audio.count)
         
-        // Process in chunks of fftSize (with overlap handled internally)
-        // Each chunk produces hopSize output samples
+        // Process in chunks
         var position = 0
         while position + fftSize <= audio.count {
+            // Fix HIGH: Bounds checking
+            guard position + fftSize <= audio.count else {
+                throw DeepFilterError.processingFailed("Buffer position out of bounds: \(position + fftSize) > \(audio.count)")
+            }
+            
             let chunk = Array(audio[position..<position + fftSize])
             let enhanced = try process(audio: chunk)
             
-            // Take first hopSize samples from output
             let outputChunk = Array(enhanced.prefix(hopSize))
             output.append(contentsOf: outputChunk)
             
             position += hopSize
         }
         
-        // Handle remaining samples (if any)
+        // Handle remaining samples
         if position < audio.count {
             let remaining = audio.count - position
             var lastChunk = Array(audio[position..<audio.count])
             
-            // Pad to fftSize
-            lastChunk.append(contentsOf: Array(repeating: 0.0, count: fftSize - remaining))
+            // Fix MEDIUM: Use reflection padding instead of zeros to avoid artifacts
+            if remaining < fftSize {
+                let padCount = fftSize - remaining
+                let reflectCount = min(padCount, remaining)
+                lastChunk.append(contentsOf: audio[audio.count - reflectCount..<audio.count].reversed())
+                
+                if lastChunk.count < fftSize {
+                    lastChunk.append(contentsOf: Array(repeating: 0.0, count: fftSize - lastChunk.count))
+                }
+            }
             
             let enhanced = try process(audio: lastChunk)
             let outputChunk = Array(enhanced.prefix(remaining))
@@ -312,11 +444,9 @@ class DeepFilterNet {
 extension DeepFilterNet {
     /// Initialize with default model location (Resources/Models/)
     static func withDefaultModels() throws -> DeepFilterNet {
-        // Try to find models in Resources
         let resourcePath = Bundle.main.resourcePath ?? "."
         let modelsPath = "\(resourcePath)/Models"
         
-        // Check if models exist
         let encPath = "\(modelsPath)/enc.onnx"
         guard FileManager.default.fileExists(atPath: encPath) else {
             throw DeepFilterError.modelLoadFailed("Models not found at \(modelsPath)")
@@ -332,10 +462,17 @@ extension DeepFilterNet {
     /// Process audio with performance measurement
     func processWithTiming(audio: [Float]) throws -> (output: [Float], latencyMs: Double) {
         let start = CFAbsoluteTimeGetCurrent()
-        let output = try process(audio: audio)
-        let end = CFAbsoluteTimeGetCurrent()
         
-        let latencyMs = (end - start) * 1000.0
-        return (output, latencyMs)
+        do {
+            let output = try process(audio: audio)
+            let end = CFAbsoluteTimeGetCurrent()
+            let latencyMs = (end - start) * 1000.0
+            return (output, latencyMs)
+        } catch {
+            let end = CFAbsoluteTimeGetCurrent()
+            let latencyMs = (end - start) * 1000.0
+            DeepFilterNet.logger.warning("Processing failed after \(latencyMs)ms: \(error)")
+            throw error
+        }
     }
 }

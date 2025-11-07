@@ -270,6 +270,16 @@ final class ERBFeatures {
                 erbFeatures.append([Float](repeating: 0, count: numBands))
                 continue
             }
+
+            // Fix HIGH: NaN/Inf protection for vvsqrtf
+            // Check for invalid values that could cause vvsqrtf to produce NaN
+            let hasInvalidValues = magnitudeSpectrum.contains { !$0.isFinite || $0 < 0 }
+            if hasInvalidValues {
+                Self.logger.warning("Invalid magnitude values detected, skipping sqrt computation")
+                erbFeatures.append([Float](repeating: 0, count: numBands))
+                continue
+            }
+
             var count = Int32(magnitudeSpectrum.count)
             vvsqrtf(&sqrtResult, magnitudeSpectrum, &count)
             

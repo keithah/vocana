@@ -41,8 +41,9 @@ struct AudioLevels {
     static let zero = AudioLevels(input: 0.0, output: 0.0)
 }
 
+@MainActor
 class AudioEngine: ObservableObject {
-    private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
+    nonisolated private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
     
     // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
     private let audioProcessingQueue = DispatchQueue(label: "com.vocana.audio.processing", qos: .userInteractive)
@@ -179,15 +180,9 @@ class AudioEngine: ObservableObject {
     private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var isMemoryPressureHandlerActive = false
     
-    // MARK: - Initialization
-    
-    init() {
-        setupComponentCallbacks()
-        setupMemoryPressureMonitoring()
-    }
+
     
     /// Configure callbacks between components
-    @MainActor
     private func setupComponentCallbacks() {
         // Level controller has no callbacks
         

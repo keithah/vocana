@@ -199,13 +199,13 @@ final class ONNXModel {
         let resolvedPath = resolvedURL.path
         
         // Step 3: Restrict to app bundle and known safe directories only
-        let allowedPaths: Set<String> = [
+        let allowedPaths: Set<String> = Set([
             Bundle.main.resourcePath,
             Bundle.main.bundlePath,
         ].compactMap { basePath in
             guard let basePath = basePath, !basePath.isEmpty else { return nil }
             return URL(fileURLWithPath: basePath).standardizedFileURL.path
-        }
+        })
         
         // Step 4: Strict path validation - must be within allowed directories
         let isPathAllowed = allowedPaths.contains { allowedPath in

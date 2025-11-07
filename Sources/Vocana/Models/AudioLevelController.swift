@@ -133,9 +133,12 @@ class AudioLevelController {
      /// Used during simulated audio playback
      func updateSimulatedLevels() {
          levelQueue.sync {
-             // Generate random levels for UI testing
-             let randomInput = Float.random(in: 0.1...0.8)
-             let randomOutput = Float.random(in: 0.05...0.6)
+             // Generate random levels for UI testing using AppConstants ranges
+             let inputRange = AppConstants.inputLevelRange
+             let outputRange = AppConstants.outputLevelRange
+             
+             let randomInput = Float.random(in: Float(inputRange.lowerBound)...Float(inputRange.upperBound))
+             let randomOutput = Float.random(in: Float(outputRange.lowerBound)...Float(outputRange.upperBound))
              currentLevels = AudioLevels(input: randomInput, output: randomOutput)
          }
      }

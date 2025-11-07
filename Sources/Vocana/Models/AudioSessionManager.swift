@@ -57,10 +57,10 @@ class AudioSessionManager {
                       Self.logger.warning("Invalid buffer frame length: \(buffer.frameLength)")
                       return
                   }
-                  guard let channelData = buffer.floatChannelData else {
-                      Self.logger.warning("Buffer has no channel data")
-                      return
-                  }
+                   guard buffer.floatChannelData != nil else {
+                       Self.logger.warning("Buffer has no channel data")
+                       return
+                   }
                   
                   // Fix CRITICAL-002: Proper buffer validation to prevent use-after-free
                   guard let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength),
@@ -74,21 +74,16 @@ class AudioSessionManager {
                  copiedBuffer.frameLength = buffer.frameLength
                  let bytesToCopy = Int(buffer.frameLength) * MemoryLayout<Float>.size
                  
-                 for channel in 0..<Int(buffer.format.channelCount) {
-                     guard channel < sourceChannels.count && channel < destChannels.count else {
-                         Self.logger.error("Channel index out of bounds during buffer copy")
-                         return
-                     }
-                     memcpy(destChannels[channel], sourceChannels[channel], bytesToCopy)
-                  }
-              }
-                   
-              // Fix CRITICAL: Use synchronous MainActor dispatch to prevent buffer lifecycle issues
-              // Audio tap callback runs on high-priority audio thread, buffer must be processed immediately
-              DispatchQueue.main.async { [weak self] in
-                  self?.onAudioBufferReceived?(copiedBuffer)
-              }
-          }
+                  for channel in 0..<Int(buffer.format.channelCount) {
+                       memcpy(destChannels[channel], sourceChannels[channel], bytesToCopy)
+                    }
+                    
+                   // Fix CRITICAL: Use synchronous MainActor dispatch to prevent buffer lifecycle issues
+                   // Audio tap callback runs on high-priority audio thread, buffer must be processed immediately
+                   DispatchQueue.main.async { [weak self] in
+                       self?.onAudioBufferReceived?(copiedBuffer)
+                   }
+               }
             isTapInstalled = true
             
             try audioEngine.start()

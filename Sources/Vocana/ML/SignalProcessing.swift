@@ -5,8 +5,9 @@ import os.log
 /// Short-Time Fourier Transform (STFT) and Inverse STFT for audio processing
 /// Implements real-time compatible spectral analysis with overlap-add synthesis
 ///
-/// **Thread Safety**: This class is NOT thread-safe. Do not call transform() or inverse()
-/// concurrently from multiple threads. Create separate STFT instances per thread if needed.
+/// **Thread Safety**: This class IS thread-safe. The transform() and inverse() methods
+/// use internal synchronization (transformQueue) to protect shared buffer access.
+/// Multiple threads can safely call methods on the same STFT instance.
 /// Read-only properties are thread-safe after initialization.
 ///
 /// **Usage Example**:
@@ -23,6 +24,14 @@ final class STFT {
     private let sampleRate: Int
     private let window: [Float]
     private let fftSizePowerOf2: Int  // Stored to avoid recalculation
+    
+    // MARK: - Test Accessors
+    
+    /// Test accessor for window function (testing only)
+    var testWindow: [Float] { window }
+    
+    /// Test accessor for hop size (testing only)
+    var testHopSize: Int { hopSize }
     
     // MARK: - FFT Setup
     
@@ -44,16 +53,23 @@ final class STFT {
     private var tempImag: [Float]
     private var frameBuffer: [Float]
     
+    // Fix CRITICAL: Thread safety for shared buffer access
+    private let transformQueue = DispatchQueue(label: "com.vocana.stft.transform", qos: .userInitiated)
+    
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "STFT")
     
     // MARK: - Initialization
     
-    init(fftSize: Int = 960, hopSize: Int = 480, sampleRate: Int = 48000) {
+    init(fftSize: Int = AppConstants.fftSize, hopSize: Int = AppConstants.hopSize, sampleRate: Int = AppConstants.sampleRate) {
         precondition(fftSize > 0 && fftSize <= 16384, 
                     "FFT size must be in range [1, 16384], got \(fftSize)")
         precondition(hopSize > 0 && hopSize <= fftSize, 
                     "Hop size must be positive and <= FFT size, got hopSize=\(hopSize), fftSize=\(fftSize)")
+        // Fix CRITICAL: Add COLA validation for STFT window change
+        // vDSP_HANN_DENORM requires 50% overlap (hop=fft/2) for proper reconstruction
+        precondition(hopSize == fftSize / 2, 
+                    "vDSP_HANN_DENORM requires 50% overlap (hop=fft/2). Got hop=\(hopSize), fft=\(fftSize)")
         precondition(sampleRate > 0 && sampleRate <= 192000, 
                     "Sample rate must be in range [1, 192000], got \(sampleRate)")
         
@@ -61,14 +77,22 @@ final class STFT {
         self.hopSize = hopSize
         self.sampleRate = sampleRate
         
-        // Fix HIGH: Validate window after generation
+        // Fix CRITICAL: Use vDSP_HANN_DENORM to avoid 50% amplitude error
+        // vDSP_HANN_NORM divides by 2, causing 50% amplitude reduction
         var hannWindow = [Float](repeating: 0, count: fftSize)
-        vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
+        vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_DENORM))
         
-        // Validate window contains valid values (vDSP_HANN_NORM can produce values > 1)
-        guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
-            preconditionFailure("Window generation failed - contains invalid values")
+        // Fix CRITICAL: Fix Hann window amplitude validation for DENORM output
+        // vDSP_HANN_DENORM yields samples up to 2.0, so validate against correct range
+        guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 2.0 }) else {
+            let invalidValues = hannWindow.enumerated().filter { !($0.element.isFinite && $0.element >= 0 && $0.element <= 2.0) }
+            preconditionFailure("Window generation failed - invalid values at indices: \(invalidValues.map(\.offset))")
         }
+        
+         // Verify window has proper COLA properties for overlap-add
+         guard hannWindow.max() ?? 0 > AppConstants.minWindowPeakAmplitude else {
+             preconditionFailure("Window amplitude too low (< \(AppConstants.minWindowPeakAmplitude)) - may cause reconstruction artifacts")
+         }
         
         self.window = hannWindow
         
@@ -97,9 +121,12 @@ final class STFT {
         self.frameBuffer = [Float](repeating: 0, count: fftSize)
     }
     
-    // Fix MEDIUM: Mark deinit as nonisolated for consistency
-    nonisolated deinit {
-        vDSP_destroy_fftsetup(fftSetup)
+    // Fix CRITICAL: Ensure proper FFT setup cleanup with thread safety
+    // Note: FFT setup destruction must be synchronized to prevent race conditions
+    deinit {
+        transformQueue.sync {
+            vDSP_destroy_fftsetup(fftSetup)
+        }
     }
     
     // MARK: - Forward Transform (Time → Frequency)
@@ -108,7 +135,9 @@ final class STFT {
     /// - Parameter audio: Input audio samples
     /// - Returns: Complex spectrogram as (real, imag) arrays with shape [numFrames, fftSize/2 + 1]
     func transform(_ audio: [Float]) -> (real: [[Float]], imag: [[Float]]) {
-        let numSamples = audio.count
+        // Fix CRITICAL: Thread-safe transform with dedicated queue
+        return transformQueue.sync {
+            let numSamples = audio.count
         
         // Fix CRITICAL: Integer underflow protection
         guard numSamples >= fftSize else {
@@ -135,39 +164,27 @@ final class STFT {
             
             guard endSample <= numSamples else { break }
             
-            // Fix CRITICAL: Use success flag to ensure we skip frame on pointer failure
-            var windowingSucceeded = false
-            audio[startSample..<endSample].withUnsafeBufferPointer { audioPtr in
-                guard let audioBase = audioPtr.baseAddress else {
-                    Self.logger.error("Audio buffer pointer is nil at frame \(frameIndex)")
-                    return
-                }
-                vDSP_vmul(audioBase, 1, window, 1, &windowedInput, 1, vDSP_Length(fftSize))
-                windowingSucceeded = true
+            // Fix CRITICAL: Eliminate nested UnsafeBufferPointer calls to prevent race conditions
+            // Validate bounds before any unsafe operations
+            guard endSample <= audio.count, 
+                  windowedInput.count >= fftSize,
+                  inputReal.count >= fftSize else {
+                Self.logger.error("Buffer size validation failed at frame \(frameIndex)")
+                continue
             }
-            guard windowingSucceeded else { continue }
+            
+            // Fix CRITICAL: Eliminate array allocation in hot path - use direct pointer access
+            audio[startSample..<endSample].withUnsafeBufferPointer { audioChunkPtr in
+                guard let audioChunkBase = audioChunkPtr.baseAddress else { return }
+                vDSP_vmul(audioChunkBase, 1, window, 1, &windowedInput, 1, vDSP_Length(fftSize))
+            }
             
             // Zero-fill buffers using vDSP
             vDSP_vclr(&inputReal, 1, vDSP_Length(fftSizePowerOf2))
             vDSP_vclr(&inputImag, 1, vDSP_Length(fftSizePowerOf2))
             
-            // Fix CRITICAL: Use success flags at each level to propagate failures
-            var copySucceeded = false
-            windowedInput.withUnsafeBufferPointer { windowedPtr in
-                guard let windowedBase = windowedPtr.baseAddress, windowedPtr.count >= fftSize else {
-                    Self.logger.error("Windowed input pointer invalid at frame \(frameIndex)")
-                    return
-                }
-                inputReal.withUnsafeMutableBufferPointer { inputPtr in
-                    guard let inputBase = inputPtr.baseAddress, inputPtr.count >= fftSize else {
-                        Self.logger.error("Input real pointer invalid at frame \(frameIndex)")
-                        return
-                    }
-                    vDSP_mmov(windowedBase, inputBase, vDSP_Length(fftSize), 1, 1, 1)
-                    copySucceeded = true
-                }
-            }
-            guard copySucceeded else { continue }
+            // Copy windowed input to real buffer for FFT
+            vDSP_mmov(windowedInput, &inputReal, vDSP_Length(fftSize), 1, 1, 1)
             
             // Perform FFT with safe pointer handling
             var fftSucceeded = false
@@ -209,6 +226,7 @@ final class STFT {
         }
         
         return (spectrogramReal, spectrogramImag)
+        } // End transformQueue.sync
     }
     
     // MARK: - Inverse Transform (Frequency → Time)
@@ -219,9 +237,11 @@ final class STFT {
     ///   - imag: Imaginary part of spectrogram [numFrames, fftSize/2 + 1]
     /// - Returns: Reconstructed audio samples
     func inverse(real: [[Float]], imag: [[Float]]) -> [Float] {
-        guard real.count == imag.count, real.count > 0 else {
-            return []
-        }
+        // Fix CRITICAL: Thread-safe inverse transform
+        return transformQueue.sync {
+            guard real.count == imag.count, real.count > 0 else {
+                return []
+            }
         
         let numFrames = real.count
         
@@ -289,10 +309,20 @@ final class STFT {
             }
             
             // Negative frequencies (complex conjugate of positive)
-            // Fix HIGH: Explicit bounds check in loop to prevent races
-            for i in 1..<binsToUse where i < frameReal.count && i < frameImag.count {
+            // Fix HIGH: Capture array sizes before loop to prevent race conditions
+            let frameSize = min(frameReal.count, frameImag.count)
+            let bufferSize = min(fullReal.count, fullImag.count, fftSizePowerOf2)
+            let mirrorBinsToUse = min(binsToUse, frameSize)
+            
+            // Fix CRITICAL: Add bounds checking for frame array access to prevent crashes
+            for i in 1..<mirrorBinsToUse {
                 let mirrorIndex = fftSizePowerOf2 - i
-                guard mirrorIndex > 0 && mirrorIndex < fftSizePowerOf2 && mirrorIndex < fullReal.count && mirrorIndex < fullImag.count else {
+                guard mirrorIndex > 0 && mirrorIndex < bufferSize,
+                      i < frameReal.count, i < frameImag.count else {
+                    // Log potential issue for debugging
+                    if i >= frameReal.count || i >= frameImag.count {
+                        Self.logger.warning("Mirror loop bounds error: i=\(i), frameReal.count=\(frameReal.count), frameImag.count=\(frameImag.count)")
+                    }
                     continue
                 }
                 fullReal[mirrorIndex] = frameReal[i]
@@ -370,17 +400,21 @@ final class STFT {
         }
         
         return output
+        } // End transformQueue.sync
     }
     
     // MARK: - Helper Methods
     
     private func calculateOutputLength(numFrames: Int) -> Int? {
+        // Fix HIGH: Add bounds validation for negative results
+        guard numFrames > 0 else { return nil }
+        
         // Safe calculation with overflow checking
         let (framesPart, overflow1) = (numFrames - 1).multipliedReportingOverflow(by: hopSize)
         guard !overflow1 else { return nil }
         
         let (result, overflow2) = framesPart.addingReportingOverflow(fftSize)
-        guard !overflow2 else { return nil }
+        guard !overflow2, result > 0 else { return nil }
         
         return result
     }

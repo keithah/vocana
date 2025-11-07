@@ -241,13 +241,12 @@ class MockInferenceSession: InferenceSession {
         
         // Use safe count calculation to prevent integer overflow
         return [
-            "e0": TensorData(unsafeShape: [1, 1, T, 96], data: Array(repeating: 0.1, count: try safeIntCount([1, 1, T, 96]))),
-            "e1": TensorData(unsafeShape: [1, 32, T, 48], data: Array(repeating: 0.1, count: try safeIntCount([1, 32, T, 48]))),
-            "e2": TensorData(unsafeShape: [1, 64, T, 24], data: Array(repeating: 0.1, count: try safeIntCount([1, 64, T, 24]))),
-            "e3": TensorData(unsafeShape: [1, 128, T, 12], data: Array(repeating: 0.1, count: try safeIntCount([1, 128, T, 12]))),
-            "emb": TensorData(unsafeShape: [1, 256, T, 6], data: Array(repeating: 0.1, count: try safeIntCount([1, 256, T, 6]))),
-            "c0": TensorData(unsafeShape: [1, T, 256], data: Array(repeating: 0.1, count: try safeIntCount([1, T, 256]))),
-            "lsnr": TensorData(unsafeShape: [1, T, 1], data: Array(repeating: -10.0, count: try safeIntCount([1, T, 1])))
+            "e0": TensorData(unsafeShape: [1, 1, T, 96], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 1, T, 96]))),
+            "e1": TensorData(unsafeShape: [1, 32, T, 48], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 32, T, 48]))),
+            "e2": TensorData(unsafeShape: [1, 64, T, 24], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 64, T, 24]))),
+            "emb": TensorData(unsafeShape: [1, 256, T, 6], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 256, T, 6]))),
+            "c0": TensorData(unsafeShape: [1, T, 256], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, T, 256]))),
+            "lsnr": TensorData(unsafeShape: [1, T, 1], data: Array(repeating: AppConstants.defaultLSNRValue, count: try safeIntCount([1, T, 1])))
         ]
     }
     
@@ -280,8 +279,8 @@ class MockInferenceSession: InferenceSession {
         }
         
         let T = e3.shape[2]
-        let dfBins: Int64 = 96
-        let dfOrder: Int64 = 5
+        let dfBins: Int64 = Int64(AppConstants.dfBands)
+        let dfOrder: Int64 = Int64(AppConstants.dfOrder)
         
         return [
             "coefs": TensorData(unsafeShape: [T, dfBins, dfOrder], data: Array(repeating: 0.01, count: try safeIntCount([T, dfBins, dfOrder])))

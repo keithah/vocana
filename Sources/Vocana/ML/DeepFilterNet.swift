@@ -136,7 +136,9 @@ final class DeepFilterNet {
         stateQueue.sync {
             _states.removeAll()
         }
-        overlapBuffer.removeAll()  // Fix CRITICAL: Clear overlap buffer on reset
+        // Fix CRITICAL: Clear overlap buffer on reset
+        // Fix HIGH: Ensure both states and overlap buffer are cleared together
+        overlapBuffer.removeAll()
         Self.logger.info("DeepFilterNet state reset")
     }
     
@@ -305,6 +307,14 @@ final class DeepFilterNet {
         
         let outputs = try encoder.infer(inputs: inputs)
         
+        // Fix HIGH: Validate encoder outputs before using
+        let requiredKeys = ["e0", "e1", "e2", "e3", "emb", "c0", "lsnr"]
+        for key in requiredKeys {
+            guard outputs.keys.contains(key) else {
+                throw DeepFilterError.processingFailed("Missing encoder output: \(key)")
+            }
+        }
+        
         // Fix CRITICAL: Atomic state update - deep copy AND store in single transaction
         // Fix CRITICAL #6: Clear old states before storing new ones to prevent memory leak
         return stateQueue.sync {
@@ -391,6 +401,12 @@ final class DeepFilterNet {
         vDSP_vsq(spectrum.real, 1, &realSquared, 1, vDSP_Length(spectrum.real.count))
         vDSP_vsq(spectrum.imag, 1, &imagSquared, 1, vDSP_Length(spectrum.imag.count))
         vDSP_vadd(realSquared, 1, imagSquared, 1, &magnitude, 1, vDSP_Length(magnitude.count))
+        
+        // Fix HIGH: Validate magnitude buffer before vvsqrtf
+        guard magnitude.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
+            Self.logger.error("Invalid magnitude values detected (NaN/Inf/negative)")
+            return [Float](repeating: 0, count: magnitude.count)
+        }
         
         // Fix MEDIUM: Use separate buffer for vvsqrtf to avoid in-place operation issues
         var sqrtResult = [Float](repeating: 0, count: magnitude.count)

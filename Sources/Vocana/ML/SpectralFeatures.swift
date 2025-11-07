@@ -162,6 +162,12 @@ final class SpectralFeatures {
             vDSP_vsq(imagPart, 1, &imagSquaredBuffer, 1, length)
             vDSP_vadd(realSquaredBuffer, 1, imagSquaredBuffer, 1, &magnitudeBuffer, 1, length)
             
+            // Fix HIGH: Validate magnitude buffer before vvsqrtf
+            guard magnitudeBuffer.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
+                Self.logger.error("Invalid magnitude buffer (NaN/Inf/negative)")
+                preconditionFailure("Magnitude buffer contains invalid values")
+            }
+            
             // Fix CRITICAL: Safe sqrt with separate output buffer
             var count = Int32(realPart.count)
             var sqrtResult = [Float](repeating: 0, count: realPart.count)

@@ -223,6 +223,13 @@ final class ERBFeatures {
             vDSP_vadd(realSquared, 1, imagSquared, 1, &magnitudeSpectrum, 1, length)
             
             // Fix HIGH: Pre-allocate sqrtResult to avoid repeated allocation
+            // Fix HIGH: Int32 overflow protection for vvsqrtf
+            guard magnitudeSpectrum.count < Int32.max else {
+                Self.logger.error("Buffer too large for vvsqrtf: \(magnitudeSpectrum.count)")
+                // Skip this frame or use fallback
+                erbFeatures.append([Float](repeating: 0, count: numBands))
+                continue
+            }
             var count = Int32(magnitudeSpectrum.count)
             var sqrtResult = [Float](repeating: 0, count: magnitudeSpectrum.count)
             vvsqrtf(&sqrtResult, magnitudeSpectrum, &count)

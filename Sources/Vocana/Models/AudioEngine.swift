@@ -181,6 +181,15 @@ class AudioEngine: ObservableObject {
         }
         audioEngine?.stop()
         audioEngine = nil
+        
+        // Fix HIGH: Deactivate audio session on iOS to prevent resource leak
+        #if os(iOS) || os(tvOS) || os(watchOS)
+        do {
+            try AVAudioSession.sharedInstance().setActive(false)
+        } catch {
+            print("Failed to deactivate audio session: \(error.localizedDescription)")
+        }
+        #endif
     }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
@@ -285,6 +294,8 @@ class AudioEngine: ObservableObject {
             isMLProcessingActive = false
             // Fix HIGH: Clear buffer on error to prevent unbounded growth
             audioBuffer.removeAll()
+            // Fix HIGH: Set denoiser to nil for consistency
+            denoiser = nil
             
             // Fallback to simple processing
             return calculateRMS(samples: chunk) * Float(sensitivity)

@@ -67,10 +67,10 @@ final class DeepFilterNet: @unchecked Sendable {
     // Fix CRITICAL: Thread-safe state storage AND processing using dual-queue architecture
     
     /// Protects neural network state tensors with fine-grained synchronization
-    private let stateQueue = DispatchQueue(label: "com.vocana.deepfilternet.state", qos: .userInitiated)
-    
+    private let stateQueue = DispatchQueue(label: "com.vocana.deepfilternet.state", qos: .userInteractive)
+
     /// Protects audio processing pipeline and buffers with coarse-grained synchronization
-    private let processingQueue = DispatchQueue(label: "com.vocana.deepfilternet.processing", qos: .userInitiated)
+    private let processingQueue = DispatchQueue(label: "com.vocana.deepfilternet.processing", qos: .userInteractive)
     private var _states: [String: Tensor] = [:]
     private var states: [String: Tensor] {
         get { stateQueue.sync { _states } }

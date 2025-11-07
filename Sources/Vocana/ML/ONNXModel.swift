@@ -26,7 +26,7 @@ final class ONNXModel {
     private let session: InferenceSession
     
     // Fix CRITICAL: Thread safety for concurrent inference calls
-    private let sessionQueue = DispatchQueue(label: "com.vocana.onnx.session", qos: .userInitiated)
+    private let sessionQueue = DispatchQueue(label: "com.vocana.onnx.session", qos: .userInteractive)
     
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "ONNXModel")

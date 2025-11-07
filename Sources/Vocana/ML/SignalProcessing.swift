@@ -54,7 +54,7 @@ final class STFT {
     private var frameBuffer: [Float]
     
     // Fix CRITICAL: Thread safety for shared buffer access
-    private let transformQueue = DispatchQueue(label: "com.vocana.stft.transform", qos: .userInitiated)
+    private let transformQueue = DispatchQueue(label: "com.vocana.stft.transform", qos: .userInteractive)
     
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "STFT")

@@ -12,11 +12,11 @@ class MLAudioProcessor {
     private var mlInitializationTask: Task<Void, Never>?
     
      // ML state management
-     private let mlStateQueue = DispatchQueue(label: "com.vocana.mlstate", qos: .userInitiated)
+     private let mlStateQueue = DispatchQueue(label: "com.vocana.mlstate", qos: .userInteractive)
      private var mlProcessingSuspendedDueToMemory = false
-     
+
      // Fix CRITICAL: Dedicated queue for ML inference to prevent blocking audio thread
-     private let mlInferenceQueue = DispatchQueue(label: "com.vocana.mlinference", qos: .userInitiated)
+     private let mlInferenceQueue = DispatchQueue(label: "com.vocana.mlinference", qos: .userInteractive)
     
      // Telemetry and callbacks
      // Thread Safety: All callbacks are automatically dispatched to MainActor

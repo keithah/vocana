@@ -16,21 +16,11 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Vocana",
-            dependencies: [],
-            swiftSettings: [
-                .unsafeFlags(["-suppress-warnings"], .when(configuration: .debug)),
-                .unsafeFlags(["-Onone"], .when(configuration: .debug))
-            ],
-            cSettings: [
-                .unsafeFlags(["-ffast-math"], .when(configuration: .release))
-            ]
+            dependencies: []
         ),
         .testTarget(
             name: "VocanaTests",
-            dependencies: ["Vocana"],
-            swiftSettings: [
-                .unsafeFlags(["-suppress-warnings"], .when(configuration: .debug))
-            ]
+            dependencies: ["Vocana"]
         ),
     ]
 )

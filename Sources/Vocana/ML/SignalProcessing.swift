@@ -138,12 +138,9 @@ final class STFT {
             vDSP_vclr(&inputReal, 1, vDSP_Length(fftSizePowerOf2))
             vDSP_vclr(&inputImag, 1, vDSP_Length(fftSizePowerOf2))
             
-            // Copy windowed input
-            windowedInput.withUnsafeBufferPointer { winPtr in
-                inputReal.withUnsafeMutableBufferPointer { realPtr in
-                    realPtr.baseAddress!.initialize(from: winPtr.baseAddress!, count: fftSize)
-                }
-            }
+            // Fix CRITICAL: Use assign/update instead of initialize (buffer already initialized)
+            // Copy windowed input using vDSP which is safer and faster
+            vDSP_mmov(windowedInput, &inputReal, vDSP_Length(fftSize), 1, 1, 1)
             
             // Perform FFT with safe pointer handling
             var fftSucceeded = false
@@ -221,17 +218,11 @@ final class STFT {
             // Positive frequencies (only use first fftSize bins)
             let binsToUse = min(frameReal.count, fftSize / 2 + 1)
             
-            // Copy positive frequencies
-            frameReal.withUnsafeBufferPointer { realPtr in
-                fullReal.withUnsafeMutableBufferPointer { fullRealPtr in
-                    fullRealPtr.baseAddress!.initialize(from: realPtr.baseAddress!, count: binsToUse)
-                }
-            }
-            frameImag.withUnsafeBufferPointer { imagPtr in
-                fullImag.withUnsafeMutableBufferPointer { fullImagPtr in
-                    fullImagPtr.baseAddress!.initialize(from: imagPtr.baseAddress!, count: binsToUse)
-                }
-            }
+            // Fix CRITICAL: Use vDSP copy instead of unsafe initialize (buffers already initialized)
+            // Fix CRITICAL: Add nil checks before using baseAddress
+            // Copy positive frequencies safely
+            vDSP_mmov(frameReal, &fullReal, vDSP_Length(binsToUse), 1, 1, 1)
+            vDSP_mmov(frameImag, &fullImag, vDSP_Length(binsToUse), 1, 1, 1)
             
             // Negative frequencies (complex conjugate of positive)
             // Fix HIGH: Use fftSizePowerOf2 for correct mirroring

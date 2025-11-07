@@ -133,23 +133,20 @@ final class SpectralFeatures {
         var normalized: [[[Float]]] = []
         normalized.reserveCapacity(features.count)
         
-        // Fix MEDIUM: Pre-allocate reusable buffers
-        let frameSize = features[0][0].count
-        var magnitudeBuffer = [Float](repeating: 0, count: frameSize)
-        var realSquaredBuffer = [Float](repeating: 0, count: frameSize)
-        var imagSquaredBuffer = [Float](repeating: 0, count: frameSize)
-        var normalizedRealBuffer = [Float](repeating: 0, count: frameSize)
-        var normalizedImagBuffer = [Float](repeating: 0, count: frameSize)
+        // Fix CRITICAL: Allocate buffers per-frame to avoid race condition with variable sizes
+        // Previous approach reused buffers which could cause data corruption if frame sizes differ
         
         for frame in features {
-            // Fix HIGH: Validate frame structure strictly
-            guard frame.count == 2 else {
-                Self.logger.error("Invalid frame structure: expected 2 channels, got \(frame.count)")
-                preconditionFailure("Frame must have exactly 2 channels (real, imag)")
-            }
-            
             let realPart = frame[0]
             let imagPart = frame[1]
+            
+            // Allocate fresh buffers for this frame
+            let frameSize = realPart.count
+            var magnitudeBuffer = [Float](repeating: 0, count: frameSize)
+            var realSquaredBuffer = [Float](repeating: 0, count: frameSize)
+            var imagSquaredBuffer = [Float](repeating: 0, count: frameSize)
+            var normalizedRealBuffer = [Float](repeating: 0, count: frameSize)
+            var normalizedImagBuffer = [Float](repeating: 0, count: frameSize)
             
             // Fix HIGH: Validate arrays are non-empty and same length
             guard !realPart.isEmpty, !imagPart.isEmpty, realPart.count == imagPart.count else {

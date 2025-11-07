@@ -23,7 +23,15 @@ class AudioEngine: ObservableObject {
     
     // ML processing
     private var denoiser: DeepFilterNet?
-    private var audioBuffer: [Float] = []
+    
+    // Fix CRITICAL: Thread-safe audioBuffer access with dedicated queue
+    private let audioBufferQueue = DispatchQueue(label: "com.vocana.audiobuffer")
+    private var _audioBuffer: [Float] = []
+    private var audioBuffer: [Float] {
+        get { audioBufferQueue.sync { _audioBuffer } }
+        set { audioBufferQueue.sync { _audioBuffer = newValue } }
+    }
+    
     private let minimumBufferSize = 960  // FFT size for DeepFilterNet
     
     func startSimulation(isEnabled: Bool, sensitivity: Double) {

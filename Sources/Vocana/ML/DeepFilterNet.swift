@@ -47,8 +47,9 @@ final class DeepFilterNet {
     
     // MARK: - State Management with Thread Safety
     
-    // Fix CRITICAL: Thread-safe state storage
+    // Fix CRITICAL: Thread-safe state storage AND processing
     private let stateQueue = DispatchQueue(label: "com.vocana.deepfilternet.state")
+    private let processingQueue = DispatchQueue(label: "com.vocana.deepfilternet.processing")
     private var _states: [String: Tensor] = [:]
     private var states: [String: Tensor] {
         get { stateQueue.sync { _states } }
@@ -146,23 +147,31 @@ final class DeepFilterNet {
     /// - Returns: Enhanced audio samples
     /// - Throws: DeepFilterError if processing fails
     func process(audio: [Float]) throws -> [Float] {
-        // Fix HIGH: Better error context
-        guard audio.count >= fftSize else {
-            throw DeepFilterError.invalidAudioLength(got: audio.count, minimum: fftSize)
+        // Fix CRITICAL: Wrap entire processing in queue to prevent concurrent access
+        // to non-thread-safe components (STFT, ERBFeatures, SpectralFeatures)
+        return try processingQueue.sync {
+            guard audio.count >= fftSize else {
+                throw DeepFilterError.invalidAudioLength(got: audio.count, minimum: fftSize)
+            }
+            
+            // Fix LOW: Add denormal detection
+            guard audio.allSatisfy({ !$0.isNaN && !$0.isInfinite }) else {
+                throw DeepFilterError.processingFailed("Input contains NaN or Infinity values")
+            }
+            
+            // Check for denormals (can slow down processing 100x)
+            #if DEBUG
+            let denormals = audio.filter { $0 != 0 && abs($0) < Float.leastNormalMagnitude }
+            if !denormals.isEmpty {
+                Self.logger.warning("Input contains \(denormals.count) denormal values")
+            }
+            #endif
+            
+            return try self.processInternal(audio: audio)
         }
-        
-        // Fix LOW: Add denormal detection
-        guard audio.allSatisfy({ !$0.isNaN && !$0.isInfinite }) else {
-            throw DeepFilterError.processingFailed("Input contains NaN or Infinity values")
-        }
-        
-        // Check for denormals (can slow down processing 100x)
-        #if DEBUG
-        let denormals = audio.filter { $0 != 0 && abs($0) < Float.leastNormalMagnitude }
-        if !denormals.isEmpty {
-            Self.logger.warning("Input contains \(denormals.count) denormal values")
-        }
-        #endif
+    }
+    
+    private func processInternal(audio: [Float]) throws -> [Float] {
         
         do {
             // 1. STFT - Convert to frequency domain
@@ -286,15 +295,14 @@ final class DeepFilterNet {
         
         let outputs = try encoder.infer(inputs: inputs)
         
-        // Fix CRITICAL: Deep copy tensors to avoid use-after-free
-        let copiedOutputs = outputs.mapValues { tensor in
-            Tensor(shape: tensor.shape, data: Array(tensor.data))
+        // Fix CRITICAL: Atomic state update - deep copy AND store in single transaction
+        return stateQueue.sync {
+            let copiedOutputs = outputs.mapValues { tensor in
+                Tensor(shape: tensor.shape, data: Array(tensor.data))
+            }
+            _states = copiedOutputs
+            return copiedOutputs
         }
-        
-        // Store states for next frame (thread-safe)
-        states = copiedOutputs
-        
-        return copiedOutputs
     }
     
     private func runERBDecoder(states: [String: Tensor]) throws -> [Float] {

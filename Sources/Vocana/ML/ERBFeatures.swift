@@ -23,8 +23,9 @@ final class ERBFeatures {
     private let erbFilterbank: [[Float]]
     private let centerFreqs: [Float]  // Cached center frequencies
     
-    // Reusable buffers for normalization (not thread-safe, but each thread should have its own instance)
-    private var normalizeBuffers: NormalizeBuffers?
+    // Fix CRITICAL: Remove unused instance variable that suggests unsafe buffer reuse
+    // Documentation claims thread-safe but buffer reuse would cause races
+    // Current implementation correctly uses local buffers - keeping it that way
     
     private struct NormalizeBuffers {
         var meanArray: [Float]

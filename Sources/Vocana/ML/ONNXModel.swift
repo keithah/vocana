@@ -93,9 +93,10 @@ final class ONNXModel {
                 }
                 
                 // Fix CRITICAL: Use appropriate range validation for audio ML models
-                // Audio spectrograms typically have magnitudes < 100; 1000 provides safety margin
-                // against DoS attacks with crafted high-magnitude inputs that cause NaN propagation
-                let maxSafeValue: Float = 1000.0
+                // Audio spectrograms can have larger magnitudes for loud signals (drums, etc.)
+                // Using 10000.0 as middle ground: typical range ~0-100, allows 100x headroom
+                // while still preventing DoS attacks with pathologically large values
+                let maxSafeValue: Float = 10000.0
                 guard tensor.data.allSatisfy({ abs($0) <= maxSafeValue }) else {
                     let maxValue = tensor.data.max { abs($0) < abs($1) } ?? 0
                     throw ONNXError.invalidInput("Tensor '\(name)' max value \(maxValue) exceeds safe range (±\(maxSafeValue))")

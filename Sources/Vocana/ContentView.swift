@@ -38,6 +38,7 @@ import SwiftUI
 struct ContentView: View {
     // Fix QUAL-001: Use concrete type with protocol conformance to reduce tight coupling
     @StateObject private var coordinator = AudioCoordinator()
+    @State private var showSettingsAlert = false
     
     var body: some View {
         VStack(spacing: 16) {
@@ -64,13 +65,16 @@ struct ContentView: View {
             
             Divider()
             
-            // Settings button (disabled - settings window not yet implemented)
-            SettingsButtonView {
-                // Settings window implementation planned for future release
-            }
-            .disabled(true)
-            .opacity(0.5)
-            .help("Settings window coming in a future release")
+             // Settings button with user feedback
+             SettingsButtonView {
+                 // Fix HIGH: Show user-friendly alert instead of silent failure
+                 showSettingsAlert = true
+             }
+             .alert("Settings Coming Soon", isPresented: $showSettingsAlert) {
+                 Button("OK") { }
+             } message: {
+                 Text("Advanced settings will be available in a future release. For now, you can adjust sensitivity using the slider above.")
+             }
             
             Spacer()
         }

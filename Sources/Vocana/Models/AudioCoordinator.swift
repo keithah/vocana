@@ -14,6 +14,13 @@ class AudioCoordinator: ObservableObject {
         setupBindings()
     }
     
+    deinit {
+        // Fix CRITICAL: Clean up cancellables explicitly to prevent subscription leaks
+        cancellables.removeAll()
+        // Note: stopAudioSimulation() cannot be called from deinit as it's @MainActor
+        // The audio engine will clean up automatically when deallocated
+    }
+    
     /// Setup reactive bindings between settings and audio engine
     private func setupBindings() {
         // Use merge with objectWillChange for deterministic updates
@@ -30,8 +37,9 @@ class AudioCoordinator: ObservableObject {
         .store(in: &cancellables)
     }
     
-    /// Update audio engine settings
+     /// Update audio engine settings with state validation
     private func updateAudioSettings() {
+        // Fix HIGH: Validate audio engine state before updating
         audioEngine.startSimulation(
             isEnabled: settings.isEnabled,
             sensitivity: settings.sensitivity

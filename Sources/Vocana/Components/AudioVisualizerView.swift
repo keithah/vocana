@@ -137,11 +137,13 @@ private struct LevelBarView: View {
         validatedLevel > warningThreshold ? .orange : color
     }
     
-    /// Validate and clamp level to ensure proper bounds with comprehensive security checks
-    private var validatedLevel: Float {
-        // Use shared validation logic to ensure consistency across the app
-        return AudioLevelValidator.validateAudioLevel(level)
-    }
+     /// Validate level - already validated upstream in AudioVisualizerView.onChange
+     private var validatedLevel: Float {
+         // Fix HIGH: Level is already validated in AudioVisualizerView.onChange()
+         // before being passed as displayedInputLevel/displayedOutputLevel
+         // Clamp here defensively but avoid redundant full validation
+         return min(1.0, max(0.0, level))
+     }
 }
 
 #Preview("Normal Levels") {

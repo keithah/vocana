@@ -131,6 +131,8 @@ struct AppConstants {
     // 70% threshold chosen based on audio engineering best practices:
     // - Below 70%: Healthy signal level with headroom
     // - Above 70%: Risk of clipping, user should lower input gain
+    // Reference: EBU R128 standard recommends -23 LUFS ± 1 LU for broadcast audio
+    // At 70% digital level, peaks have sufficient headroom for loudness normalization
     static let levelWarningThreshold: Float = 0.7  
     
     // 0.3 smoothing factor provides responsive yet stable visualization:

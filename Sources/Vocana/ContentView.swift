@@ -15,7 +15,6 @@ import SwiftUI
 /// 
 /// Features:
 /// - Coordinator pattern for clean architecture
-/// - Comprehensive error handling with user feedback
 /// - Keyboard shortcuts for power users
 /// - Accessibility support throughout
 /// - Responsive layout for different screen sizes
@@ -25,11 +24,6 @@ import SwiftUI
 /// ContentView()
 ///     .frame(width: 300, height: 400)
 /// ```
-/// 
-/// Error Handling:
-/// - Graceful degradation on audio engine failures
-/// - User-friendly error messages with retry options
-/// - Automatic recovery attempts for transient issues
 /// 
 /// Performance:
 /// - Efficient state management through coordinator

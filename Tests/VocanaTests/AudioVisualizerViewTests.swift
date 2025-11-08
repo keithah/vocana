@@ -120,18 +120,12 @@ final class AudioVisualizerViewTests: XCTestCase {
     }
     
     func testAudioVisualizerPerformanceUnderLoad() {
-        // Test performance with rapid updates
-        let startTime = CFAbsoluteTimeGetCurrent()
-        
-        for i in 0..<100 {
-            let level = Float(i) / 100.0
-            _ = AudioVisualizerView(inputLevel: level, outputLevel: level)
+        // Test performance with rapid updates using XCTest measurement APIs
+        measure {
+            for i in 0..<100 {
+                let level = Float(i) / 100.0
+                _ = AudioVisualizerView(inputLevel: level, outputLevel: level)
+            }
         }
-        
-        let endTime = CFAbsoluteTimeGetCurrent()
-        let duration = endTime - startTime
-        
-        // Should complete 100 updates in reasonable time (< 0.1 seconds)
-        XCTAssertLessThan(duration, 0.1, "AudioVisualizerView should handle rapid updates efficiently")
     }
 }

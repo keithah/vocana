@@ -1,9 +1,13 @@
 import Foundation
 
 /// Utility for throttling function calls to prevent excessive execution
-/// Used to prevent UI updates from overwhelming the main thread
+/// Implements true throttling: runs action immediately on first call, then blocks subsequent calls
+/// within the interval, while also scheduling one final call after interval if needed.
+/// 
+/// Used to prevent UI updates from overwhelming the main thread during high-frequency changes
 class Throttler {
-    private var workItem: DispatchWorkItem?
+    private var lastFireTime: Date = Date.distantPast
+    private var pendingWorkItem: DispatchWorkItem?
     private let queue: DispatchQueue
     private let interval: TimeInterval
     
@@ -16,25 +20,47 @@ class Throttler {
         self.queue = queue
     }
     
-    /// Execute function with throttling
-    /// If called multiple times within interval, only the last call will execute
+    /// Execute function with true throttling
+    /// - If enough time has elapsed since last execution, runs immediately
+    /// - Otherwise, schedules execution for when interval expires
     /// - Parameter action: Function to execute
     func throttle(_ action: @escaping () -> Void) {
-        // Cancel previous work item
-        workItem?.cancel()
-        
-        // Create new work item
-        workItem = DispatchWorkItem(block: action)
-        
-        // Schedule after delay
-        if let workItem = workItem {
-            queue.asyncAfter(deadline: .now() + interval, execute: workItem)
+        queue.sync { [weak self] in
+            guard let self = self else { return }
+            
+            let now = Date()
+            let elapsed = now.timeIntervalSince(self.lastFireTime)
+            
+            if elapsed >= self.interval {
+                // Enough time has passed, execute immediately
+                self.lastFireTime = now
+                self.pendingWorkItem?.cancel()
+                self.pendingWorkItem = nil
+                
+                self.queue.async {
+                    action()
+                }
+            } else {
+                // Schedule execution for when interval expires
+                self.pendingWorkItem?.cancel()
+                
+                let remainingTime = self.interval - elapsed
+                let newWorkItem = DispatchWorkItem { [weak self] in
+                    self?.lastFireTime = Date()
+                    action()
+                }
+                
+                self.pendingWorkItem = newWorkItem
+                self.queue.asyncAfter(deadline: .now() + remainingTime, execute: newWorkItem)
+            }
         }
     }
     
     /// Cancel any pending throttled execution
     func cancel() {
-        workItem?.cancel()
-        workItem = nil
+        queue.sync {
+            pendingWorkItem?.cancel()
+            pendingWorkItem = nil
+        }
     }
 }

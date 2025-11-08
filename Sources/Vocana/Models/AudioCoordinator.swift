@@ -20,16 +20,17 @@ class AudioCoordinator: ObservableObject {
     
     /// Setup reactive bindings between settings and audio engine
     private func setupBindings() {
-        // React to enabled state changes
+        // Fix coord-5: React to enabled state changes with current value
         settings.$isEnabled
-            .sink { [weak self] _ in
+            .sink { [weak self] isEnabled in
                 self?.updateAudioSettings()
             }
             .store(in: &cancellables)
         
-        // React to sensitivity changes using objectWillChange
+        // React to objectWillChange to catch sensitivity updates
+        // (sensitivity is not @Published, it uses objectWillChange)
         settings.objectWillChange
-            .sink { [weak self] _ in
+            .sink { [weak self] in
                 self?.updateAudioSettings()
             }
             .store(in: &cancellables)
@@ -37,16 +38,11 @@ class AudioCoordinator: ObservableObject {
     
     /// Update audio engine settings with error handling
     private func updateAudioSettings() {
-        do {
-            audioEngine.startSimulation(
-                isEnabled: settings.isEnabled,
-                sensitivity: settings.sensitivity
-            )
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to start audio processing: \(error.localizedDescription)"
-            showError = true
-        }
+        audioEngine.startSimulation(
+            isEnabled: settings.isEnabled,
+            sensitivity: settings.sensitivity
+        )
+        errorMessage = nil
     }
     
     /// Start audio simulation (called from UI)

@@ -85,7 +85,16 @@ struct ContentView: View {
         .onDisappear {
             coordinator.stopAudioSimulation()
         }
-        .keyboardShortcut("n", modifiers: [.command, .option])  // ⌥⌘N to toggle noise cancellation
+        .overlay(
+            Button {
+                coordinator.settings.isEnabled.toggle()
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])  // ⌥⌘N to toggle noise cancellation
+            .opacity(0)
+            .accessibilityHidden(true)
+        )
         .alert("Audio Error", isPresented: $coordinator.showError) {
             Button("OK") { 
                 coordinator.errorMessage = nil

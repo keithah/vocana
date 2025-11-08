@@ -188,22 +188,19 @@ final class ONNXModel {
             throw ONNXError.modelNotFound("Empty model path")
         }
         
-        // Fix HIGH-001: Strengthen path validation to prevent more sophisticated traversal attacks
-        guard !path.contains("../") && !path.contains("..\\") && !path.hasPrefix("/") else {
-            throw ONNXError.modelNotFound("Invalid path format: potential traversal attack")
+        // Fix HIGH-001: Strengthen path validation to prevent traversal attacks while allowing bundle paths
+        // Block explicit traversal tokens and encoded versions
+        guard !path.contains("../") && !path.contains("..\\") else {
+            throw ONNXError.modelNotFound("Invalid path format: detected parent directory traversal")
         }
         
-        // Additional traversal patterns to block
-        let dangerousPatterns = ["..", "~", "/etc", "/var", "/usr", "/System", "/Users", "/Applications"]
-        for pattern in dangerousPatterns {
-            guard !path.contains(pattern) else {
-                throw ONNXError.modelNotFound("Path contains dangerous pattern: \(pattern)")
-            }
-        }
-        
-        // Block encoded traversal attempts
         guard !path.contains("%2e%2e") && !path.contains("%2E%2E") else {
-            throw ONNXError.modelNotFound("Path contains encoded traversal sequence")
+            throw ONNXError.modelNotFound("Invalid path format: detected encoded traversal sequence")
+        }
+        
+        // Block home directory shortcuts which could escape sandbox
+        guard !path.contains("~") else {
+            throw ONNXError.modelNotFound("Invalid path format: tilde expansion not allowed")
         }
         
         // Step 2: Resolve and validate path within app sandbox

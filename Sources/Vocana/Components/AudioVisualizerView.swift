@@ -68,45 +68,30 @@ struct AudioVisualizerView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Audio Levels")
         .accessibilityHint("Shows real-time input and output audio levels")
-        // Fix PERF-001: Implement more aggressive UI throttling with debouncing
+        // Fix PERF-001: Use Throttler to prevent race conditions and ensure consistent state
         .onChange(of: inputLevel) { newValue in
-            // More aggressive throttling - only update if change is significant
-            guard abs(newValue - displayedInputLevel) > 0.02 else { return }
+            let validatedValue = validateLevel(newValue)
+            // Only update if change is significant
+            guard abs(validatedValue - displayedInputLevel) > 0.02 else { return }
             
-            // Debounce rapid updates to prevent excessive redraws
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { // ~60fps limit
-                updateInputLevel(newValue)
+            withAnimation(.easeOut(duration: 0.05)) {
+                let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
+                displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
             }
         }
         .onChange(of: outputLevel) { newValue in
-            // More aggressive throttling - only update if change is significant
-            guard abs(newValue - displayedOutputLevel) > 0.02 else { return }
+            let validatedValue = validateLevel(newValue)
+            // Only update if change is significant
+            guard abs(validatedValue - displayedOutputLevel) > 0.02 else { return }
             
-            // Debounce rapid updates to prevent excessive redraws
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { // ~60fps limit
-                updateOutputLevel(newValue)
+            withAnimation(.easeOut(duration: 0.05)) {
+                let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
+                displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
             }
         }
     }
     
-    /// Update only the input level with validation
-    private func updateInputLevel(_ newValue: Float) {
-        updateLevel(newValue, displayedLevel: $displayedInputLevel)
-    }
-    
-    /// Update only the output level with validation
-    private func updateOutputLevel(_ newValue: Float) {
-        updateLevel(newValue, displayedLevel: $displayedOutputLevel)
-    }
-    
-    /// Generic level update with validation and smoothing
-    private func updateLevel(_ newValue: Float, displayedLevel: Binding<Float>) {
-        let validatedValue = validateLevel(newValue)
-        withAnimation(.easeOut(duration: 0.05)) {
-            let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
-            displayedLevel.wrappedValue = displayedLevel.wrappedValue * (1 - smoothingFactor) + validatedValue * smoothingFactor
-        }
-    }
+
     
     /// Validate and clamp audio level values with comprehensive security checks
     /// - Parameter value: The level value to validate

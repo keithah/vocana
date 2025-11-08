@@ -49,6 +49,9 @@ class AudioEngine: ObservableObject {
     private let audioProcessingQueue = DispatchQueue(label: "com.vocana.audio.processing", qos: .userInteractive)
     private let uiUpdateQueue = DispatchQueue(label: "com.vocana.ui.updates", qos: .userInitiated)
     
+    // Fix CRITICAL: Throttle UI updates to prevent main thread blocking
+    private let uiUpdateThrottler = Throttler(interval: 0.016) // ~60fps
+    
     // MARK: - Published Properties (UI) - Updated safely from background
     
     @Published var currentLevels = AudioLevels.zero
@@ -255,7 +258,10 @@ class AudioEngine: ObservableObject {
         
         audioSessionManager.updateLevels = { [weak self] input, output in
             guard let self = self else { return }
-            self.currentLevels = AudioLevels(input: input, output: output)
+            // Fix CRITICAL: Throttle UI updates to prevent main thread blocking
+            self.uiUpdateThrottler.throttle {
+                self.currentLevels = AudioLevels(input: input, output: output)
+            }
         }
     }
     
@@ -287,15 +293,26 @@ class AudioEngine: ObservableObject {
     }
 
     /// Start decay timer for level smoothing during disabled simulation
+    /// Security: Ensure proper timer resource management and cleanup
     private func startDecayTimer() {
+        // Security: Ensure cleanup of existing timer before creating new one
+        decayTimer?.invalidate()
+        
         decayTimer = Timer.scheduledTimer(withTimeInterval: AppConstants.audioUpdateInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self else { return }
                 let decayedLevels = self.levelController.applyDecay()
-                self.currentLevels = decayedLevels
+                // Fix CRITICAL: Throttle UI updates to prevent main thread blocking
+                self.uiUpdateThrottler.throttle {
+                    self.currentLevels = decayedLevels
+                }
             }
         }
-        RunLoop.main.add(decayTimer!, forMode: .common)
+        
+        // Security: Safely add timer to RunLoop with proper error handling
+        if let timer = decayTimer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
     }
     
     func stopSimulation() {

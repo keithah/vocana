@@ -10,6 +10,11 @@ class AudioBufferManager {
     private let minimumBufferSize = 960  // FFT size for DeepFilterNet
     private let audioBufferQueue = DispatchQueue(label: "com.vocana.audiobuffer", qos: .userInteractive)
     
+    // Fix CRI-002: Rate limiting to prevent DoS attacks through rapid buffer operations
+    private let maxOperationsPerSecond = 1000
+    private var operationCount = 0
+    private var lastOperationTime = Date()
+    
     // Fix CRITICAL-003: Use struct wrapper for proper encapsulation instead of nonisolated(unsafe)
     // All access to this structure must go through audioBufferQueue
     private struct BufferState {
@@ -35,6 +40,22 @@ class AudioBufferManager {
         onCircuitBreakerTriggered: @escaping (TimeInterval) -> Void
     ) -> [Float]? {
         return audioBufferQueue.sync {
+            // Fix CRI-002: Rate limiting to prevent DoS attacks
+            let now = Date()
+            let timeSinceLastOperation = now.timeIntervalSince(lastOperationTime)
+            
+            // Reset counter every second
+            if timeSinceLastOperation >= 1.0 {
+                operationCount = 0
+                lastOperationTime = now
+            }
+            
+            // Check rate limit
+            self.operationCount += 1
+            if self.operationCount > maxOperationsPerSecond {
+                Self.logger.warning("Rate limit exceeded: \(self.operationCount) operations in \(timeSinceLastOperation)s")
+                return nil
+            }
             let maxBufferSize = AppConstants.maxAudioBufferSize
             
             // Fix CRITICAL-001: Prevent integer overflow before calculation

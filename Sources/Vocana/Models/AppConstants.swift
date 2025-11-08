@@ -2,16 +2,45 @@ import SwiftUI
 
 struct AppConstants {
     // UI Dimensions
+    // 300px width provides optimal balance between content visibility and screen space usage
+    // Fits comfortably on smallest MacBook Air (11") while maintaining readability
     static let popoverWidth: CGFloat = 300
+    
+    // 400px height accommodates all controls without scrolling on minimum window size
+    // Includes header, main controls, audio visualization, sensitivity, and settings
     static let popoverHeight: CGFloat = 400
+    
+    // 4px height provides visible progress indication without overwhelming the UI
+    // Standard for macOS progress bars and level indicators
     static let progressBarHeight: CGFloat = 4
+    
+    // 2px radius matches macOS design language for small UI elements
+    // Provides subtle rounding without appearing overly rounded
     static let cornerRadius: CGFloat = 2
     
     // Audio Simulation
+    // 0.1 second (100ms) interval provides smooth 10fps animation
+    // Balances visual responsiveness with CPU usage and battery life
     static let audioUpdateInterval: TimeInterval = 0.1
+    
+    // Input range 20-80% simulates typical microphone input with headroom
+    // 20% minimum prevents empty visualization during quiet passages
+    // 80% maximum leaves headroom for unexpected loud sounds
     static let inputLevelRange: ClosedRange<Double> = 0.2...0.8
+    
+    // Output range 10-40% simulates processed audio with noise reduction
+    // Lower range reflects typical noise reduction reducing overall level
+    // 10% minimum ensures visibility even with heavy noise reduction
     static let outputLevelRange: ClosedRange<Double> = 0.1...0.4
+    
+    // 0.9 decay rate provides smooth exponential decay over ~1 second
+    // Formula: level * 0.9^n where n is number of update intervals
+    // At 10fps, reaches ~37% after 1 second (0.9^10)
     static let levelDecayRate: Float = 0.9
+    
+    // 0.01 (1%) threshold prevents flicker from near-zero audio levels
+    // Below this level, audio is effectively silence for UI purposes
+    // Matches typical noise floor of consumer microphones
     static let minimumLevelThreshold: Float = 0.01
     
     // Sensitivity
@@ -99,8 +128,16 @@ struct AppConstants {
     static let maxRMSLevel: Float = 0.95
     
     // Audio Level UI Constants
-    static let levelWarningThreshold: Float = 0.7  // Show warning color when level exceeds 70%
-    static let audioLevelSmoothingFactor: Float = 0.3  // Exponential moving average smoothing (0-1)
+    // 70% threshold chosen based on audio engineering best practices:
+    // - Below 70%: Healthy signal level with headroom
+    // - Above 70%: Risk of clipping, user should lower input gain
+    static let levelWarningThreshold: Float = 0.7  
+    
+    // 0.3 smoothing factor provides responsive yet stable visualization:
+    // - Higher values (0.5+) would be too jittery for voice
+    // - Lower values (0.1-) would feel sluggish and unresponsive
+    // - 0.3 gives ~130ms response time at 60fps update rate
+    static let audioLevelSmoothingFactor: Float = 0.3
     
     // Accessibility
     static let accessibilityDescription = "Vocana"

@@ -188,9 +188,22 @@ final class ONNXModel {
             throw ONNXError.modelNotFound("Empty model path")
         }
         
-        // Prevent obvious traversal attempts
+        // Fix HIGH-001: Strengthen path validation to prevent more sophisticated traversal attacks
         guard !path.contains("../") && !path.contains("..\\") && !path.hasPrefix("/") else {
             throw ONNXError.modelNotFound("Invalid path format: potential traversal attack")
+        }
+        
+        // Additional traversal patterns to block
+        let dangerousPatterns = ["..", "~", "/etc", "/var", "/usr", "/System", "/Users", "/Applications"]
+        for pattern in dangerousPatterns {
+            guard !path.contains(pattern) else {
+                throw ONNXError.modelNotFound("Path contains dangerous pattern: \(pattern)")
+            }
+        }
+        
+        // Block encoded traversal attempts
+        guard !path.contains("%2e%2e") && !path.contains("%2E%2E") else {
+            throw ONNXError.modelNotFound("Path contains encoded traversal sequence")
         }
         
         // Step 2: Resolve and validate path within app sandbox

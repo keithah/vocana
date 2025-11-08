@@ -130,14 +130,21 @@ class AudioSessionManager {
     }
     
     /// Start simulated audio playback (for testing)
+    /// Security: Ensure proper timer resource management and cleanup
     func startSimulatedAudio() {
+        // Security: Ensure cleanup of existing timer before creating new one
+        timer?.invalidate()
+        
         timer = Timer.scheduledTimer(withTimeInterval: AppConstants.audioUpdateInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateSimulatedLevels()
             }
         }
-        // Fix MEDIUM: Ensure timer runs during event tracking and other RunLoop modes
-        RunLoop.main.add(timer!, forMode: .common)
+        
+        // Security: Safely add timer to RunLoop with proper error handling
+        if let timer = timer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
     }
     
     /// Stop simulated audio playback

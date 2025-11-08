@@ -295,10 +295,25 @@ final class DeepFilterNet: @unchecked Sendable {
                 throw DeepFilterError.processingFailed("Invalid STFT output dimensions")
             }
             
-            // OPTIMIZED: Use flatMap for O(n) complexity (already optimal)
-            // flatMap is O(n) - each element is visited exactly once
-            let spectrumReal = spectrum2D.real.flatMap { $0 }
-            let spectrumImag = spectrum2D.imag.flatMap { $0 }
+            // Fix PERF-002: Use in-place operations to reduce memory allocations
+            // Pre-allocate arrays with known capacity to avoid reallocations
+            let totalFrames = spectrum2D.real.count
+            let binsPerFrame = spectrum2D.real.first?.count ?? 0
+            let totalElements = totalFrames * binsPerFrame
+            
+            var spectrumReal = [Float]()
+            var spectrumImag = [Float]()
+            spectrumReal.reserveCapacity(totalElements)
+            spectrumImag.reserveCapacity(totalElements)
+            
+            // Use in-place operations to avoid intermediate arrays
+            for frame in spectrum2D.real {
+                spectrumReal.append(contentsOf: frame)
+            }
+            for frame in spectrum2D.imag {
+                spectrumImag.append(contentsOf: frame)
+            }
+            
             let spectrum = (real: spectrumReal, imag: spectrumImag)
             
             // 2. Extract features
@@ -414,6 +429,17 @@ final class DeepFilterNet: @unchecked Sendable {
     // MARK: - Model Inference
     
     private func runEncoder(erbFeat: Tensor, specFeat: Tensor) throws -> [String: Tensor] {
+        // Fix CRI-001: Validate tensor shapes before processing
+        guard erbFeat.shape.count == 4 && specFeat.shape.count == 4 else {
+            throw DeepFilterError.processingFailed("Invalid tensor shapes: erb_feat=\(erbFeat.shape), spec_feat=\(specFeat.shape)")
+        }
+        
+        // Fix CRI-001: Bounds check tensor dimensions
+        let maxTensorSize = 1024 * 1024 // Prevent memory exhaustion
+        guard erbFeat.data.count <= maxTensorSize && specFeat.data.count <= maxTensorSize else {
+            throw DeepFilterError.processingFailed("Tensor too large: erb_feat=\(erbFeat.data.count), spec_feat=\(specFeat.data.count)")
+        }
+        
         let inputs: [String: Tensor] = [
             "erb_feat": erbFeat,
             "spec_feat": specFeat
@@ -429,12 +455,17 @@ final class DeepFilterNet: @unchecked Sendable {
             }
         }
         
-        // Fix CRITICAL: Use proper state synchronization through computed property
-        // Fix CRITICAL #6: Clear old states before storing new ones to prevent memory leak
-        
-        // Deep copy new states outside the queue for better performance
-        let copiedOutputs = outputs.mapValues { tensor in
-            Tensor(shape: tensor.shape, data: Array(tensor.data))
+        // Fix HIGH-002: Zero-initialize tensors before copying to prevent memory disclosure
+        let copiedOutputs = try outputs.mapValues { tensor in
+            // Validate tensor size before copying
+            guard tensor.data.count <= maxTensorSize else {
+                throw DeepFilterError.processingFailed("Output tensor too large: \(tensor.data.count)")
+            }
+            
+            // Create zero-initialized buffer then copy to prevent memory disclosure
+            var zeroInitializedData = [Float](repeating: 0.0, count: tensor.data.count)
+            zeroInitializedData.replaceSubrange(0..<tensor.data.count, with: tensor.data)
+            return Tensor(shape: tensor.shape, data: zeroInitializedData)
         }
         
          // Fix CRITICAL: Improved memory management for state updates

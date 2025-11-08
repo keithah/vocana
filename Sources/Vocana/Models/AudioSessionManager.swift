@@ -10,7 +10,7 @@ class AudioSessionManager {
     private static let logger = Logger(subsystem: "Vocana", category: "AudioSessionManager")
     
     private var audioEngine: AVAudioEngine?
-    private var isTapInstalled = false
+    private(set) var isTapInstalled = false  // Fix TEST-001: Expose for testing
     private var audioCaptureSuspensionTimer: Timer?
     private var timer: Timer?
     

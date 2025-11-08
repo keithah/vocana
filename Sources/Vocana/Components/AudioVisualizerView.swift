@@ -68,37 +68,27 @@ struct AudioVisualizerView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Audio Levels")
         .accessibilityHint("Shows real-time input and output audio levels")
-        // Fix PERF-001: Use AppConstants for magic numbers and prevent race conditions
-        .onChange(of: inputLevel) { newValue in
-            let validatedValue = validateLevel(newValue)
-            // Only update if change is significant (reduces noise)
-            guard abs(validatedValue - displayedInputLevel) > AppConstants.audioLevelChangeThreshold else { return }
-            
-            withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
-                let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
-                displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
-            }
-        }
-        .onChange(of: outputLevel) { newValue in
-            let validatedValue = validateLevel(newValue)
-            // Only update if change is significant (reduces noise)
-            guard abs(validatedValue - displayedOutputLevel) > AppConstants.audioLevelChangeThreshold else { return }
-            
-            withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
-                let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
-                displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
-            }
-        }
-    }
-    
-
-    
-    /// Validate and clamp audio level values with comprehensive security checks
-    /// - Parameter value: The level value to validate
-    /// - Returns: A value between 0.0 and 1.0, or 0.0 if invalid
-    private func validateLevel(_ value: Float) -> Float {
-        // Use shared validation logic to ensure consistency across the app
-        return AudioLevelValidator.validateAudioLevel(value)
+         // Fix PERF-001: Use AppConstants for magic numbers and prevent race conditions
+         .onChange(of: inputLevel) { newValue in
+             let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
+             // Only update if change is significant (reduces noise)
+             guard abs(validatedValue - displayedInputLevel) > AppConstants.audioLevelChangeThreshold else { return }
+             
+             withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
+                 let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
+                 displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
+             }
+         }
+         .onChange(of: outputLevel) { newValue in
+             let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
+             // Only update if change is significant (reduces noise)
+             guard abs(validatedValue - displayedOutputLevel) > AppConstants.audioLevelChangeThreshold else { return }
+             
+             withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
+                 let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
+                 displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
+             }
+         }
     }
 }
 

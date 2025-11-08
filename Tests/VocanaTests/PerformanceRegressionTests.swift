@@ -7,7 +7,7 @@ final class PerformanceRegressionTests: XCTestCase {
     // MARK: - STFT Performance
     
     func testSTFTTransformLatency() {
-        let stft = STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
+        let stft = try! STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
         let testAudio = [Float](repeating: 0.1, count: 4800)  // 100ms of audio
         
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -21,7 +21,7 @@ final class PerformanceRegressionTests: XCTestCase {
     }
     
     func testSTFTInverseTransformLatency() throws {
-        let stft = STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
+        let stft = try! STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
         let testAudio = [Float](repeating: 0.1, count: 4800)
         let spectrum = stft.transform(testAudio)
         
@@ -37,7 +37,7 @@ final class PerformanceRegressionTests: XCTestCase {
     
     // MARK: - Feature Extraction Performance
     
-    func testERBFeatureExtractionLatency() throws {
+    func testERBFeatureExtractionLatency() throws throws {
         let erbFeatures = ERBFeatures(numBands: 32, sampleRate: 48000, fftSize: 960)
         
         // Create test spectrogram (10 frames of 481 bins each)
@@ -54,7 +54,7 @@ final class PerformanceRegressionTests: XCTestCase {
         XCTAssertLessThan(latencyMs, 5.0, "ERB extraction latency \(String(format: "%.2f", latencyMs))ms exceeds 5ms target")
     }
     
-    func testSpectralFeatureExtractionLatency() throws {
+    func testSpectralFeatureExtractionLatency() throws throws {
         let spectralFeatures = SpectralFeatures(sampleRate: 48000)
         
         // Create test spectrogram
@@ -73,8 +73,8 @@ final class PerformanceRegressionTests: XCTestCase {
     
     // MARK: - Consistency Tests
     
-    func testSTFTLatencyConsistency() {
-        let stft = STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
+    func testSTFTLatencyConsistency() throws {
+        let stft = try! STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
         let testAudio = [Float](repeating: 0.1, count: 4800)
         
         var latencies: [Double] = []

@@ -8,7 +8,7 @@ final class SignalProcessingTests: XCTestCase {
     var stft: STFT!
     
     override func setUp() async throws {
-        stft = STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
+        stft = try STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
     }
     
     override func tearDown() {

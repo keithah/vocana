@@ -7,10 +7,11 @@ final class FeatureExtractionTests: XCTestCase {
     var spectralFeatures: SpectralFeatures!
     var stft: STFT!
     
-    override func setUp() {
+    override func setUp() throws {
+        try super.setUp()
         erbFeatures = ERBFeatures(numBands: 32, sampleRate: 48000, fftSize: 960)
         spectralFeatures = SpectralFeatures(dfBands: 96, sampleRate: 48000, fftSize: 960)
-        stft = STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
+        stft = try! STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
     }
     
     override func tearDown() {
@@ -203,10 +204,10 @@ final class FeatureExtractionTests: XCTestCase {
     
     // MARK: - STFT Window Validation Tests
     
-    func testSTFTHannWindowValidation() {
+    func testSTFTHannWindowValidation() throws {
         // Test that Hann window amplitude is properly validated for vDSP_HANN_DENORM
         let fftSize = 960
-        let stft = STFT(fftSize: fftSize, hopSize: 480, sampleRate: 48000)
+        let stft = try! STFT(fftSize: fftSize, hopSize: 480, sampleRate: 48000)
         
         // Get window function
         let window = stft.testWindow
@@ -245,24 +246,24 @@ final class FeatureExtractionTests: XCTestCase {
         
         // This should work (valid COLA)
         XCTAssertNoThrow(
-            STFT(fftSize: fftSize, hopSize: validHopSize, sampleRate: 48000),
+            try! STFT(fftSize: fftSize, hopSize: validHopSize, sampleRate: 48000),
             "STFT should accept hopSize = fftSize/2 for COLA compliance"
         )
         
         // Note: STFT now throws precondition error for invalid COLA configurations
         // This is the correct behavior - vDSP_HANN_DENORM requires 50% overlap
         // We expect this to crash with precondition failure, so we'll test it differently
-        let validSTFT = STFT(fftSize: fftSize, hopSize: validHopSize, sampleRate: 48000)
+        let validSTFT = try! STFT(fftSize: fftSize, hopSize: validHopSize, sampleRate: 48000)
         XCTAssertEqual(validSTFT.testHopSize, validHopSize, "Valid STFT should store correct hopSize")
         
         // The invalid case is tested by the fact that the test doesn't crash when creating valid STFT
         // and the precondition in STFT initialization protects against invalid configurations
     }
     
-    func testSTFTWindowSymmetry() {
+    func testSTFTWindowSymmetry() throws {
         // Test that Hann window has approximate symmetry (vDSP_HANN_DENORM may not be perfectly symmetric)
         let fftSize = 960
-        let stft = STFT(fftSize: fftSize, hopSize: 480, sampleRate: 48000)
+        let stft = try! STFT(fftSize: fftSize, hopSize: 480, sampleRate: 48000)
         let window = stft.testWindow
         
         // Check approximate symmetry with reasonable tolerance (vDSP implementation differences)
@@ -276,10 +277,10 @@ final class FeatureExtractionTests: XCTestCase {
         }
     }
     
-    func testSTFTWindowEnergy() {
+    func testSTFTWindowEnergy() throws {
         // Test that Hann window has correct energy properties
         let fftSize = 960
-        let stft = STFT(fftSize: fftSize, hopSize: 480, sampleRate: 48000)
+        let stft = try! STFT(fftSize: fftSize, hopSize: 480, sampleRate: 48000)
         let window = stft.testWindow
         
         // Calculate window energy

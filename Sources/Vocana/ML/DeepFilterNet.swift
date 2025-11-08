@@ -100,7 +100,8 @@ final class DeepFilterNet: @unchecked Sendable {
         Self.logger.info("Initializing DeepFilterNet from \(modelsDirectory)")
         
         // Initialize signal processing components
-        let stft = STFT(fftSize: AppConstants.fftSize, hopSize: AppConstants.hopSize, sampleRate: AppConstants.sampleRate)
+        // Fix CRITICAL: Handle STFT initialization errors gracefully
+        let stft = try STFT(fftSize: AppConstants.fftSize, hopSize: AppConstants.hopSize, sampleRate: AppConstants.sampleRate)
         let erbFeatures = ERBFeatures(
             numBands: AppConstants.erbBands,
             sampleRate: AppConstants.sampleRate,

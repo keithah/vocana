@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 /// Swift wrapper for ONNX Runtime C API
 ///
@@ -12,6 +13,7 @@ import Foundation
 /// let outputs = try session.run(inputs: ["input": tensorData])
 /// ```
 class ONNXRuntimeWrapper {
+    private static let logger = Logger(subsystem: "com.vocana.app", category: "ONNXRuntime")
     
     // MARK: - Configuration
     
@@ -34,10 +36,9 @@ class ONNXRuntimeWrapper {
         
         if mode == .automatic {
             if isNativeAvailable {
-                print("✓ ONNX Runtime native library detected")
+                Self.logger.info("ONNX Runtime native library detected")
             } else {
-                print("⚠️  ONNX Runtime not found - using mock implementation")
-                print("   To install: Download from https://github.com/microsoft/onnxruntime/releases")
+                Self.logger.warning("ONNX Runtime not found - using mock implementation. To install: Download from https://github.com/microsoft/onnxruntime/releases")
             }
         }
     }

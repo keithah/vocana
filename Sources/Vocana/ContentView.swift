@@ -64,10 +64,13 @@ struct ContentView: View {
             
             Divider()
             
-            // Settings button
+            // Settings button (disabled - settings window not yet implemented)
             SettingsButtonView {
-                // TODO: Open settings window
+                // Settings window implementation planned for future release
             }
+            .disabled(true)
+            .opacity(0.5)
+            .help("Settings window coming in a future release")
             
             Spacer()
         }

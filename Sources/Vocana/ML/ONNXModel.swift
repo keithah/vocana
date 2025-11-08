@@ -92,9 +92,10 @@ final class ONNXModel {
                     throw ONNXError.invalidInput("Tensor '\(name)' contains NaN or infinite values")
                 }
                 
-                // Fix CRITICAL: Use more appropriate range validation for audio ML models
-                // Audio spectrograms can have large magnitude values, especially for loud signals
-                let maxSafeValue: Float = 1e8 // Allow large spectral values but prevent overflow
+                // Fix CRITICAL: Use appropriate range validation for audio ML models
+                // Audio spectrograms typically have magnitudes < 100; 1000 provides safety margin
+                // against DoS attacks with crafted high-magnitude inputs that cause NaN propagation
+                let maxSafeValue: Float = 1000.0
                 guard tensor.data.allSatisfy({ abs($0) <= maxSafeValue }) else {
                     let maxValue = tensor.data.max { abs($0) < abs($1) } ?? 0
                     throw ONNXError.invalidInput("Tensor '\(name)' max value \(maxValue) exceeds safe range (±\(maxSafeValue))")

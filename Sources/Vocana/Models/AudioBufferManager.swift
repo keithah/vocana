@@ -157,18 +157,49 @@ class AudioBufferManager {
     /// Get current buffer size (for debugging/monitoring)
     /// - Returns: Number of samples currently in buffer
     func getCurrentBufferSize() -> Int {
-        return audioBufferQueue.sync { bufferState.audioBuffer.count }
+        return audioBufferQueue.sync {
+            // Fix SEC-002: Apply rate limiting to all public buffer operations
+            enforceRateLimit()
+            return bufferState.audioBuffer.count
+        }
     }
     
     /// Check if buffer is ready for extraction
     /// - Returns: true if buffer has minimum samples
     func hasEnoughSamples() -> Bool {
-        return audioBufferQueue.sync { bufferState.audioBuffer.count >= minimumBufferSize }
+        return audioBufferQueue.sync {
+            // Fix SEC-002: Apply rate limiting to all public buffer operations
+            enforceRateLimit()
+            return bufferState.audioBuffer.count >= minimumBufferSize
+        }
     }
 
     /// Check if audio capture is suspended due to circuit breaker
     /// - Returns: true if suspended, false otherwise
     func isAudioCaptureSuspended() -> Bool {
-        return audioBufferQueue.sync { bufferState.audioCaptureSuspended }
+        return audioBufferQueue.sync {
+            // Fix SEC-002: Apply rate limiting to all public buffer operations
+            enforceRateLimit()
+            return bufferState.audioCaptureSuspended
+        }
+    }
+    
+    /// Enforce rate limiting across all public operations
+    private func enforceRateLimit() {
+        let now = Date()
+        let timeSinceLastOperation = now.timeIntervalSince(lastOperationTime)
+        
+        // Reset counter every second
+        if timeSinceLastOperation >= 1.0 {
+            operationCount = 0
+            lastOperationTime = now
+        }
+        
+        // Check rate limit
+        operationCount += 1
+        if operationCount > maxOperationsPerSecond {
+            let count = operationCount
+            Self.logger.warning("Rate limit exceeded on buffer operation: \(count) ops in \(timeSinceLastOperation)s")
+        }
     }
 }

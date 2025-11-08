@@ -20,20 +20,18 @@ class AudioCoordinator: ObservableObject {
     
     /// Setup reactive bindings between settings and audio engine
     private func setupBindings() {
-        // Fix coord-5: React to enabled state changes with current value
-        settings.$isEnabled
-            .sink { [weak self] isEnabled in
-                self?.updateAudioSettings()
-            }
-            .store(in: &cancellables)
-        
-        // React to objectWillChange to catch sensitivity updates
-        // (sensitivity is not @Published, it uses objectWillChange)
-        settings.objectWillChange
-            .sink { [weak self] in
-                self?.updateAudioSettings()
-            }
-            .store(in: &cancellables)
+        // HIGH FIX: Fix race condition by merging publishers with debouncing
+        // This prevents multiple simultaneous calls to updateAudioSettings()
+        // when isEnabled and sensitivity change at nearly the same time
+        Publishers.Merge(
+            settings.$isEnabled.map { _ in () },
+            settings.objectWillChange
+        )
+        .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
+        .sink { [weak self] in
+            self?.updateAudioSettings()
+        }
+        .store(in: &cancellables)
     }
     
     /// Update audio engine settings with error handling

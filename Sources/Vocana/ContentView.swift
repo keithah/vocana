@@ -86,25 +86,17 @@ struct ContentView: View {
             coordinator.stopAudioSimulation()
         }
         .overlay(
+            // MEDIUM FIX: Use hidden Button with keyboardShortcut for proper keyboard handling
+            // This allows ⌥⌘N to toggle the noise cancellation
             Button {
                 coordinator.settings.isEnabled.toggle()
             } label: {
                 EmptyView()
             }
-            .keyboardShortcut("n", modifiers: [.command, .option])  // ⌥⌘N to toggle noise cancellation
+            .keyboardShortcut("n", modifiers: [.command, .option])
             .opacity(0)
             .accessibilityHidden(true)
         )
-        .alert("Audio Error", isPresented: $coordinator.showError) {
-            Button("OK") { 
-                coordinator.errorMessage = nil
-            }
-            Button("Retry") {
-                coordinator.retryAudioSimulation()
-            }
-        } message: {
-            Text(coordinator.errorMessage ?? "An unknown error occurred")
-        }
     }
 }
 

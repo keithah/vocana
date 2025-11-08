@@ -139,6 +139,16 @@ struct AppConstants {
     // - 0.3 gives ~130ms response time at 60fps update rate
     static let audioLevelSmoothingFactor: Float = 0.3
     
+    // Minimum change threshold to trigger UI updates (prevents noise updates)
+    // 2% threshold prevents frequent redraws from tiny level changes
+    // Reduces CPU usage without perceptible visual degradation
+    static let audioLevelChangeThreshold: Float = 0.02
+    
+    // Animation duration for smooth level changes
+    // 50ms (0.05s) provides smooth visual transition without latency
+    // Balances responsiveness with visual smoothness
+    static let audioLevelAnimationDuration: TimeInterval = 0.05
+    
     // Accessibility
     static let accessibilityDescription = "Vocana"
     

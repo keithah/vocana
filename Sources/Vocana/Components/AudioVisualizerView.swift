@@ -68,23 +68,23 @@ struct AudioVisualizerView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Audio Levels")
         .accessibilityHint("Shows real-time input and output audio levels")
-        // Fix PERF-001: Use Throttler to prevent race conditions and ensure consistent state
+        // Fix PERF-001: Use AppConstants for magic numbers and prevent race conditions
         .onChange(of: inputLevel) { newValue in
             let validatedValue = validateLevel(newValue)
-            // Only update if change is significant
-            guard abs(validatedValue - displayedInputLevel) > 0.02 else { return }
+            // Only update if change is significant (reduces noise)
+            guard abs(validatedValue - displayedInputLevel) > AppConstants.audioLevelChangeThreshold else { return }
             
-            withAnimation(.easeOut(duration: 0.05)) {
+            withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
                 let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
                 displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
             }
         }
         .onChange(of: outputLevel) { newValue in
             let validatedValue = validateLevel(newValue)
-            // Only update if change is significant
-            guard abs(validatedValue - displayedOutputLevel) > 0.02 else { return }
+            // Only update if change is significant (reduces noise)
+            guard abs(validatedValue - displayedOutputLevel) > AppConstants.audioLevelChangeThreshold else { return }
             
-            withAnimation(.easeOut(duration: 0.05)) {
+            withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
                 let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
                 displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
             }
@@ -97,24 +97,8 @@ struct AudioVisualizerView: View {
     /// - Parameter value: The level value to validate
     /// - Returns: A value between 0.0 and 1.0, or 0.0 if invalid
     private func validateLevel(_ value: Float) -> Float {
-        // Security: Check for NaN, Infinity, and other invalid floating point states
-        guard value.isFinite && !value.isNaN && !value.isInfinite else { 
-            return 0.0 
-        }
-        
-        // Security: Reject extreme values that could indicate malicious input
-        // Audio levels should never exceed reasonable bounds even with amplification
-        guard value >= -10.0 && value <= 10.0 else { 
-            return 0.0 
-        }
-        
-        // Security: Check for subnormal numbers that could cause performance issues
-        guard value.isNormal || value == 0.0 else { 
-            return 0.0 
-        }
-        
-        // Clamp to valid UI range (0.0 to 1.0)
-        return max(0.0, min(1.0, value))
+        // Use shared validation logic to ensure consistency across the app
+        return AudioLevelValidator.validateAudioLevel(value)
     }
 }
 
@@ -165,23 +149,8 @@ private struct LevelBarView: View {
     
     /// Validate and clamp level to ensure proper bounds with comprehensive security checks
     private var validatedLevel: Float {
-        // Security: Check for NaN, Infinity, and other invalid floating point states
-        guard level.isFinite && !level.isNaN && !level.isInfinite else { 
-            return 0.0 
-        }
-        
-        // Security: Reject extreme values that could indicate malicious input
-        guard level >= -10.0 && level <= 10.0 else { 
-            return 0.0 
-        }
-        
-        // Security: Check for subnormal numbers that could cause performance issues
-        guard level.isNormal || level == 0.0 else { 
-            return 0.0 
-        }
-        
-        // Clamp to valid UI range (0.0 to 1.0)
-        return max(0.0, min(1.0, level))
+        // Use shared validation logic to ensure consistency across the app
+        return AudioLevelValidator.validateAudioLevel(level)
     }
 }
 

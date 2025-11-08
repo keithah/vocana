@@ -116,21 +116,40 @@ final class SecurityValidationTests: XCTestCase {
     // MARK: - AudioVisualizerView Security Tests
     
     func testAudioVisualizerInputValidation() {
-        // Test NaN input
-        let nanView = AudioVisualizerView(inputLevel: Float.nan, outputLevel: 0.5)
-        XCTAssertNotNil(nanView)
+        // Test NaN input is sanitized to 0.0
+        let nanLevel = AudioLevelValidator.validateAudioLevel(Float.nan)
+        XCTAssertEqual(nanLevel, 0.0, "NaN should be sanitized to 0.0")
         
-        // Test Infinity input
-        let infinityView = AudioVisualizerView(inputLevel: Float.infinity, outputLevel: 0.5)
-        XCTAssertNotNil(infinityView)
+        // Test Infinity input is sanitized to 0.0
+        let infinityLevel = AudioLevelValidator.validateAudioLevel(Float.infinity)
+        XCTAssertEqual(infinityLevel, 0.0, "Infinity should be sanitized to 0.0")
         
-        // Test extreme values
-        let extremeView = AudioVisualizerView(inputLevel: 1000.0, outputLevel: -1000.0)
-        XCTAssertNotNil(extremeView)
+        // Test negative Infinity is sanitized to 0.0
+        let negInfinityLevel = AudioLevelValidator.validateAudioLevel(-Float.infinity)
+        XCTAssertEqual(negInfinityLevel, 0.0, "Negative Infinity should be sanitized to 0.0")
         
-        // Test denormal values
-        let denormalView = AudioVisualizerView(inputLevel: Float.leastNormalMagnitude / 2, outputLevel: 0.5)
-        XCTAssertNotNil(denormalView)
+        // Test extreme positive values are clamped to 1.0
+        let extremePositive = AudioLevelValidator.validateAudioLevel(1000.0)
+        XCTAssertEqual(extremePositive, 1.0, "Extreme positive values should be clamped to 1.0")
+        
+        // Test extreme negative values are clamped to 0.0
+        let extremeNegative = AudioLevelValidator.validateAudioLevel(-1000.0)
+        XCTAssertEqual(extremeNegative, 0.0, "Extreme negative values should be clamped to 0.0")
+        
+        // Test denormal values are sanitized to 0.0
+        let denormalLevel = AudioLevelValidator.validateAudioLevel(Float.leastNormalMagnitude / 2)
+        XCTAssertEqual(denormalLevel, 0.0, "Denormal values should be sanitized to 0.0")
+        
+        // Test normal range values are preserved and clamped properly
+        let normalLevel = AudioLevelValidator.validateAudioLevel(0.5)
+        XCTAssertEqual(normalLevel, 0.5, "Normal values in range should be preserved")
+        
+        // Test boundary values
+        let zeroLevel = AudioLevelValidator.validateAudioLevel(0.0)
+        XCTAssertEqual(zeroLevel, 0.0, "Zero should be preserved")
+        
+        let oneLevel = AudioLevelValidator.validateAudioLevel(1.0)
+        XCTAssertEqual(oneLevel, 1.0, "One should be preserved")
     }
     
     // MARK: - Memory Exhaustion Tests

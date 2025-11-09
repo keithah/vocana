@@ -21,6 +21,13 @@ import SwiftUI
 /// )
 /// ```
 /// 
+/// Update Rate Expectations:
+/// - Expected update rate: 10-60 Hz (100ms to 16ms intervals)
+/// - Animation duration: 50ms (AppConstants.audioLevelAnimationDuration)
+/// - Change threshold: 2% (AppConstants.audioLevelChangeThreshold) prevents noise updates
+/// - If updates arrive faster than animation duration, they queue naturally without conflict
+/// - The animation framework handles overlapping updates gracefully via easing curves
+/// 
 /// Security Considerations:
 /// - All input values are validated for NaN, Infinity, and extreme values
 /// - Subnormal number detection prevents performance attacks

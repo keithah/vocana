@@ -151,6 +151,16 @@ struct AppConstants {
     // Balances responsiveness with visual smoothness
     static let audioLevelAnimationDuration: TimeInterval = 0.05
     
+    // Audio level animation - pre-defined Animation for reuse across UI
+    // Uses easeOut timing function for natural-feeling decay
+    static let audioLevelAnimation = Animation.easeOut(duration: audioLevelAnimationDuration)
+    
+    // Rate limiting for audio buffer operations
+    // 1000 operations per second provides protection against CPU DoS attacks
+    // via rapid buffer method calls while allowing legitimate audio processing (typically 10-100 ops/sec)
+    // Measured in AudioBufferManager operations (append, extract, validation)
+    static let maxBufferOperationsPerSecond: Int = 1000
+    
     // Accessibility
     static let accessibilityDescription = "Vocana"
     

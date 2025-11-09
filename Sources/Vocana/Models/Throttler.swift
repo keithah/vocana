@@ -8,6 +8,12 @@ import Foundation
 /// from the same queue that the action executes on.
 /// 
 /// Used to prevent UI updates from overwhelming the main thread during high-frequency changes
+/// 
+/// Memory Retention: The action closure is retained until execution completes or is cancelled.
+/// If the action captures expensive objects (e.g., large buffers), they will be retained in memory
+/// for the duration of the throttle interval. This is typically acceptable for UI updates but should
+/// be considered for long-lived throttlers processing large data. The pending work item is automatically
+/// cancelled in deinit to prevent leaks.
 class Throttler {
     private var lastFireTime: Date = Date.distantPast
     private var pendingWorkItem: DispatchWorkItem?

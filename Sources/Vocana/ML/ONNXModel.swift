@@ -93,9 +93,18 @@ final class ONNXModel {
                 }
                 
                 // Fix CRITICAL: Use appropriate range validation for audio ML models
-                // Audio spectrograms can have larger magnitudes for loud signals (drums, etc.)
-                // Using 10000.0 as middle ground: typical range ~0-100, allows 100x headroom
-                // while still preventing DoS attacks with pathologically large values
+                // 
+                // Rationale for maxSafeValue = 10,000.0:
+                // - Voice-focused noise cancellation (Vocana's primary use case)
+                // - Typical spectrogram magnitudes: 0-100 (quiet to moderately loud speech)
+                // - 100x headroom allows legitimate high-amplitude audio:
+                //   * Normal speech: 0-50
+                //   * Loud speech/shouting: 50-150
+                //   * Music/instruments: 100-500
+                //   * Extreme sounds (sirens, alarms): 500-2000
+                // - Pathological inputs (>10,000) are rare and indicate malicious intent
+                // - Prevents DoS attacks with crafted malicious audio files
+                // - Could be increased to ~100,000 for music/audio production use cases
                 let maxSafeValue: Float = 10000.0
                 guard tensor.data.allSatisfy({ abs($0) <= maxSafeValue }) else {
                     let maxValue = tensor.data.max { abs($0) < abs($1) } ?? 0

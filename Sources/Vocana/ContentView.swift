@@ -66,6 +66,12 @@ struct ContentView: View {
             Divider()
             
              // Settings button with user feedback
+             // UX Decision: Button is fully functional with alert feedback
+             // This approach is preferred over disabled state because:
+             // 1. Users naturally expect menu bar buttons to be clickable
+             // 2. Alert clearly explains the feature is coming and provides alternative
+             // 3. Disabled buttons with tooltips are less discoverable than interactive feedback
+             // 4. Users understand the feature roadmap from the alert message
              SettingsButtonView {
                  // Fix HIGH: Show user-friendly alert instead of silent failure
                  showSettingsAlert = true

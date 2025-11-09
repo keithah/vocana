@@ -56,21 +56,23 @@ class Throttler {
                 self.queue.async {
                     action()
                 }
-            } else {
-                // Schedule execution for when interval expires
-                self.pendingWorkItem?.cancel()
-                
-                let remainingTime = self.interval - elapsed
-                let newWorkItem = DispatchWorkItem { [weak self] in
-                    self?.syncQueue.sync {
-                        self?.lastFireTime = Date()
-                    }
-                    action()
-                }
-                
-                self.pendingWorkItem = newWorkItem
-                self.queue.asyncAfter(deadline: .now() + remainingTime, execute: newWorkItem)
-            }
+             } else {
+                 // Schedule execution for when interval expires
+                 self.pendingWorkItem?.cancel()
+                 
+                 let remainingTime = self.interval - elapsed
+                 // Fix: Update lastFireTime at scheduling time, not execution time
+                 // This prevents race condition where rapid calls could schedule multiple work items
+                 // within the same throttle window if update was deferred to execution time
+                 self.lastFireTime = now.addingTimeInterval(remainingTime)
+                 
+                 let newWorkItem = DispatchWorkItem {
+                     action()
+                 }
+                 
+                 self.pendingWorkItem = newWorkItem
+                 self.queue.asyncAfter(deadline: .now() + remainingTime, execute: newWorkItem)
+             }
         }
     }
     

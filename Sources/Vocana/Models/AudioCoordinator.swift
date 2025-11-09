@@ -23,18 +23,25 @@ class AudioCoordinator: ObservableObject {
     
     /// Setup reactive bindings between settings and audio engine
     private func setupBindings() {
-        // Use merge with objectWillChange for deterministic updates
-        // objectWillChange fires for all property changes including sensitivity (computed property)
-        // Debounce prevents multiple rapid updates when isEnabled and sensitivity change together
-        Publishers.Merge(
-            settings.$isEnabled.map { _ in () },
-            settings.objectWillChange
-        )
-        .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
-        .sink { [weak self] in
-            self?.updateAudioSettings()
-        }
-        .store(in: &cancellables)
+        // Optimization: Split isEnabled and sensitivity for responsive UX
+        // isEnabled receives immediate updates for responsive user feedback
+        // sensitivity uses debouncing to prevent excessive ML re-processing
+        
+        // Immediate isEnabled updates (toggle response should be instant)
+        settings.$isEnabled
+            .sink { [weak self] _ in
+                self?.updateAudioSettings()
+            }
+            .store(in: &cancellables)
+        
+        // Debounced sensitivity updates (ML processing is expensive)
+        // 50ms debounce prevents excessive re-processing while user adjusts slider
+        settings.objectWillChange
+            .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
+            .sink { [weak self] in
+                self?.updateAudioSettings()
+            }
+            .store(in: &cancellables)
     }
     
      /// Update audio engine settings with state validation

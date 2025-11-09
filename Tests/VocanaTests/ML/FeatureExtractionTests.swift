@@ -7,12 +7,12 @@ final class FeatureExtractionTests: XCTestCase {
     var spectralFeatures: SpectralFeatures!
     var stft: STFT!
     
-    override func setUp() throws {
-        try super.setUp()
-        erbFeatures = ERBFeatures(numBands: 32, sampleRate: 48000, fftSize: 960)
-        spectralFeatures = SpectralFeatures(dfBands: 96, sampleRate: 48000, fftSize: 960)
-        stft = try! STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
-    }
+     override func setUp() {
+         super.setUp()
+         erbFeatures = ERBFeatures(numBands: 32, sampleRate: 48000, fftSize: 960)
+         spectralFeatures = SpectralFeatures(dfBands: 96, sampleRate: 48000, fftSize: 960)
+         stft = try! STFT(fftSize: 960, hopSize: 480, sampleRate: 48000)
+     }
     
     override func tearDown() {
         erbFeatures = nil

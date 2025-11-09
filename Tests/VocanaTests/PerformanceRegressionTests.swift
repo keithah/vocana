@@ -37,7 +37,7 @@ final class PerformanceRegressionTests: XCTestCase {
     
     // MARK: - Feature Extraction Performance
     
-    func testERBFeatureExtractionLatency() throws throws {
+     func testERBFeatureExtractionLatency() throws {
         let erbFeatures = ERBFeatures(numBands: 32, sampleRate: 48000, fftSize: 960)
         
         // Create test spectrogram (10 frames of 481 bins each)
@@ -54,7 +54,7 @@ final class PerformanceRegressionTests: XCTestCase {
         XCTAssertLessThan(latencyMs, 5.0, "ERB extraction latency \(String(format: "%.2f", latencyMs))ms exceeds 5ms target")
     }
     
-    func testSpectralFeatureExtractionLatency() throws throws {
+     func testSpectralFeatureExtractionLatency() throws {
         let spectralFeatures = SpectralFeatures(sampleRate: 48000)
         
         // Create test spectrogram

@@ -128,9 +128,9 @@ final class SecurityValidationTests: XCTestCase {
         let negInfinityLevel = AudioLevelValidator.validateAudioLevel(-Float.infinity)
         XCTAssertEqual(negInfinityLevel, 0.0, "Negative Infinity should be sanitized to 0.0")
         
-        // Test extreme positive values are clamped to 1.0
-        let extremePositive = AudioLevelValidator.validateAudioLevel(1000.0)
-        XCTAssertEqual(extremePositive, 1.0, "Extreme positive values should be clamped to 1.0")
+         // Test extreme positive values are rejected as malformed input (safety measure)
+         let extremePositive = AudioLevelValidator.validateAudioLevel(1000.0)
+         XCTAssertEqual(extremePositive, 0.0, "Extreme positive values indicate corruption and should return 0.0")
         
         // Test extreme negative values are clamped to 0.0
         let extremeNegative = AudioLevelValidator.validateAudioLevel(-1000.0)

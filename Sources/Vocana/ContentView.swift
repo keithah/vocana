@@ -38,7 +38,7 @@ import SwiftUI
 struct ContentView: View {
     // Fix QUAL-001: Use concrete type with protocol conformance to reduce tight coupling
     @StateObject private var coordinator = AudioCoordinator()
-    @State private var showSettingsAlert = false
+    @State private var showSettingsWindow = false
     
     var body: some View {
         VStack(spacing: 16) {
@@ -65,21 +65,9 @@ struct ContentView: View {
             
             Divider()
             
-             // Settings button with user feedback
-             // UX Decision: Button is fully functional with alert feedback
-             // This approach is preferred over disabled state because:
-             // 1. Users naturally expect menu bar buttons to be clickable
-             // 2. Alert clearly explains the feature is coming and provides alternative
-             // 3. Disabled buttons with tooltips are less discoverable than interactive feedback
-             // 4. Users understand the feature roadmap from the alert message
+             // Settings button - opens settings window
              SettingsButtonView {
-                 // Fix HIGH: Show user-friendly alert instead of silent failure
-                 showSettingsAlert = true
-             }
-             .alert("Settings Coming Soon", isPresented: $showSettingsAlert) {
-                 Button("OK") { }
-             } message: {
-                 Text("Advanced settings will be available in a future release. For now, you can adjust sensitivity using the slider above.")
+                 showSettingsWindow = true
              }
             
             Spacer()
@@ -92,18 +80,21 @@ struct ContentView: View {
         .onDisappear {
             coordinator.stopAudioSimulation()
         }
-        .overlay(
-            // MEDIUM FIX: Use hidden Button with keyboardShortcut for proper keyboard handling
-            // This allows ⌥⌘N to toggle the noise cancellation
-            Button {
-                coordinator.settings.isEnabled.toggle()
-            } label: {
-                EmptyView()
-            }
-            .keyboardShortcut("n", modifiers: [.command, .option])
-            .opacity(0)
-            .accessibilityHidden(true)
-        )
+         .overlay(
+             // MEDIUM FIX: Use hidden Button with keyboardShortcut for proper keyboard handling
+             // This allows ⌥⌘N to toggle the noise cancellation
+             Button {
+                 coordinator.settings.isEnabled.toggle()
+             } label: {
+                 EmptyView()
+             }
+             .keyboardShortcut("n", modifiers: [.command, .option])
+             .opacity(0)
+             .accessibilityHidden(true)
+         )
+         .sheet(isPresented: $showSettingsWindow) {
+             SettingsWindow(isPresented: $showSettingsWindow, settings: coordinator.settings)
+         }
     }
 }
 

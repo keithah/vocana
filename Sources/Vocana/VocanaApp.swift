@@ -50,16 +50,25 @@ struct VocanaApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var popover: NSPopover?
+    private var systemEventMonitor: Any?
+    private var appSettings: AppSettings?
     
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             try setupMenuBar()
+            setupSystemEventMonitoring()
             
             // Hide main window since we're a menu bar app
             if let window = NSApplication.shared.windows.first {
                 window.close()
             }
+            
+            // Set up menu bar behavior
+            updateMenuBarVisibility()
+            
+            // Register for system notifications
+            registerSystemNotifications()
         } catch {
             handleError(error)
         }
@@ -87,11 +96,85 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.statusItem = nil
             }
             
+            // Unregister system event monitoring
+            if let monitor = systemEventMonitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            
+            // Unregister system notifications
+            NotificationCenter.default.removeObserver(self)
+            
             // Note: ContentView and AudioEngine will be cleaned up via deinit
             // when popover is deallocated, ensuring proper audio session cleanup
         }
         
         return .terminateNow
+    }
+    
+    // MARK: - System Event Monitoring
+    
+    private func setupSystemEventMonitoring() {
+        // Monitor keyboard events for app-wide shortcuts
+        // This would be used for global hotkeys if implemented
+    }
+    
+    private func registerSystemNotifications() {
+        // Monitor for system sleep/wake
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+        
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        
+        // Monitor for user session changes
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleUserSessionChange),
+            name: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleSystemSleep() {
+        // Pause audio processing when system sleeps
+        // Close popover to save memory
+        if let popover = popover, popover.isShown {
+            popover.performClose(nil)
+        }
+    }
+    
+    @objc private func handleSystemWake() {
+        // Resume audio processing when system wakes
+    }
+    
+    @objc private func handleUserSessionChange() {
+        // Handle user session changes (switching users, session resume)
+    }
+    
+    // MARK: - Menu Bar Management
+    
+    @MainActor
+    private func updateMenuBarVisibility() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // Initialize app settings on main thread
+            if self.appSettings == nil {
+                self.appSettings = AppSettings()
+            }
+            
+            if let appSettings = self.appSettings, !appSettings.showInMenuBar {
+                // Optionally hide from menu bar if user preference
+                // This is typically not used, but available for advanced users
+            }
+        }
     }
     
     @MainActor

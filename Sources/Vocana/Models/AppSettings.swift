@@ -55,6 +55,10 @@ class AppSettings: ObservableObject {
     @Published var launchAtLogin: Bool {
         didSet {
             UserDefaults.standard.set(launchAtLogin, forKey: Keys.launchAtLogin)
+            // Update system launch at login setting
+            LaunchAtLoginHelper.setLaunchAtLogin(launchAtLogin) { _ in
+                // Handler for completion, can log if needed
+            }
         }
     }
     

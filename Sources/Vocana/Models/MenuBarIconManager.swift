@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import OSLog
 
 /// Manages menu bar icon appearance and state transitions
 /// 
@@ -18,7 +19,7 @@ class MenuBarIconManager: ObservableObject {
     
     // MARK: - State Management
     
-    enum IconState {
+    enum IconState: CustomStringConvertible {
         case active    // Enabled + processing audio (green waveform)
         case ready     // Enabled + waiting for audio (orange waveform)
         case inactive  // Disabled (gray waveform)
@@ -57,16 +58,45 @@ class MenuBarIconManager: ObservableObject {
                 return "Inactive"
             }
         }
+        
+        var description: String {
+            switch self {
+            case .active:
+                return "active"
+            case .ready:
+                return "ready"
+            case .inactive:
+                return "inactive"
+            }
+        }
     }
     
-    @Published private(set) var currentState: IconState = .inactive
+    private static let logger = Logger(subsystem: "Vocana", category: "MenuBarIconManager")
+    private static let throttleInterval: TimeInterval = 0.1 // 100ms = 10 updates/sec max
+    
+    @Published private(set) var currentState: IconState = .inactive {
+        didSet {
+            // Apply to button immediately when state changes
+            if let button = targetButton {
+                applyToButton(button)
+            }
+        }
+    }
+    
+    private weak var targetButton: NSStatusBarButton?
     
     // MARK: - Dependencies
     
-    private let throttler = Throttler(interval: 0.1) // 100ms = 10 updates/sec max
+    private let throttler = Throttler(interval: MenuBarIconManager.throttleInterval)
     private var cancellables = Set<AnyCancellable>()
     
     // MARK: - Public Interface
+    
+    /// Clean up resources and subscriptions
+    func cleanup() {
+        cancellables.removeAll()
+        targetButton = nil
+    }
     
     /// Updates the icon state based on audio processing status
     /// - Parameters:
@@ -76,11 +106,10 @@ class MenuBarIconManager: ObservableObject {
         throttler.throttle { [weak self] in
             let newState = Self.determineState(isEnabled: isEnabled, isUsingRealAudio: isUsingRealAudio)
             
-        #if DEBUG
-        VocanaLogger.app.debug("Applied icon state \(self?.currentState ?? .inactive) to menu bar button")
-        #endif
-            
-            self?.currentState = newState
+            if let self = self, self.currentState != newState {
+                self.currentState = newState
+                Self.logger.debug("Icon state updated to \(newState)")
+            }
         }
     }
     
@@ -99,9 +128,7 @@ class MenuBarIconManager: ObservableObject {
         }
         
         // Fallback to gear icon if primary fails
-        #if DEBUG
-        VocanaLogger.app.error("Failed to create primary icon, using fallback")
-        #endif
+        Self.logger.error("Failed to create primary icon, using fallback")
         
         let fallbackConfig = NSImage.SymbolConfiguration(paletteColors: [.controlTextColor])
         let fallbackImage = NSImage(
@@ -116,18 +143,17 @@ class MenuBarIconManager: ObservableObject {
     /// Applies the current icon state to a menu bar button
     /// - Parameter button: The status bar button to update
     func applyToButton(_ button: NSStatusBarButton) {
-        let image = createIconImage()
+        // Store reference for automatic updates
+        targetButton = button
         
+        let image = createIconImage()
         button.image = image
-        button.contentTintColor = nil
         
         // Update accessibility
-        button.setAccessibilityLabel(currentState.accessibilityDescription)
+        button.setAccessibilityLabel("Vocana - \(currentState.accessibilityDescription)")
         button.setAccessibilityValue(currentState.accessibilityValue)
         
-            #if DEBUG
-            VocanaLogger.app.debug("Setting up consolidated menu bar icon updates...")
-            #endif
+        Self.logger.debug("Applied icon state \(self.currentState) to menu bar button")
     }
     
     // MARK: - Private Methods
@@ -149,22 +175,3 @@ class MenuBarIconManager: ObservableObject {
     }
 }
 
-// MARK: - Logging Support
-
-#if DEBUG
-enum VocanaLogger {
-    enum app {
-        static func debug(_ message: String) {
-            print("🔘 [DEBUG] \(message)")
-        }
-        
-        static func error(_ message: String) {
-            print("🚨 [ERROR] \(message)")
-        }
-        
-        static func info(_ message: String) {
-            print("ℹ️ [INFO] \(message)")
-        }
-    }
-}
-#endif

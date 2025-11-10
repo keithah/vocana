@@ -50,6 +50,8 @@ struct VocanaApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let logger = Logger(subsystem: "Vocana", category: "AppDelegate")
+    
     var statusItem: NSStatusItem?
     var popover: NSPopover?
     private var systemEventMonitor: Any?
@@ -112,6 +114,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             
             // Unregister system notifications
             NotificationCenter.default.removeObserver(self)
+            
+            // Clean up Combine subscriptions
+            iconManager?.cleanup()
+            cancellables.removeAll()
             
             // Note: ContentView and AudioEngine will be cleaned up via deinit
             // when popover is deallocated, ensuring proper audio session cleanup
@@ -204,18 +210,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func setupMenuBarIconUpdates() {
         guard let audioEngine = audioEngine, let settings = audioCoordinator?.settings else { 
-            #if DEBUG
-            VocanaLogger.app.error("setupMenuBarIconUpdates: No audio engine or settings available")
-            #endif
+            Self.logger.error("setupMenuBarIconUpdates: No audio engine or settings available")
             return 
         }
         
         // Initialize icon manager
         iconManager = MenuBarIconManager()
         
-        #if DEBUG
-            VocanaLogger.app.debug("Setting up consolidated menu bar icon updates...")
-            #endif
+        Self.logger.debug("Setting up consolidated menu bar icon updates...")
         
         // Consolidate multiple publishers into single update stream for performance
         Publishers.CombineLatest3(
@@ -224,41 +226,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             settings.$isEnabled
         )
         .debounce(for: .milliseconds(16), scheduler: DispatchQueue.main) // 60fps max
-        .map { [weak self] isUsingRealAudio, _, isEnabled in
-            // Update icon manager state
+        .sink { [weak self] isUsingRealAudio, _, isEnabled in
+            // Update icon manager state - UI will refresh automatically when state changes
             self?.iconManager?.updateState(isEnabled: isEnabled, isUsingRealAudio: isUsingRealAudio)
-        }
-        .sink { [weak self] _ in
-            // Apply the updated state to the button
-            self?.applyCurrentIconState()
         }
         .store(in: &cancellables)
         
-        // Initial update
-        applyCurrentIconState()
+        // Initial setup - apply current state to button
+        if let button = statusItem?.button {
+            iconManager?.applyToButton(button)
+        }
     }
     
     private var cancellables = Set<AnyCancellable>()
-    
-    @MainActor
-    private func applyCurrentIconState() {
-        guard let button = statusItem?.button else { 
-            #if DEBUG
-            VocanaLogger.app.error("applyCurrentIconState: No status item button available")
-            #endif
-            return 
-        }
-        
-        guard let iconManager = iconManager else {
-            #if DEBUG
-            VocanaLogger.app.error("applyCurrentIconState: No icon manager available")
-            #endif
-            return
-        }
-        
-        // Apply current icon state to button with error handling
-        iconManager.applyToButton(button)
-    }
     
     @MainActor
     private func setupPopover() {

@@ -396,7 +396,9 @@ class AudioEngine: ObservableObject {
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         // Fix CRITICAL: Keep heavy processing off MainActor to prevent UI blocking
         audioProcessingQueue.async { [weak self] in
-            self?.processAudioBufferInternal(buffer)
+            Task { @MainActor [weak self] in
+                self?.processAudioBufferInternal(buffer)
+            }
         }
     }
     

@@ -1,11 +1,36 @@
 import Foundation
+import AVFoundation
 import os.log
+
+/// Protocol for ML audio processing components
+/// Allows dependency injection for testing with mock implementations
+@MainActor
+protocol MLAudioProcessorProtocol: AnyObject {
+    var isMLProcessingActive: Bool { get }
+    var processingLatencyMs: Double { get }
+    var memoryPressureLevel: AudioEngine.MemoryPressureLevel { get set }
+    
+    var recordFailure: () -> Void { get set }
+    var recordLatency: (Double) -> Void { get set }
+    var recordSuccess: () -> Void { get set }
+    var onMLProcessingReady: () -> Void { get set }
+    
+    func initializeML() async
+    func initializeMLProcessing()
+    func stopMLProcessing()
+    func suspendMLProcessing(reason: String)
+    func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]?
+    func activateML() async -> Bool
+    func deactivateML() async
+    func isMemoryPressureSuspended() -> Bool
+    func cleanup() async
+}
 
 /// Manages ML model inference and audio processing
 /// Responsibility: DeepFilterNet initialization, inference, memory pressure handling
 /// Isolated from audio capture, buffering, and level calculations
 @MainActor
-class MLAudioProcessor {
+class MLAudioProcessor: MLAudioProcessorProtocol {
     private static let logger = Logger(subsystem: "Vocana", category: "MLAudioProcessor")
     
     private var denoiser: DeepFilterNet?
@@ -31,6 +56,35 @@ class MLAudioProcessor {
     // Public state
     var isMLProcessingActive = false
     var processingLatencyMs: Double = 0
+    var memoryPressureLevel: AudioEngine.MemoryPressureLevel = .normal
+    
+    // MARK: - Memory Tracking
+    
+    /// Current ML model memory usage in MB
+    var mlMemoryUsageMB: Double {
+        guard let denoiser = denoiser else { return 0.0 }
+        return denoiser.memoryUsageMB
+    }
+    
+    /// Peak ML model memory usage in MB
+    var mlPeakMemoryUsageMB: Double {
+        guard let denoiser = denoiser else { return 0.0 }
+        return denoiser.peakMemoryUsageMB
+    }
+    
+    /// Memory used during model loading in MB
+    var mlModelLoadMemoryMB: Double {
+        guard let denoiser = denoiser else { return 0.0 }
+        return denoiser.modelLoadMemoryMB
+    }
+    
+    /// Get comprehensive ML memory statistics
+    func getMLMemoryStatistics() -> (current: Double, peak: Double, modelLoad: Double, totalInferences: UInt64) {
+        guard let denoiser = denoiser else { 
+            return (current: 0.0, peak: 0.0, modelLoad: 0.0, totalInferences: 0)
+        }
+        return denoiser.getMemoryStatistics()
+    }
     
     /// Initialize ML processing with DeepFilterNet
     /// Handles async model loading with proper cancellation support
@@ -194,13 +248,14 @@ class MLAudioProcessor {
                          Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
                      }
                  }
-              } catch {
-                  Task { @MainActor in
-                      Self.logger.error("ML processing error: \(error.localizedDescription)")
-                      self.recordFailure()
-                      print("❌ ML processing failed, calling recordFailure")
-                  }
-              }
+               } catch {
+                   Task { @MainActor in
+                       Self.logger.error("ML processing error: \(error.localizedDescription)")
+                       print("❌ ML processing ERROR DETAILS: \(error)")
+                       self.recordFailure()
+                       print("❌ ML processing failed, calling recordFailure")
+                   }
+               }
          }
          
          // Wait with timeout to prevent blocking indefinitely
@@ -269,5 +324,25 @@ class MLAudioProcessor {
         print("🔍 ❌ No models found, using fallback: \(modelsPath)")
         // Final fallback
         return modelsPath
+    }
+    
+    // MARK: - MLAudioProcessorProtocol
+    
+    func initializeML() async {
+        initializeMLProcessing()
+    }
+    
+    func activateML() async -> Bool {
+        return !mlProcessingSuspendedDueToMemory
+    }
+    
+    func deactivateML() async {
+        isMLProcessingActive = false
+    }
+    
+    func cleanup() async {
+        mlInitializationTask?.cancel()
+        denoiser = nil
+        isMLProcessingActive = false
     }
 }

@@ -165,7 +165,7 @@ class AudioEngine: ObservableObject {
     
     private var levelController: AudioLevelController
     private var bufferManager: AudioBufferManager
-    private var mlProcessor: MLAudioProcessor
+    private var mlProcessor: MLAudioProcessorProtocol
     private var audioSessionManager: AudioSessionManager
     
     init() {
@@ -173,6 +173,18 @@ class AudioEngine: ObservableObject {
         self.levelController = AudioLevelController()
         self.bufferManager = AudioBufferManager()
         self.mlProcessor = MLAudioProcessor()
+        self.audioSessionManager = AudioSessionManager()
+        
+        // Setup callbacks after initialization
+        setupComponentCallbacks()
+    }
+    
+    /// Test initializer with dependency injection
+    init(mlProcessor: MLAudioProcessorProtocol) {
+        // Initialize MainActor components
+        self.levelController = AudioLevelController()
+        self.bufferManager = AudioBufferManager()
+        self.mlProcessor = mlProcessor
         self.audioSessionManager = AudioSessionManager()
         
         // Setup callbacks after initialization
@@ -380,41 +392,70 @@ class AudioEngine: ObservableObject {
         // Use AudioBufferManager as single source of truth for suspension state
         guard !bufferManager.isAudioCaptureSuspended() else { return }
         
-        guard let channelData = buffer.floatChannelData else { return }
-        let channelDataValue = channelData.pointee
-        let frames = buffer.frameLength
-        
-         // Capture state atomically for this processing cycle
-         let capturedEnabled = isEnabled
-         let capturedSensitivity = sensitivity
-        
-        let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
+        // Extract audio samples from buffer
+        guard let samples = extractAudioSamples(from: buffer) else { return }
         
         // Calculate input level
-        let inputLevel = levelController.calculateRMSFromPointer(samplesPtr)
+        let inputLevel = levelController.calculateRMS(samples: samples)
         
         // Debug: Print audio level occasionally
         if inputLevel > 0.001 {
-            print("🎵 Audio detected - inputLevel=\(String(format: "%.4f", inputLevel)), enabled=\(capturedEnabled)")
+            print("🎵 Audio detected - inputLevel=\(String(format: "%.4f", inputLevel)), enabled=\(isEnabled)")
         }
         
+        // Capture state atomically for this processing cycle
+        let capturedEnabled = isEnabled
+        let capturedSensitivity = sensitivity
+        
+        // Process audio based on enabled state
         if capturedEnabled {
-            let samples = Array(samplesPtr)
-            let outputLevel = processWithMLIfAvailable(samples: samples, sensitivity: capturedSensitivity)
-            
-            // Update UI safely on MainActor
-            Task { @MainActor [weak self] in
-                print("🎵 Updating UI levels - input: \(String(format: "%.4f", inputLevel)), output: \(String(format: "%.4f", outputLevel))")
-                self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
-            }
+            let outputLevel = processEnabledAudio(samples: samples, sensitivity: capturedSensitivity, inputLevel: inputLevel)
+            updateLevels(input: inputLevel, output: outputLevel)
         } else {
-            // Apply level decay when disabled
-            let decayedLevels = levelController.applyDecay()
-            
-            // Update UI safely on MainActor
-            Task { @MainActor [weak self] in
-                self?.currentLevels = decayedLevels
-            }
+            let decayedLevels = processDisabledAudio(inputLevel: inputLevel)
+            updateLevels(input: decayedLevels.input, output: decayedLevels.output)
+        }
+    }
+    
+    // MARK: - Audio Processing Helper Methods
+    
+    /// Extract audio samples from AVAudioPCMBuffer
+    /// - Parameter buffer: Audio buffer to extract samples from
+    /// - Returns: Array of Float samples, or nil if extraction fails
+    private func extractAudioSamples(from buffer: AVAudioPCMBuffer) -> [Float]? {
+        guard let channelData = buffer.floatChannelData else { return nil }
+        let channelDataValue = channelData.pointee
+        let frames = buffer.frameLength
+        
+        let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
+        return Array(samplesPtr)
+    }
+    
+    /// Process audio when enhancement is enabled
+    /// - Parameters:
+    ///   - samples: Audio samples to process
+    ///   - sensitivity: Processing sensitivity (0-1)
+    ///   - inputLevel: Calculated input RMS level
+    /// - Returns: Output level after processing
+    private func processEnabledAudio(samples: [Float], sensitivity: Double, inputLevel: Float) -> Float {
+        return processWithMLIfAvailable(samples: samples, sensitivity: sensitivity)
+    }
+    
+    /// Process audio when enhancement is disabled (apply decay)
+    /// - Parameter inputLevel: Current input level
+    /// - Returns: Audio levels after applying decay
+    private func processDisabledAudio(inputLevel: Float) -> AudioLevels {
+        return levelController.applyDecay()
+    }
+    
+    /// Update currentLevels on MainActor
+    /// - Parameters:
+    ///   - input: Input audio level
+    ///   - output: Output audio level
+    private func updateLevels(input: Float, output: Float) {
+        Task { @MainActor [weak self] in
+            print("🎵 Updating UI levels - input: \(String(format: "%.4f", input)), output: \(String(format: "%.4f", output))")
+            self?.currentLevels = AudioLevels(input: input, output: output)
         }
     }
     

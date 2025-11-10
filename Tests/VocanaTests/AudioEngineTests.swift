@@ -7,7 +7,8 @@ final class AudioEngineTests: XCTestCase {
     
     override func setUp() {
         super.setUp()
-        audioEngine = AudioEngine()
+        let mockMLProcessor = MockMLAudioProcessor()
+        audioEngine = AudioEngine(mlProcessor: mockMLProcessor)
     }
     
     override func tearDown() {

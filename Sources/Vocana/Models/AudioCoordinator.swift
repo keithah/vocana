@@ -14,6 +14,12 @@ class AudioCoordinator: ObservableObject {
         setupBindings()
     }
     
+    /// Test initializer with dependency injection
+    init(audioEngine: AudioEngine) {
+        self.audioEngine = audioEngine
+        setupBindings()
+    }
+    
     deinit {
         // Fix CRITICAL: Clean up cancellables explicitly to prevent subscription leaks
         cancellables.removeAll()

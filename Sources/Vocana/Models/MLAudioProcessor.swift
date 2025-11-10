@@ -113,7 +113,7 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
     /// Initialize ML processing with DeepFilterNet
     /// Handles async model loading with proper cancellation support
     func initializeMLProcessing() {
-        print("🤖 MLAudioProcessor.initializeMLProcessing - Starting...")
+
         
         // Fix CRITICAL: Cancel any existing initialization to prevent race conditions
         mlInitializationTask?.cancel()
@@ -174,7 +174,6 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                      self.mlStateQueue.sync {
                          self._isMLProcessingActive = true
                      }
-                     print("🤖 ✅ ML processing is now ACTIVE!")
                      Self.logger.info("DeepFilterNet ML processing enabled")
 
                      // Fix HIGH-008: Notify that ML processing is ready
@@ -199,18 +198,17 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                          }
                      } else {
                          Self.logger.error("Unexpected ML initialization error: \(error.localizedDescription)")
-                     }
+                       }
 
-                       print("🤖 ❌ ML initialization FAILED: \(error.localizedDescription)")
-                       Self.logger.info("Falling back to simple level-based processing")
+                        Self.logger.error("ML initialization failed: \(error.localizedDescription)")
+                        Self.logger.info("Falling back to simple level-based processing")
                        self.denoiser = nil
                        self.mlStateQueue.sync {
                            self._isMLProcessingActive = false
                        }
 
                        // Don't record this as a failure - it's an expected fallback
-                       // self.recordFailure()
-                       print("🤖 ℹ️ ML processing unavailable - app will work with basic audio processing")
+                        // self.recordFailure()
                  }
              }
         }
@@ -269,7 +267,6 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                   Task { @MainActor in
                       self.recordLatency(latencyMs)
                       self.recordSuccess()  // Reset failure counter on successful processing
-                      print("✅ ML processing succeeded, calling recordSuccess")
                   }
                  
                  // Monitor for SLA violations (target <1ms)
@@ -279,12 +276,10 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                      }
                  }
                } catch {
-                   Task { @MainActor in
-                       Self.logger.error("ML processing error: \(error.localizedDescription)")
-                       print("❌ ML processing ERROR DETAILS: \(error)")
-                       self.recordFailure()
-                       print("❌ ML processing failed, calling recordFailure")
-                   }
+                    Task { @MainActor in
+                        Self.logger.error("ML processing error: \(error.localizedDescription)")
+                        self.recordFailure()
+                    }
                }
          }
          
@@ -324,12 +319,10 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
         // Use Bundle.main.resourcePath for bundled resources (correct for SPM)
         let resourcePath = Bundle.main.resourcePath ?? "."
         let modelsPath = "\(resourcePath)/Models"
-        print("🔍 Trying bundle path: \(modelsPath)")
 
         // Verify models exist at the expected location
         let encPath = "\(modelsPath)/enc.onnx"
         if FileManager.default.fileExists(atPath: encPath) {
-            print("🔍 ✅ Found models at bundle path: \(modelsPath)")
             return modelsPath
         }
 
@@ -344,14 +337,11 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
 
         for path in searchPaths {
             let testEncPath = "\(path)/enc.onnx"
-            print("🔍 Trying path: \(testEncPath)")
             if FileManager.default.fileExists(atPath: testEncPath) {
-                print("🔍 ✅ Found models at: \(path)")
                 return path
             }
         }
 
-        print("🔍 ❌ No models found, using fallback: \(modelsPath)")
         // Final fallback
         return modelsPath
     }

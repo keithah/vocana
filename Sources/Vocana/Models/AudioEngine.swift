@@ -266,11 +266,9 @@ class AudioEngine: ObservableObject {
           // Reset ML failures on successful processing
           mlProcessor.recordSuccess = { [weak self] in
               guard let self = self else { return }
-              print("🔄 recordSuccess callback called")
               self.recordTelemetryEvent { telemetry in
                   var updated = telemetry
                   if updated.mlProcessingFailures > 0 {
-                      print("🔄 Resetting failures from \(updated.mlProcessingFailures) to 0")
                       updated.mlProcessingFailures = 0
                   }
                   return updated
@@ -318,8 +316,10 @@ class AudioEngine: ObservableObject {
             Self.logger.info("Real audio capture result: \(self.isUsingRealAudio)")
 
             if !isUsingRealAudio {
-                let errorLog = "🎙️ ❌ Failed to start real audio capture - microphone unavailable"
-                print(errorLog)
+                Self.logger.error("Failed to start real audio capture - microphone unavailable")
+                // Reset engine state since capture failed
+                self.isEnabled = false
+                self.isUsingRealAudio = false
                 return
             }
 
@@ -363,6 +363,11 @@ class AudioEngine: ObservableObject {
         decayTimer = nil
         audioSessionManager.stopRealAudioCapture()
         mlProcessor.stopMLProcessing()
+        
+        // Keep published ML state in sync when stopping
+        Task { @MainActor [weak self] in
+            self?.isMLProcessingActive = false
+        }
     }
     
     func reset() {
@@ -389,16 +394,13 @@ class AudioEngine: ObservableObject {
     /// - Important: This method is called from the audio capture thread (real-time priority)
     /// - Parameter buffer: Audio buffer containing captured audio data
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        print("🎵 processAudioBuffer called - frameLength: \(buffer.frameLength)")
-        // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
+        // Fix CRITICAL: Keep heavy processing off MainActor to prevent UI blocking
         audioProcessingQueue.async { [weak self] in
-            Task { @MainActor [weak self] in
-                await self?.processAudioBufferInternal(buffer)
-            }
+            self?.processAudioBufferInternal(buffer)
         }
     }
     
-    private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer) async {
+    private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer) {
         // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
         // Use AudioBufferManager as single source of truth for suspension state
         guard !bufferManager.isAudioCaptureSuspended() else { return }
@@ -408,11 +410,6 @@ class AudioEngine: ObservableObject {
         
         // Calculate input level
         let inputLevel = levelController.calculateRMS(samples: samples)
-        
-        // Debug: Print audio level occasionally
-        if inputLevel > 0.001 {
-            print("🎵 Audio detected - inputLevel=\(String(format: "%.4f", inputLevel)), enabled=\(isEnabled)")
-        }
         
         // Capture state atomically for this processing cycle
         let capturedEnabled = isEnabled
@@ -465,7 +462,6 @@ class AudioEngine: ObservableObject {
     ///   - output: Output audio level
     private func updateLevels(input: Float, output: Float) {
         Task { @MainActor [weak self] in
-            print("🎵 Updating UI levels - input: \(String(format: "%.4f", input)), output: \(String(format: "%.4f", output))")
             self?.currentLevels = AudioLevels(input: input, output: output)
         }
     }

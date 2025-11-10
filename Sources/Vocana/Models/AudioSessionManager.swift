@@ -203,7 +203,6 @@ class AudioSessionManager: NSObject {
             let bufferCallback = self.onAudioBufferReceived
             
             inputNode.installTap(onBus: 0, bufferSize: 512, format: standardFormat) { buffer, _ in
-                Self.logger.info("🎉 AVAudioEngine tap working! Buffer length: \(buffer.frameLength)")
                 
                 // Validate buffer
                 guard buffer.frameLength > 0 && buffer.frameLength <= 8192 else {
@@ -368,7 +367,6 @@ class AudioSessionManager: NSObject {
         let simpleFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false)
         
         inputNode.installTap(onBus: 0, bufferSize: 256, format: simpleFormat) { buffer, _ in
-            Self.logger.info("🎉 ALTERNATIVE AUDIO TAP WORKING! Buffer length: \(buffer.frameLength)")
             
             // Call the original callback
             DispatchQueue.main.async {
@@ -390,12 +388,9 @@ class AudioSessionManager: NSObject {
 
 extension AudioSessionManager: AVCaptureAudioDataOutputSampleBufferDelegate {
     nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        Self.logger.info("🎉 AVCapture audio data received! Sample buffer size: \(sampleBuffer.numSamples)")
-        
         // Get number of samples
         let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
         guard numSamples > 0 else {
-            Self.logger.info("No samples in buffer")
             return
         }
         
@@ -436,7 +431,7 @@ extension AudioSessionManager: AVCaptureAudioDataOutputSampleBufferDelegate {
         )
         
         guard copyStatus == noErr else {
-            Self.logger.info("Failed to copy audio data: \(copyStatus)")
+            Self.logger.error("Failed to copy audio data: \(copyStatus)")
             return
         }
         

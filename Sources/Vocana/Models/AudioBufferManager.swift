@@ -114,6 +114,7 @@ class AudioBufferManager {
                     }
                     
                     onCircuitBreakerTriggered(suspensionDuration)
+                    recordCircuitBreakerSuspension(suspensionDuration)
                     return nil // Skip this buffer append to help recovery
                 }
                 

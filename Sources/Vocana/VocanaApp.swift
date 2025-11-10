@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
+import Combine
 @preconcurrency import AVFoundation
+import OSLog
 
 enum VocanaError: Int, Error {
     case statusBarButtonFailure = 1
@@ -52,6 +54,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var popover: NSPopover?
     private var systemEventMonitor: Any?
     private var appSettings: AppSettings?
+    private var audioCoordinator: AudioCoordinator?
+    private var iconManager: MenuBarIconManager?
+    
+    @MainActor
+    private var audioEngine: AudioEngine? {
+        return audioCoordinator?.audioEngine
+    }
     
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -185,11 +194,70 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             throw VocanaError.statusBarButtonFailure
         }
         
-        button.image = NSImage(systemSymbolName: "waveform.and.mic", accessibilityDescription: AppConstants.accessibilityDescription)
+        // Icon will be set up by MenuBarIconManager after popover is created
         button.action = #selector(menuBarClicked)
         button.target = self
         
         setupPopover()
+    }
+    
+    @MainActor
+    private func setupMenuBarIconUpdates() {
+        guard let audioEngine = audioEngine, let settings = audioCoordinator?.settings else { 
+            #if DEBUG
+            VocanaLogger.app.error("setupMenuBarIconUpdates: No audio engine or settings available")
+            #endif
+            return 
+        }
+        
+        // Initialize icon manager
+        iconManager = MenuBarIconManager()
+        
+        #if DEBUG
+            VocanaLogger.app.debug("Setting up consolidated menu bar icon updates...")
+            #endif
+        
+        // Consolidate multiple publishers into single update stream for performance
+        Publishers.CombineLatest3(
+            audioEngine.$isUsingRealAudio,
+            audioEngine.$currentLevels,
+            settings.$isEnabled
+        )
+        .debounce(for: .milliseconds(16), scheduler: DispatchQueue.main) // 60fps max
+        .map { [weak self] isUsingRealAudio, _, isEnabled in
+            // Update icon manager state
+            self?.iconManager?.updateState(isEnabled: isEnabled, isUsingRealAudio: isUsingRealAudio)
+        }
+        .sink { [weak self] _ in
+            // Apply the updated state to the button
+            self?.applyCurrentIconState()
+        }
+        .store(in: &cancellables)
+        
+        // Initial update
+        applyCurrentIconState()
+    }
+    
+    private var cancellables = Set<AnyCancellable>()
+    
+    @MainActor
+    private func applyCurrentIconState() {
+        guard let button = statusItem?.button else { 
+            #if DEBUG
+            VocanaLogger.app.error("applyCurrentIconState: No status item button available")
+            #endif
+            return 
+        }
+        
+        guard let iconManager = iconManager else {
+            #if DEBUG
+            VocanaLogger.app.error("applyCurrentIconState: No icon manager available")
+            #endif
+            return
+        }
+        
+        // Apply current icon state to button with error handling
+        iconManager.applyToButton(button)
     }
     
     @MainActor
@@ -198,8 +266,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover?.contentSize = NSSize(width: AppConstants.popoverWidth, height: AppConstants.popoverHeight)
         popover?.behavior = .transient
         
-        let contentView = ContentView()
+        // Create audio coordinator and content view
+        audioCoordinator = AudioCoordinator()
+        let contentView = ContentView(coordinator: audioCoordinator!)
         popover?.contentViewController = NSHostingController(rootView: contentView)
+        
+        // Setup menu bar icon updates AFTER audioCoordinator is created
+        setupMenuBarIconUpdates()
     }
     
     @objc private func menuBarClicked() {

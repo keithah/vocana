@@ -90,7 +90,17 @@ final class MenuBarIconManagerTests: XCTestCase {
         wait(for: [expectation], timeout: 1.0)
     }
     
-
+    func testStateUpdateThrottling() {
+        let expectation = XCTestExpectation(description: "State update throttling")
+        var updateCount = 0
+        
+        // Subscribe to state changes
+        iconManager.$currentState
+            .sink { _ in
+                updateCount += 1
+                if updateCount == 1 {
+                    expectation.fulfill()
+                }
             }
             .store(in: &cancellables)
         
@@ -147,19 +157,12 @@ final class MenuBarIconManagerTests: XCTestCase {
     }
     
     func testNilButtonHandling() {
-        // Should not crash when button is nil
-        // Note: applyToButton expects NSStatusBarButton, not optional
-        // This test verifies the manager handles missing button gracefully
-        let button = NSStatusBarButton()
-        iconManager.targetButton = nil
+        // Should not crash when updating state without button
+        // Note: targetButton is private, so we can't directly set it to nil
+        // This test verifies the manager handles state updates gracefully
         iconManager.updateState(isEnabled: true, isUsingRealAudio: true)
         
         // State changes should still work even without button
-        XCTAssertEqual(iconManager.currentState, .active)
-    }
-        
-        // State changes should still work even without button
-        iconManager.updateState(isEnabled: true, isUsingRealAudio: true)
         XCTAssertEqual(iconManager.currentState, .active)
     }
     

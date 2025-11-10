@@ -9,7 +9,7 @@ import CoreMedia
 /// Isolated from buffer management, ML processing, and level calculations
 @MainActor
 class AudioSessionManager: NSObject {
-    private static let logger = Logger(subsystem: "Vocana", category: "AudioSessionManager")
+    nonisolated static let logger = Logger(subsystem: "Vocana", category: "AudioSessionManager")
     
     private var audioEngine: AVAudioEngine?
     private(set) var isTapInstalled = false  // Fix TEST-001: Expose for testing
@@ -38,36 +38,35 @@ class AudioSessionManager: NSObject {
     /// Start real audio capture from microphone
     /// - Returns: true if successful, false otherwise
     func startRealAudioCapture() -> Bool {
-        print("🎤 AudioSessionManager.startRealAudioCapture - Starting...")
+        Self.logger.info("Starting real audio capture")
         
         // Check permissions first
         #if os(macOS)
-        print("🎤 macOS detected - checking microphone permissions...")
         let permissionStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        print("🎤 Microphone permission status: \(permissionStatus.rawValue)")
+        Self.logger.info("Microphone permission status: \(permissionStatus.rawValue)")
         
         if permissionStatus == .denied {
-            print("🎤 ❌ Microphone access denied - requesting permission...")
+            Self.logger.warning("Microphone access denied - requesting permission")
             requestMicrophonePermission()
             return false
         } else if permissionStatus == .restricted {
-            print("🎤 ❌ Microphone access restricted")
+            Self.logger.error("Microphone access restricted")
             return false
         } else if permissionStatus == .notDetermined {
-            print("🎤 ❓ Permission not determined - requesting permission...")
+            Self.logger.info("Permission not determined - requesting permission")
             requestMicrophonePermission()
             return false
         }
         
         // Check available input devices
         let inputDevices = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInMicrophone, .externalUnknown], mediaType: .audio, position: .unspecified).devices
-        print("🎤 Available input devices: \(inputDevices.count)")
+        Self.logger.info("Found \(inputDevices.count) available input devices")
         for device in inputDevices {
-            print("🎤   - \(device.localizedName)")
+            Self.logger.debug("Available device: \(device.localizedName)")
         }
         
         if inputDevices.isEmpty {
-            print("🎤 ❌ No input devices found!")
+            Self.logger.error("No input devices found")
             return false
         }
         #else
@@ -76,9 +75,9 @@ class AudioSessionManager: NSObject {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: [])
             try session.setActive(true)
-            print("🎤 Audio session configured successfully")
+            Self.logger.info("Audio session configured successfully")
         } catch {
-            print("🎤 ❌ Failed to configure audio session: \(error.localizedDescription)")
+            Self.logger.error("Failed to configure audio session: \(error.localizedDescription)")
             return false
         }
         #endif
@@ -89,19 +88,19 @@ class AudioSessionManager: NSObject {
         }
         
         // Fallback to AVAudioEngine if AVCapture fails
-        print("🎤 AVCapture failed, trying AVAudioEngine fallback...")
+        Self.logger.info("AVCapture failed, trying AVAudioEngine fallback")
         return startAVAudioEngineInput()
     }
     
     /// Start audio input using AVCapture (more reliable on macOS)
     private func startAVCaptureAudioInput() -> Bool {
-        print("🎤 Starting AVCapture audio input...")
+        Self.logger.info("Starting AVCapture audio input")
         
         do {
             // Create capture session
             captureSession = AVCaptureSession()
             guard let captureSession = captureSession else {
-                print("🎤 Failed to create capture session")
+                Self.logger.error("Failed to create capture session")
                 return false
             }
             
@@ -111,17 +110,17 @@ class AudioSessionManager: NSObject {
             
             // Find default audio device
             guard let audioDevice = AVCaptureDevice.default(for: .audio) else {
-                print("🎤 No default audio device found")
+                Self.logger.error("No default audio device found")
                 captureSession.commitConfiguration()
                 return false
             }
             
-            print("🎤 Using audio device: \(audioDevice.localizedName)")
+            Self.logger.info("Using audio device: \(audioDevice.localizedName)")
             
             // Create audio input
             audioInput = try AVCaptureDeviceInput(device: audioDevice)
             guard let audioInput = audioInput else {
-                print("🎤 Failed to create audio input")
+                Self.logger.error("Failed to create audio input")
                 captureSession.commitConfiguration()
                 return false
             }
@@ -130,7 +129,7 @@ class AudioSessionManager: NSObject {
             if captureSession.canAddInput(audioInput) {
                 captureSession.addInput(audioInput)
             } else {
-                print("🎤 Cannot add audio input to session")
+                Self.logger.error("Cannot add audio input to session")
                 captureSession.commitConfiguration()
                 return false
             }
@@ -138,7 +137,7 @@ class AudioSessionManager: NSObject {
             // Create audio output
             audioOutput = AVCaptureAudioDataOutput()
             guard let audioOutput = audioOutput else {
-                print("🎤 Failed to create audio output")
+                Self.logger.error("Failed to create audio output")
                 captureSession.commitConfiguration()
                 return false
             }
@@ -150,7 +149,7 @@ class AudioSessionManager: NSObject {
             if captureSession.canAddOutput(audioOutput) {
                 captureSession.addOutput(audioOutput)
             } else {
-                print("🎤 Cannot add audio output to session")
+                Self.logger.error("Cannot add audio output to session")
                 captureSession.commitConfiguration()
                 return false
             }
@@ -159,17 +158,17 @@ class AudioSessionManager: NSObject {
             
             // Start session
             captureSession.startRunning()
-            print("🎤 ✅ AVCapture session started successfully")
+            Self.logger.info("AVCapture session started successfully")
             
             // Verify session is running
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                print("🎤 Capture session running: \(captureSession.isRunning)")
+                Self.logger.debug("Capture session running: \(captureSession.isRunning)")
             }
             
             return true
             
         } catch {
-            print("🎤 ❌ Failed to start AVCapture audio input: \(error.localizedDescription)")
+            Self.logger.info("❌ Failed to start AVCapture audio input: \(error.localizedDescription)")
             cleanupAVCapture()
             return false
         }
@@ -177,31 +176,31 @@ class AudioSessionManager: NSObject {
     
     /// Start audio input using AVAudioEngine (fallback)
     private func startAVAudioEngineInput() -> Bool {
-        print("🎤 Starting AVAudioEngine fallback...")
+        Self.logger.info("Starting AVAudioEngine fallback...")
         
         do {
-            print("🎤 Creating AVAudioEngine...")
+            Self.logger.info("Creating AVAudioEngine...")
             audioEngine = AVAudioEngine()
             guard let audioEngine = audioEngine else { 
-                print("🎤 Failed to create AVAudioEngine")
+                Self.logger.info("Failed to create AVAudioEngine")
                 return false 
             }
             
             let inputNode = audioEngine.inputNode
             let inputFormat = inputNode.outputFormat(forBus: 0)
-            print("🎤 Input format: \(inputFormat)")
-            print("🎤 Sample rate: \(inputFormat.sampleRate)")
-            print("🎤 Channels: \(inputFormat.channelCount)")
+            Self.logger.info("Input format: \(inputFormat)")
+            Self.logger.info("Sample rate: \(inputFormat.sampleRate)")
+            Self.logger.info("Channels: \(inputFormat.channelCount)")
             
             // Create a standard format for audio input
             let standardFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)
-            print("🎤 Using standard format: \(String(describing: standardFormat))")
+            Self.logger.info("Using standard format: \(String(describing: standardFormat))")
             
             // Install tap
             let bufferCallback = self.onAudioBufferReceived
             
             inputNode.installTap(onBus: 0, bufferSize: 512, format: standardFormat) { buffer, _ in
-                print("🎤 🎉 AVAudioEngine tap working! Buffer length: \(buffer.frameLength)")
+                Self.logger.info("🎉 AVAudioEngine tap working! Buffer length: \(buffer.frameLength)")
                 
                 // Validate buffer
                 guard buffer.frameLength > 0 && buffer.frameLength <= 8192 else {
@@ -236,15 +235,15 @@ class AudioSessionManager: NSObject {
             
             isTapInstalled = true
             
-            print("🎤 Starting audio engine...")
+            Self.logger.info("Starting audio engine...")
             try audioEngine.start()
-            print("🎤 ✅ AVAudioEngine started successfully")
-            print("🎤 Engine running: \(audioEngine.isRunning)")
+            Self.logger.info("✅ AVAudioEngine started successfully")
+            Self.logger.info("Engine running: \(audioEngine.isRunning)")
             
             return true
             
         } catch {
-            print("🎤 ❌ Failed to start AVAudioEngine: \(error.localizedDescription)")
+            Self.logger.info("❌ Failed to start AVAudioEngine: \(error.localizedDescription)")
             Self.logger.error("Failed to start AVAudioEngine: \(error.localizedDescription)")
             cleanupAVAudioEngine()
             return false
@@ -253,7 +252,7 @@ class AudioSessionManager: NSObject {
     
     /// Stop real audio capture and clean up audio session
     func stopRealAudioCapture() {
-        print("🎤 Stopping real audio capture...")
+        Self.logger.info("Stopping real audio capture...")
         
         // Stop AVCapture first
         cleanupAVCapture()
@@ -275,7 +274,7 @@ class AudioSessionManager: NSObject {
         }
         #endif
         
-        print("🎤 Real audio capture stopped")
+        Self.logger.info("Real audio capture stopped")
     }
     
     /// Clean up AVCapture resources
@@ -336,11 +335,11 @@ class AudioSessionManager: NSObject {
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             DispatchQueue.main.async {
                 if granted {
-                    print("🎤 ✅ Microphone permission granted")
+                    Self.logger.info("✅ Microphone permission granted")
                     // Try starting audio capture again
                     _ = self.startRealAudioCapture()
                 } else {
-                    print("🎤 ❌ Microphone permission denied")
+                    Self.logger.info("❌ Microphone permission denied")
                     self.showPermissionAlert()
                 }
             }
@@ -367,11 +366,11 @@ class AudioSessionManager: NSObject {
     
     /// Try alternative audio input approach
     private func tryAlternativeAudioInput() {
-        print("🎤 Trying alternative audio input...")
+        Self.logger.info("Trying alternative audio input...")
         
         // Try using a different buffer size and format
         guard audioEngine != nil else {
-            print("🎤 No audio engine available")
+            Self.logger.info("No audio engine available")
             return
         }
         
@@ -387,7 +386,7 @@ class AudioSessionManager: NSObject {
         let simpleFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false)
         
         inputNode.installTap(onBus: 0, bufferSize: 256, format: simpleFormat) { buffer, _ in
-            print("🎤 🎉 ALTERNATIVE AUDIO TAP WORKING! Buffer length: \(buffer.frameLength)")
+            Self.logger.info("🎉 ALTERNATIVE AUDIO TAP WORKING! Buffer length: \(buffer.frameLength)")
             
             // Call the original callback
             DispatchQueue.main.async {
@@ -396,7 +395,7 @@ class AudioSessionManager: NSObject {
         }
         
         isTapInstalled = true
-        print("🎤 Alternative tap installed")
+        Self.logger.info("Alternative tap installed")
     }
     
     /// Clean up resources
@@ -410,24 +409,24 @@ class AudioSessionManager: NSObject {
 
 extension AudioSessionManager: AVCaptureAudioDataOutputSampleBufferDelegate {
     nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        print("🎤 🎉 AVCapture audio data received! Sample buffer size: \(sampleBuffer.numSamples)")
+        Self.logger.info("🎉 AVCapture audio data received! Sample buffer size: \(sampleBuffer.numSamples)")
         
         // Get number of samples
         let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
         guard numSamples > 0 else {
-            print("🎤 No samples in buffer")
+            Self.logger.info("No samples in buffer")
             return
         }
         
         // Get format description
         guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else {
-            print("🎤 Failed to get format description")
+            Self.logger.info("Failed to get format description")
             return
         }
         
         // Get audio stream basic description
         guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else {
-            print("🎤 Failed to get audio stream basic description")
+            Self.logger.info("Failed to get audio stream basic description")
             return
         }
         
@@ -436,13 +435,13 @@ extension AudioSessionManager: AVCaptureAudioDataOutputSampleBufferDelegate {
         
         // Create AVAudioFormat
         guard let audioFormat = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels) else {
-            print("🎤 Failed to create audio format")
+            Self.logger.info("Failed to create audio format")
             return
         }
         
         // Create AVAudioPCMBuffer
         guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(numSamples)) else {
-            print("🎤 Failed to create PCM buffer")
+            Self.logger.info("Failed to create PCM buffer")
             return
         }
         
@@ -456,7 +455,7 @@ extension AudioSessionManager: AVCaptureAudioDataOutputSampleBufferDelegate {
         )
         
         guard copyStatus == noErr else {
-            print("🎤 Failed to copy audio data: \(copyStatus)")
+            Self.logger.info("Failed to copy audio data: \(copyStatus)")
             return
         }
         

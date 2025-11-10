@@ -12,13 +12,13 @@ final class AudioCoordinatorMemoryTests: XCTestCase {
             let coordinator = AudioCoordinator()
             weakCoordinator = coordinator
             
-            // Start and stop audio simulation
-            coordinator.startAudioSimulation()
+            // Start and stop audio processing
+            coordinator.startAudioProcessing()
             
             // Simulate some time passing
             try await Task.sleep(nanoseconds: 100_000_000) // 100ms
             
-            coordinator.stopAudioSimulation()
+            coordinator.stopAudioProcessing()
         }
         
         // Give cleanup time to complete
@@ -61,11 +61,11 @@ final class AudioCoordinatorMemoryTests: XCTestCase {
             let coordinator = AudioCoordinator()
             weakCoordinator = coordinator
             
-            coordinator.startAudioSimulation()
+            coordinator.startAudioProcessing()
             try await Task.sleep(nanoseconds: 100_000_000)
             
             // Explicitly stop - this is important for cleanup
-            coordinator.stopAudioSimulation()
+            coordinator.stopAudioProcessing()
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         

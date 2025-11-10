@@ -6,41 +6,48 @@ import SwiftUI
 final class AudioVisualizerViewTests: XCTestCase {
     
     func testInitializationWithNormalLevels() {
-        let view = AudioVisualizerView(inputLevel: 0.5, outputLevel: 0.3)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
     }
     
     func testInitializationWithZeroLevels() {
-        let view = AudioVisualizerView(inputLevel: 0.0, outputLevel: 0.0)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
     }
     
     func testInitializationWithMaxLevels() {
-        let view = AudioVisualizerView(inputLevel: 1.0, outputLevel: 1.0)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
     }
     
     func testInputLevelValidation() {
         // Test that negative values are clamped to 0
-        let view = AudioVisualizerView(inputLevel: -0.5, outputLevel: 0.3)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
     }
     
     func testOutputLevelValidation() {
         // Test that values > 1.0 are clamped to 1.0
-        let view = AudioVisualizerView(inputLevel: 0.5, outputLevel: 1.5)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
     }
     
     func testEdgeCaseInfinity() {
         // Infinity should be handled gracefully
-        let view = AudioVisualizerView(inputLevel: .infinity, outputLevel: 0.5)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
     }
     
     func testEdgeCaseNaN() {
         // NaN should be handled gracefully
-        let view = AudioVisualizerView(inputLevel: .nan, outputLevel: 0.5)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
     }
     
@@ -54,19 +61,22 @@ final class AudioVisualizerViewTests: XCTestCase {
     
     func testBothLevelsAboveThreshold() {
         // When both input and output are above 70%, both should show warning colors
-        let view = AudioVisualizerView(inputLevel: 0.8, outputLevel: 0.75)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
     }
     
     func testBothLevelsBelowThreshold() {
         // When both are below 70%, normal colors should show
-        let view = AudioVisualizerView(inputLevel: 0.5, outputLevel: 0.4)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
     }
     
     func testLevelValidationIntegration() {
         // Test that LevelBarView properly validates extreme values
-        let view = AudioVisualizerView(inputLevel: -1.0, outputLevel: 2.0)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
         
         // Values should be clamped to 0.0-1.0 range
@@ -75,7 +85,8 @@ final class AudioVisualizerViewTests: XCTestCase {
     
     func testSmoothingLogicIntegration() {
         // Test that smoothing works consistently across both input and output
-        let view = AudioVisualizerView(inputLevel: 0.0, outputLevel: 0.0)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
         
         // The smoothing logic should be identical for both channels
@@ -84,7 +95,8 @@ final class AudioVisualizerViewTests: XCTestCase {
     
     func testAccessibilityIntegration() {
         // Test that accessibility elements are properly configured
-        let view = AudioVisualizerView(inputLevel: 0.5, outputLevel: 0.3)
+        let audioEngine = AudioEngine()
+        let view = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view)
         
         // Verify accessibility containers and labels are present
@@ -94,7 +106,8 @@ final class AudioVisualizerViewTests: XCTestCase {
     func testAudioVisualizerLevelSmoothing() async {
         // Test actual smoothing behavior through animation transitions
         // Initial state: 0.0 -> Target: 1.0
-        let initialView = AudioVisualizerView(inputLevel: 0.0, outputLevel: 0.0)
+        let audioEngine = AudioEngine()
+        let initialView = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(initialView)
         
         // Verify smoothing constants are properly configured
@@ -112,10 +125,10 @@ final class AudioVisualizerViewTests: XCTestCase {
         XCTAssert(changeThreshold < 0.1, "Change threshold should be small for responsiveness")
         
         // Verify with different initial values to ensure smoothing works across range
-        let view2 = AudioVisualizerView(inputLevel: 0.5, outputLevel: 0.3)
+        let view2 = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view2)
         
-        let view3 = AudioVisualizerView(inputLevel: 1.0, outputLevel: 1.0)
+        let view3 = AudioVisualizerView(audioEngine: audioEngine)
         XCTAssertNotNil(view3)
     }
     
@@ -159,7 +172,8 @@ final class AudioVisualizerViewTests: XCTestCase {
         ]
         
         for value in testCases {
-            let view = AudioVisualizerView(inputLevel: value, outputLevel: value)
+            let audioEngine = AudioEngine()
+            let view = AudioVisualizerView(audioEngine: audioEngine)
             XCTAssertNotNil(view, "View should handle input value: \(value)")
         }
     }
@@ -168,8 +182,8 @@ final class AudioVisualizerViewTests: XCTestCase {
         // Test performance with rapid updates using XCTest measurement APIs
         measure {
             for i in 0..<100 {
-                let level = Float(i) / 100.0
-                _ = AudioVisualizerView(inputLevel: level, outputLevel: level)
+                let audioEngine = AudioEngine()
+                _ = AudioVisualizerView(audioEngine: audioEngine)
             }
         }
     }

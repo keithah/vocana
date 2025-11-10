@@ -290,9 +290,7 @@ class AudioEngine: ObservableObject {
     // MARK: - Public API
     
     func startAudioProcessing(isEnabled: Bool, sensitivity: Double) {
-        let logMessage = "🎙️ AudioEngine.startAudioProcessing - isEnabled: \(isEnabled), sensitivity: \(sensitivity)"
-        print(logMessage)
-        logToFile(logMessage)
+        Self.logger.info("Starting audio processing - isEnabled: \(isEnabled), sensitivity: \(sensitivity)")
         
         // Always stop existing pipeline first to ensure clean state
         if self.isEnabled {
@@ -303,56 +301,25 @@ class AudioEngine: ObservableObject {
         self.sensitivity = sensitivity
 
         if isEnabled {
-            let captureLog = "🎙️ Starting real audio capture..."
-            print(captureLog)
-            logToFile(captureLog)
+            Self.logger.info("Starting real audio capture")
             isUsingRealAudio = audioSessionManager.startRealAudioCapture()
-            let resultLog = "🎙️ Real audio capture result: \(isUsingRealAudio)"
-            print(resultLog)
-            logToFile(resultLog)
+            Self.logger.info("Real audio capture result: \(self.isUsingRealAudio)")
 
             if !isUsingRealAudio {
                 let errorLog = "🎙️ ❌ Failed to start real audio capture - microphone unavailable"
                 print(errorLog)
-                logToFile(errorLog)
                 return
             }
 
-            let mlLog = "🎙️ Initializing ML processing..."
-            print(mlLog)
-            logToFile(mlLog)
+            Self.logger.info("Initializing ML processing")
             initializeMLProcessing()
         } else {
-            let decayLog = "🎙️ Starting decay timer for disabled state"
-            print(decayLog)
-            logToFile(decayLog)
+            Self.logger.debug("Starting decay timer for disabled state")
             // Start decay timer for visual smoothing when disabled
             startDecayTimer()
         }
         
-        let completeLog = "🎙️ startAudioProcessing complete - isUsingRealAudio: \(isUsingRealAudio), isMLProcessingActive: \(isMLProcessingActive), hasPerformanceIssues: \(hasPerformanceIssues)"
-        print(completeLog)
-        logToFile(completeLog)
-    }
-    
-    private func logToFile(_ message: String) {
-        let timestamp = DateFormatter().string(from: Date())
-        let logEntry = "[\(timestamp)] \(message)\n"
-        
-        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let logURL = documentsURL.appendingPathComponent("vocana_debug.log")
-            if let data = logEntry.data(using: .utf8) {
-                if FileManager.default.fileExists(atPath: logURL.path) {
-                    if let fileHandle = try? FileHandle(forWritingTo: logURL) {
-                        fileHandle.seekToEndOfFile()
-                        fileHandle.write(data)
-                        fileHandle.closeFile()
-                    }
-                } else {
-                    try? data.write(to: logURL)
-                }
-            }
-        }
+        Self.logger.info("Audio processing started - isUsingRealAudio: \(self.isUsingRealAudio), isMLProcessingActive: \(self.isMLProcessingActive), hasPerformanceIssues: \(self.hasPerformanceIssues)")
     }
 
     /// Start decay timer for level smoothing during disabled state

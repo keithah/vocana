@@ -1,0 +1,21 @@
+//
+//  VocanaAudioDriver.iig
+//  VocanaAudioDriver
+//
+//  Created by Keith on 11/10/25.
+//
+
+#ifndef VocanaAudioDriver_h
+#define VocanaAudioDriver_h
+
+#include <Availability.h>
+#include <DriverKit/IOService.iig>
+
+class VocanaAudioDriver: public IOService
+{
+public:
+    virtual kern_return_t
+    Start(IOService * provider) override;
+};
+
+#endif /* VocanaAudioDriver_h */

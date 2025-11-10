@@ -5,17 +5,17 @@
 //  Created by Keith on 11/9/25.
 //
 
-#ifndef VocanaAudioDriver_h
-#define VocanaAudioDriver_h
-
-#include <Availability.h>
 #include <DriverKit/IOService.iig>
+#include <AudioDriverKit/IOUserAudioDriver.iig>
 
-class VocanaAudioDriver: public IOService
+class VocanaAudioDriver : IOUserAudioDriver
 {
 public:
-    virtual kern_return_t
-    Start(IOService * provider) override;
-};
+    bool init() KERNEL;
+    void free() KERNEL;
+    kern_return_t Start(IOService * provider) KERNEL;
+    kern_return_t Stop(IOService * provider) KERNEL;
 
-#endif /* VocanaAudioDriver_h */
+private:
+    IVars* ivars;
+};

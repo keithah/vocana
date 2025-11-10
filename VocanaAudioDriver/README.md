@@ -47,7 +47,14 @@ VocanaAudioDriver/
    - `com.apple.developer.driverkit.family.audio`
    - `com.apple.developer.driverkit.transport.usb` (if needed)
 
-### Step 5: Replace Template Files
+### Step 5: Embed Dext in Main App
+1. In your **Vocana** project (not the dext project), select the main app target
+2. Go to **General** tab → **Frameworks, Libraries, and Embedded Content**
+3. Click **+** button
+4. Select **VocanaAudioDriver.dext** from the dext project
+5. Set **Embed** to **Embed & Sign**
+
+### Step 6: Replace Template Files
 Replace the template files with the files from this directory:
 - `VocanaAudioDriver.hpp/.cpp`
 - `VocanaAudioUserClient.hpp/.cpp`

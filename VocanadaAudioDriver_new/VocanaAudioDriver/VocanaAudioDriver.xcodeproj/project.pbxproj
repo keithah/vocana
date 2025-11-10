@@ -7,31 +7,29 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		53A4A9C32EC1D077006093FC /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 53A4A9C22EC1D077006093FC /* DriverKit.framework */; };
-		53A4A9D12EC1D0A7006093FC /* AudioDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 53A4A9D02EC1D0A7006093FC /* AudioDriverKit.framework */; };
+		53A4A9E62EC1DCEC006093FC /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 53A4A9E52EC1DCEC006093FC /* DriverKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		53A4A9BF2EC1D077006093FC /* com.vocana.VocanaAudioDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = com.vocana.VocanaAudioDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
-		53A4A9C22EC1D077006093FC /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = Library/Frameworks/DriverKit.framework; sourceTree = DEVELOPER_DIR; };
-		53A4A9D02EC1D0A7006093FC /* AudioDriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioDriverKit.framework; path = System/DriverKit/System/Library/Frameworks/AudioDriverKit.framework; sourceTree = SDKROOT; };
+		53A4A9E22EC1DCEC006093FC /* com.vocana.VocanaAudioDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = com.vocana.VocanaAudioDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
+		53A4A9E52EC1DCEC006093FC /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = Library/Frameworks/DriverKit.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		53A4A9CA2EC1D077006093FC /* Exceptions for "VocanaAudioDriver" folder in "VocanaAudioDriver" target */ = {
+		53A4A9ED2EC1DCEC006093FC /* Exceptions for "VocanaAudioDriver" folder in "VocanaAudioDriver" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 53A4A9BE2EC1D077006093FC /* VocanaAudioDriver */;
+			target = 53A4A9E12EC1DCEC006093FC /* VocanaAudioDriver */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		53A4A9C42EC1D077006093FC /* VocanaAudioDriver */ = {
+		53A4A9E72EC1DCEC006093FC /* VocanaAudioDriver */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				53A4A9CA2EC1D077006093FC /* Exceptions for "VocanaAudioDriver" folder in "VocanaAudioDriver" target */,
+				53A4A9ED2EC1DCEC006093FC /* Exceptions for "VocanaAudioDriver" folder in "VocanaAudioDriver" target */,
 			);
 			path = VocanaAudioDriver;
 			sourceTree = "<group>";
@@ -39,40 +37,38 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		53A4A9BC2EC1D077006093FC /* Frameworks */ = {
+		53A4A9DF2EC1DCEC006093FC /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				53A4A9D12EC1D0A7006093FC /* AudioDriverKit.framework in Frameworks */,
-				53A4A9C32EC1D077006093FC /* DriverKit.framework in Frameworks */,
+				53A4A9E62EC1DCEC006093FC /* DriverKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		53A4A9B52EC1D077006093FC = {
+		53A4A9D82EC1DCEC006093FC = {
 			isa = PBXGroup;
 			children = (
-				53A4A9C42EC1D077006093FC /* VocanaAudioDriver */,
-				53A4A9C12EC1D077006093FC /* Frameworks */,
-				53A4A9C02EC1D077006093FC /* Products */,
+				53A4A9E72EC1DCEC006093FC /* VocanaAudioDriver */,
+				53A4A9E42EC1DCEC006093FC /* Frameworks */,
+				53A4A9E32EC1DCEC006093FC /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		53A4A9C02EC1D077006093FC /* Products */ = {
+		53A4A9E32EC1DCEC006093FC /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				53A4A9BF2EC1D077006093FC /* com.vocana.VocanaAudioDriver.dext */,
+				53A4A9E22EC1DCEC006093FC /* com.vocana.VocanaAudioDriver.dext */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		53A4A9C12EC1D077006093FC /* Frameworks */ = {
+		53A4A9E42EC1DCEC006093FC /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				53A4A9D02EC1D0A7006093FC /* AudioDriverKit.framework */,
-				53A4A9C22EC1D077006093FC /* DriverKit.framework */,
+				53A4A9E52EC1DCEC006093FC /* DriverKit.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -80,7 +76,7 @@
 /* End PBXGroup section */
 
 /* Begin PBXHeadersBuildPhase section */
-		53A4A9BA2EC1D077006093FC /* Headers */ = {
+		53A4A9DD2EC1DCEC006093FC /* Headers */ = {
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -90,64 +86,64 @@
 /* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
-		53A4A9BE2EC1D077006093FC /* VocanaAudioDriver */ = {
+		53A4A9E12EC1DCEC006093FC /* VocanaAudioDriver */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 53A4A9CB2EC1D077006093FC /* Build configuration list for PBXNativeTarget "VocanaAudioDriver" */;
+			buildConfigurationList = 53A4A9EE2EC1DCEC006093FC /* Build configuration list for PBXNativeTarget "VocanaAudioDriver" */;
 			buildPhases = (
-				53A4A9BA2EC1D077006093FC /* Headers */,
-				53A4A9BB2EC1D077006093FC /* Sources */,
-				53A4A9BC2EC1D077006093FC /* Frameworks */,
-				53A4A9BD2EC1D077006093FC /* Resources */,
+				53A4A9DD2EC1DCEC006093FC /* Headers */,
+				53A4A9DE2EC1DCEC006093FC /* Sources */,
+				53A4A9DF2EC1DCEC006093FC /* Frameworks */,
+				53A4A9E02EC1DCEC006093FC /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				53A4A9C42EC1D077006093FC /* VocanaAudioDriver */,
+				53A4A9E72EC1DCEC006093FC /* VocanaAudioDriver */,
 			);
 			name = VocanaAudioDriver;
 			packageProductDependencies = (
 			);
 			productName = VocanaAudioDriver;
-			productReference = 53A4A9BF2EC1D077006093FC /* com.vocana.VocanaAudioDriver.dext */;
+			productReference = 53A4A9E22EC1DCEC006093FC /* com.vocana.VocanaAudioDriver.dext */;
 			productType = "com.apple.product-type.driver-extension";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		53A4A9B62EC1D077006093FC /* Project object */ = {
+		53A4A9D92EC1DCEC006093FC /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
-					53A4A9BE2EC1D077006093FC = {
+					53A4A9E12EC1DCEC006093FC = {
 						CreatedOnToolsVersion = 26.0.1;
 					};
 				};
 			};
-			buildConfigurationList = 53A4A9B92EC1D077006093FC /* Build configuration list for PBXProject "VocanaAudioDriver" */;
+			buildConfigurationList = 53A4A9DC2EC1DCEC006093FC /* Build configuration list for PBXProject "VocanaAudioDriver" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
 			);
-			mainGroup = 53A4A9B52EC1D077006093FC;
+			mainGroup = 53A4A9D82EC1DCEC006093FC;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = 53A4A9C02EC1D077006093FC /* Products */;
+			productRefGroup = 53A4A9E32EC1DCEC006093FC /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				53A4A9BE2EC1D077006093FC /* VocanaAudioDriver */,
+				53A4A9E12EC1DCEC006093FC /* VocanaAudioDriver */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		53A4A9BD2EC1D077006093FC /* Resources */ = {
+		53A4A9E02EC1DCEC006093FC /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -157,7 +153,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		53A4A9BB2EC1D077006093FC /* Sources */ = {
+		53A4A9DE2EC1DCEC006093FC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -167,35 +163,17 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		53A4A9CC2EC1D077006093FC /* Debug */ = {
+		53A4A9EF2EC1DCEC006093FC /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6R7S5GA944;
-				ENABLE_HARDENED_RUNTIME = YES;
-				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
-				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
-				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
-				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
-				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
-				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SDKROOT)/System/DriverKit/System/Library/Frameworks",
-				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = VocanaAudioDriver/Info.plist;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.vocana.VocanaAudioDriver;
 				PRODUCT_NAME = "$(inherited)";
-				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
-				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
-				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
-				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
-				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
-				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				RUN_CLANG_STATIC_ANALYZER = YES;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -203,35 +181,17 @@
 			};
 			name = Debug;
 		};
-		53A4A9CD2EC1D077006093FC /* Release */ = {
+		53A4A9F02EC1DCEC006093FC /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6R7S5GA944;
-				ENABLE_HARDENED_RUNTIME = YES;
-				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
-				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
-				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
-				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
-				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
-				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SDKROOT)/System/DriverKit/System/Library/Frameworks",
-				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = VocanaAudioDriver/Info.plist;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.vocana.VocanaAudioDriver;
 				PRODUCT_NAME = "$(inherited)";
-				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
-				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
-				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
-				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
-				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
-				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				RUN_CLANG_STATIC_ANALYZER = YES;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -239,7 +199,7 @@
 			};
 			name = Release;
 		};
-		53A4A9CE2EC1D077006093FC /* Debug */ = {
+		53A4A9F12EC1DCEC006093FC /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -274,6 +234,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 6R7S5GA944;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -300,7 +261,7 @@
 			};
 			name = Debug;
 		};
-		53A4A9CF2EC1D077006093FC /* Release */ = {
+		53A4A9F22EC1DCEC006093FC /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -335,6 +296,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 6R7S5GA944;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -357,25 +319,25 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		53A4A9B92EC1D077006093FC /* Build configuration list for PBXProject "VocanaAudioDriver" */ = {
+		53A4A9DC2EC1DCEC006093FC /* Build configuration list for PBXProject "VocanaAudioDriver" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				53A4A9CE2EC1D077006093FC /* Debug */,
-				53A4A9CF2EC1D077006093FC /* Release */,
+				53A4A9F12EC1DCEC006093FC /* Debug */,
+				53A4A9F22EC1DCEC006093FC /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		53A4A9CB2EC1D077006093FC /* Build configuration list for PBXNativeTarget "VocanaAudioDriver" */ = {
+		53A4A9EE2EC1DCEC006093FC /* Build configuration list for PBXNativeTarget "VocanaAudioDriver" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				53A4A9CC2EC1D077006093FC /* Debug */,
-				53A4A9CD2EC1D077006093FC /* Release */,
+				53A4A9EF2EC1DCEC006093FC /* Debug */,
+				53A4A9F02EC1DCEC006093FC /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = 53A4A9B62EC1D077006093FC /* Project object */;
+	rootObject = 53A4A9D92EC1DCEC006093FC /* Project object */;
 }

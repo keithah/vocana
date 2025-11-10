@@ -55,11 +55,12 @@ class AudioSessionManager {
                    // AVAudioPCMBuffer objects are reused by the audio engine, so we must copy the contents
                    // before passing to async contexts to prevent data races
                    
-                   // Fix HIGH: Validate buffer before processing to prevent crashes
-                   guard buffer.frameLength > 0 && buffer.frameLength <= 4096 else {
-                       Self.logger.warning("Invalid buffer frame length: \(buffer.frameLength)")
-                       return
-                   }
+                    // Fix HIGH: Validate buffer before processing to prevent crashes
+                    // Allow larger buffer sizes to accommodate different audio hardware configurations
+                    guard buffer.frameLength > 0 && buffer.frameLength <= 8192 else {
+                        Self.logger.warning("Invalid buffer frame length: \(buffer.frameLength)")
+                        return
+                    }
                     guard buffer.floatChannelData != nil else {
                         Self.logger.warning("Buffer has no channel data")
                         return

@@ -23,9 +23,10 @@ class MLAudioProcessor {
      // Do not access MLAudioProcessor state directly from callbacks to avoid race conditions
       var telemetry: AudioEngine.ProductionTelemetry = .init()
       var recordLatency: (Double) -> Void = { _ in }
-      var recordFailure: () -> Void = {}
-      var recordMemoryPressure: () -> Void = {}
-      var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
+       var recordFailure: () -> Void = {}
+       var recordSuccess: () -> Void = {}
+       var recordMemoryPressure: () -> Void = {}
+       var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
     
     // Public state
     var isMLProcessingActive = false
@@ -162,10 +163,11 @@ class MLAudioProcessor {
                  let endTime = CFAbsoluteTimeGetCurrent()
                  let latencyMs = (endTime - startTime) * 1000.0
                  
-                 // Fix CRITICAL: Record telemetry for production monitoring
-                 Task { @MainActor in
-                     self.recordLatency(latencyMs)
-                 }
+                  // Fix CRITICAL: Record telemetry for production monitoring
+                  Task { @MainActor in
+                      self.recordLatency(latencyMs)
+                      self.recordSuccess()  // Reset failure counter on successful processing
+                  }
                  
                  // Monitor for SLA violations (target <1ms)
                  if latencyMs > 1.0 {

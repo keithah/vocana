@@ -79,8 +79,7 @@ struct StatusIndicatorView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption2)
                     .foregroundColor(.orange)
-                    .accessibilityLabel("Performance issues detected")
-                    .help(performanceWarningMessage)
+                    .accessibilityLabel("Performance issues detected: \(performanceWarningMessage)")
             }
         }
         .font(.caption2)

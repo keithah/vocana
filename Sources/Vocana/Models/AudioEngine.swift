@@ -240,10 +240,22 @@ class AudioEngine: ObservableObject {
              Task { @MainActor in
                  self.isMLProcessingActive = false
                  self.updatePerformanceStatus()
-             }
-         }
-         
-         // Fix HIGH-008: Use callback instead of arbitrary sleep for ML initialization
+              }
+          }
+          
+          // Reset ML failures on successful processing
+          mlProcessor.recordSuccess = { [weak self] in
+              guard let self = self else { return }
+              self.recordTelemetryEvent { telemetry in
+                  var updated = telemetry
+                  if updated.mlProcessingFailures > 0 {
+                      updated.mlProcessingFailures = 0
+                  }
+                  return updated
+              }
+          }
+          
+          // Fix HIGH-008: Use callback instead of arbitrary sleep for ML initialization
          mlProcessor.onMLProcessingReady = { [weak self] in
              Task { @MainActor in
                  self?.isMLProcessingActive = true

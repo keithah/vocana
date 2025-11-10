@@ -257,7 +257,7 @@ class AudioEngine: ObservableObject {
                   return updated
               }
               Task { @MainActor in
-                  print("❌ Setting isMLProcessingActive to false due to failure")
+                  Self.logger.info("Setting isMLProcessingActive to false due to failure")
                   self.isMLProcessingActive = false
                   self.updatePerformanceStatus()
                }

@@ -75,24 +75,20 @@ struct AudioVisualizerView: View {
         .accessibilityHint("Shows real-time input and output audio levels")
          // Fix PERF-001: Use AppConstants for magic numbers and prevent race conditions
          .onChange(of: audioEngine.currentLevels.input) { newValue in
-              print("🎨 AudioVisualizerView inputLevel changed: \(newValue)")
-              let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
-              // Update immediately for real-time visualization
-              withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
-                  let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
-                  displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
-              }
-              print("🎨 displayedInputLevel updated to: \(displayedInputLevel)")
+               let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
+               // Update immediately for real-time visualization
+               withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
+                   let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
+                   displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
+               }
           }
           .onChange(of: audioEngine.currentLevels.output) { newValue in
-              print("🎨 AudioVisualizerView outputLevel changed: \(newValue)")
-              let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
-              // Update immediately for real-time visualization
-              withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
-                  let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
-                  displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
-              }
-              print("🎨 displayedOutputLevel updated to: \(displayedOutputLevel)")
+               let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
+               // Update immediately for real-time visualization
+               withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
+                   let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
+                   displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
+               }
           }
     }
 }

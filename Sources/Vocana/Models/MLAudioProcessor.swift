@@ -145,7 +145,7 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                 
                 // Create DeepFilterNet instance (potentially slow model loading)
                 let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
-                print("🤖 ✅ DeepFilterNet created successfully")
+                Logger(subsystem: "Vocana", category: "MLAudioProcessor").info("DeepFilterNet created successfully")
                 
                 // Fix HIGH: Atomic cancellation and state check to prevent TOCTOU race
                 let wasCancelled = Task.isCancelled
@@ -314,7 +314,7 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
     // MARK: - Private Helpers
     
     private nonisolated func findModelsDirectory() -> String {
-        print("🔍 Searching for ML models directory...")
+        Logger(subsystem: "Vocana", category: "MLAudioProcessor").info("Searching for ML models directory...")
         
         // Use Bundle.main.resourcePath for bundled resources (correct for SPM)
         let resourcePath = Bundle.main.resourcePath ?? "."
@@ -331,8 +331,7 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
             "Resources/Models",
             "../Resources/Models", 
             "ml-models/pretrained/tmp/export",
-            "../ml-models/pretrained/tmp/export",
-            "/Users/keith/src/vocana/Vocana/Resources/Models"
+            "../ml-models/pretrained/tmp/export"
         ]
 
         for path in searchPaths {

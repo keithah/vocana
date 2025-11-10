@@ -61,9 +61,6 @@ final class AudioPipelineIntegrationTests: XCTestCase {
         
         // Stop processing
         audioCoordinator.stopAudioProcessing()
-        expectation.fulfill()
-        
-        wait(for: [expectation], timeout: 1.0)
     }
     
     func testAudioLevelPropagation() {

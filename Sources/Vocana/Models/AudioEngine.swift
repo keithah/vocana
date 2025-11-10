@@ -379,15 +379,26 @@ class AudioEngine: ObservableObject {
          mlProcessor.initializeMLProcessing()
      }
     
+    /// Process incoming audio buffer from audio capture system
+    /// 
+    /// This method serves as the entry point for audio processing pipeline:
+    /// 1. Dispatches processing to dedicated audio queue to prevent MainActor blocking
+    /// 2. Coordinates between audio capture, buffering, ML processing, and level calculation
+    /// 3. Handles circuit breaker suspension and error recovery
+    /// 
+    /// - Important: This method is called from the audio capture thread (real-time priority)
+    /// - Parameter buffer: Audio buffer containing captured audio data
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         print("🎵 processAudioBuffer called - frameLength: \(buffer.frameLength)")
         // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
         audioProcessingQueue.async { [weak self] in
-            self?.processAudioBufferInternal(buffer)
+            Task { @MainActor [weak self] in
+                await self?.processAudioBufferInternal(buffer)
+            }
         }
     }
     
-    private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer) {
+    private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer) async {
         // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
         // Use AudioBufferManager as single source of truth for suspension state
         guard !bufferManager.isAudioCaptureSuspended() else { return }

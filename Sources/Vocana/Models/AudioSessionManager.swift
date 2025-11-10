@@ -13,7 +13,6 @@ class AudioSessionManager: NSObject {
     
     private var audioEngine: AVAudioEngine?
     private(set) var isTapInstalled = false  // Fix TEST-001: Expose for testing
-    private var audioCaptureSuspensionTimer: Timer?
     private var timer: Timer?
     
     // AVCapture-based audio input (more reliable on macOS)
@@ -25,7 +24,11 @@ class AudioSessionManager: NSObject {
     // Fix HIGH-001: Dedicated queue for audio processing to avoid blocking MainActor
     private let audioProcessingQueue = DispatchQueue(label: "com.vocana.audioprocessing", qos: .userInitiated)
     
-    // Callback for processing audio buffers
+    /// Callback invoked when audio buffer is received from audio input.
+    /// - Important: This callback is invoked from the audio capture thread (real-time priority).
+    /// Do NOT perform blocking operations. Do NOT call methods that require MainActor.
+    /// Use Task { @MainActor in ... } if main thread update needed.
+    /// - Parameter buffer: Audio buffer containing captured audio data
     var onAudioBufferReceived: ((AVAudioPCMBuffer) -> Void)?
     
     // State for audio processing
@@ -307,28 +310,7 @@ class AudioSessionManager: NSObject {
         }
     }
     
-    /// Suspend audio capture (circuit breaker)
-    /// 
-    /// NOTE: This method is currently unused but kept for future circuit breaker implementation.
-    /// It provides a mechanism to temporarily suspend audio capture for a specified duration,
-    /// which could be useful for handling system-level audio interruptions or memory pressure scenarios.
-    /// 
-    /// - Parameter duration: How long to suspend for (in seconds)
-    func suspendAudioCapture(duration: TimeInterval) {
-        audioCaptureSuspensionTimer?.invalidate()
-        audioCaptureSuspensionTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.resumeAudioCapture()
-            }
-        }
-    }
-    
-    /// Resume audio capture after suspension
-    private func resumeAudioCapture() {
-        audioCaptureSuspensionTimer?.invalidate()
-        audioCaptureSuspensionTimer = nil
-        Self.logger.info("Resuming audio capture after circuit breaker suspension")
-    }
+
     
     /// Request microphone permission on macOS
     private func requestMicrophonePermission() {
@@ -401,7 +383,6 @@ class AudioSessionManager: NSObject {
     /// Clean up resources
     func cleanup() {
         stopRealAudioCapture()
-        audioCaptureSuspensionTimer?.invalidate()
     }
 }
 

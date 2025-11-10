@@ -26,9 +26,27 @@ protocol MLAudioProcessorProtocol: AnyObject {
     func cleanup() async
 }
 
-/// Manages ML model inference and audio processing
-/// Responsibility: DeepFilterNet initialization, inference, memory pressure handling
-/// Isolated from audio capture, buffering, and level calculations
+/// Manages ML model inference and audio processing with thread-safe state management
+/// 
+/// ## Threading Model
+/// This class uses a hybrid MainActor + queue synchronization approach:
+/// - **MainActor**: All public properties and UI-related state
+/// - **mlStateQueue**: Synchronizes ML processing state and model access
+/// - **mlInferenceQueue**: Dedicated queue for ML inference to prevent blocking audio thread
+/// 
+/// ## Responsibilities
+/// - DeepFilterNet initialization and lifecycle management
+/// - Audio processing with ML inference
+/// - Memory pressure handling and resource cleanup
+/// - Thread-safe state synchronization for concurrent access
+/// 
+/// ## Usage Notes
+/// - Isolated from audio capture, buffering, and level calculations
+/// - All callbacks are automatically dispatched to MainActor
+/// - Do not access MLAudioProcessor state directly from callbacks to avoid race conditions
+/// 
+/// - Important: Use `mlStateQueue.sync` for any synchronized state access
+/// - Important: ML inference runs on dedicated queue to prevent audio thread blocking
 @MainActor
 class MLAudioProcessor: MLAudioProcessorProtocol {
     private static let logger = Logger(subsystem: "Vocana", category: "MLAudioProcessor")
@@ -53,8 +71,14 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
        var recordMemoryPressure: () -> Void = {}
        var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
     
-    // Public state
-    var isMLProcessingActive = false
+    // Public state - synchronized through mlStateQueue
+    private var _isMLProcessingActive = false
+    
+    var isMLProcessingActive: Bool {
+        return mlStateQueue.sync {
+            return _isMLProcessingActive
+        }
+    }
     var processingLatencyMs: Double = 0
     var memoryPressureLevel: AudioEngine.MemoryPressureLevel = .normal
     
@@ -147,7 +171,9 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                     }
                     
                      self.denoiser = denoiser
-                     self.isMLProcessingActive = true
+                     self.mlStateQueue.sync {
+                         self._isMLProcessingActive = true
+                     }
                      print("🤖 ✅ ML processing is now ACTIVE!")
                      Self.logger.info("DeepFilterNet ML processing enabled")
 
@@ -178,7 +204,9 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                        print("🤖 ❌ ML initialization FAILED: \(error.localizedDescription)")
                        Self.logger.info("Falling back to simple level-based processing")
                        self.denoiser = nil
-                       self.isMLProcessingActive = false
+                       self.mlStateQueue.sync {
+                           self._isMLProcessingActive = false
+                       }
 
                        // Don't record this as a failure - it's an expected fallback
                        // self.recordFailure()
@@ -193,7 +221,9 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
         mlInitializationTask?.cancel()
         mlInitializationTask = nil
         denoiser = nil
-        isMLProcessingActive = false
+        mlStateQueue.sync {
+            _isMLProcessingActive = false
+        }
     }
     
     deinit {
@@ -337,12 +367,16 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
     }
     
     func deactivateML() async {
-        isMLProcessingActive = false
+        mlStateQueue.sync {
+            _isMLProcessingActive = false
+        }
     }
     
     func cleanup() async {
         mlInitializationTask?.cancel()
         denoiser = nil
-        isMLProcessingActive = false
+        mlStateQueue.sync {
+            _isMLProcessingActive = false
+        }
     }
 }

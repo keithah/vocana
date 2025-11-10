@@ -364,8 +364,9 @@ class AudioEngine: ObservableObject {
         audioSessionManager.stopRealAudioCapture()
         mlProcessor.stopMLProcessing()
         
-        // Keep published ML state in sync when stopping
+        // Keep published state in sync when stopping - fix menu bar icon state
         Task { @MainActor [weak self] in
+            self?.isUsingRealAudio = false
             self?.isMLProcessingActive = false
         }
     }
@@ -374,6 +375,11 @@ class AudioEngine: ObservableObject {
         stopAudioProcessing()
         levelController.updateLevels(input: 0, output: 0)
         bufferManager.clearAudioBuffers()
+        
+        // Ensure all published state is reset to initial values
+        Task { @MainActor [weak self] in
+            self?.currentLevels = AudioLevels.zero
+        }
     }
     
     // MARK: - Private Methods

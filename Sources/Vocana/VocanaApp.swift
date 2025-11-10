@@ -200,6 +200,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             throw VocanaError.statusBarButtonFailure
         }
         
+        // Set up menu with quit option
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Quit Vocana", action: #selector(quitApp), keyEquivalent: "q"))
+        statusItem?.menu = menu
+        
         // Icon will be set up by MenuBarIconManager after popover is created
         button.action = #selector(menuBarClicked)
         button.target = self

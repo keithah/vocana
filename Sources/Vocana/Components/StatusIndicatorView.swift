@@ -35,15 +35,38 @@ struct StatusIndicatorView: View {
     @ObservedObject var audioEngine: AudioEngine
     @ObservedObject var settings: AppSettings
     
+    /// Computed property for performance warning tooltip
+    private var performanceWarningMessage: String {
+        var issues: [String] = []
+        
+        if audioEngine.telemetry.audioBufferOverflows > 0 {
+            issues.append("Buffer overflows: \(audioEngine.telemetry.audioBufferOverflows)")
+        }
+        
+        if audioEngine.telemetry.circuitBreakerTriggers > 0 {
+            issues.append("Circuit breaker trips: \(audioEngine.telemetry.circuitBreakerTriggers)")
+        }
+        
+        if audioEngine.telemetry.mlProcessingFailures > 0 {
+            issues.append("ML failures: \(audioEngine.telemetry.mlProcessingFailures)")
+        }
+        
+        if audioEngine.memoryPressureLevel != .normal {
+            issues.append("Memory pressure: \(audioEngine.memoryPressureLevel)")
+        }
+        
+        return issues.isEmpty ? "Performance issues detected" : issues.joined(separator: ", ")
+    }
+    
     var body: some View {
         HStack(spacing: 8) {
-            // Audio mode indicator
+            // Audio mode indicator - changes color when enabled
             Image(systemName: audioEngine.isUsingRealAudio ? "mic.fill" : "waveform")
                 .font(.caption2)
-                .foregroundColor(.secondary)
+                .foregroundColor(settings.isEnabled && audioEngine.isMLProcessingActive ? .green : .secondary)
                 .accessibilityLabel(audioEngine.isUsingRealAudio ? "Real audio input" : "Simulated audio")
             
-            // ML processing indicator
+            // ML processing indicator - only show when enabled
             if settings.isEnabled {
                 Circle()
                     .fill(audioEngine.isMLProcessingActive ? Color.green : Color.orange)
@@ -51,12 +74,13 @@ struct StatusIndicatorView: View {
                     .accessibilityLabel(audioEngine.isMLProcessingActive ? "ML processing active" : "ML processing unavailable")
             }
             
-            // Performance indicator
-            if audioEngine.hasPerformanceIssues {
+            // Performance indicator - only show when enabled and has issues
+            if settings.isEnabled && audioEngine.hasPerformanceIssues {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption2)
                     .foregroundColor(.orange)
                     .accessibilityLabel("Performance issues detected")
+                    .help(performanceWarningMessage)
             }
         }
         .font(.caption2)

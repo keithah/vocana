@@ -285,7 +285,10 @@ class AudioSessionManager: NSObject {
     private func cleanupAVCapture() {
         if let session = captureSession {
             if session.isRunning {
-                session.stopRunning()
+                // Move stopRunning() off MainActor to prevent UI blocking
+                DispatchQueue.global(qos: .userInitiated).async {
+                    session.stopRunning()
+                }
             }
             captureSession = nil
         }

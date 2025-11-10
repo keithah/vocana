@@ -55,14 +55,7 @@ class AudioBufferManager {
         onCircuitBreakerTriggered: @escaping (TimeInterval) -> Void
     ) -> [Float]? {
         return audioBufferQueue.sync {
-            // Fix HIGH-003: Input validation to prevent excessive memory allocation
-            guard samples.count <= AppConstants.maxAudioBufferSize else {
-                Self.logger.warning("Samples array exceeds max buffer size: \(samples.count)")
-                recordBufferOverflow()
-                return nil
-            }
-            
-            // Fix CRI-002: Rate limiting to prevent DoS attacks
+            // Fix CRI-002: Rate limiting to prevent DoS attacks - check FIRST
             let now = Date()
             let timeSinceLastOperation = now.timeIntervalSince(lastOperationTime)
             
@@ -76,6 +69,14 @@ class AudioBufferManager {
             self.operationCount += 1
             if self.operationCount > maxOperationsPerSecond {
                 Self.logger.warning("Rate limit exceeded: \(self.operationCount) operations in \(timeSinceLastOperation)s")
+                return nil
+            }
+            
+            // Fix HIGH-003: Input validation to prevent excessive memory allocation
+            // Only check size AFTER rate limiting to ensure all buffers are subject to CRI-002
+            guard samples.count <= AppConstants.maxAudioBufferSize else {
+                Self.logger.warning("Samples array exceeds max buffer size: \(samples.count)")
+                recordBufferOverflow()
                 return nil
             }
             let maxBufferSize = AppConstants.maxAudioBufferSize

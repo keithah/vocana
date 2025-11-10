@@ -56,7 +56,7 @@ class AudioBufferManager {
     ) -> [Float]? {
         return audioBufferQueue.sync {
             // Fix HIGH-003: Input validation to prevent excessive memory allocation
-            guard samples.count < AppConstants.maxAudioBufferSize else {
+            guard samples.count <= AppConstants.maxAudioBufferSize else {
                 Self.logger.warning("Samples array exceeds max buffer size: \(samples.count)")
                 recordBufferOverflow()
                 return nil

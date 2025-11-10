@@ -159,9 +159,11 @@ class AudioSessionManager: NSObject {
             
             captureSession.commitConfiguration()
             
-            // Start session
-            captureSession.startRunning()
-            Self.logger.info("AVCapture session started successfully")
+            // Start session on background queue to avoid blocking MainActor
+            DispatchQueue.global(qos: .userInitiated).async {
+                captureSession.startRunning()
+                Self.logger.info("AVCapture session started successfully")
+            }
             
             // Verify session is running
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

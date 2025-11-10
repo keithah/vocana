@@ -135,21 +135,21 @@ struct AppConstants {
     // At 70% digital level, peaks have sufficient headroom for loudness normalization
     static let levelWarningThreshold: Float = 0.7  
     
-    // 0.3 smoothing factor provides responsive yet stable visualization:
-    // - Higher values (0.5+) would be too jittery for voice
-    // - Lower values (0.1-) would feel sluggish and unresponsive
-    // - 0.3 gives ~130ms response time at 60fps update rate
-    static let audioLevelSmoothingFactor: Float = 0.3
+    // 0.05 smoothing factor provides very responsive real-time visualization:
+    // - Higher values (0.5+) would be too sluggish for voice
+    // - Lower values (0.1-) would be too jittery
+    // - 0.05 gives ~25ms response time at 60fps update rate for immediate feedback
+    static let audioLevelSmoothingFactor: Float = 0.05
     
     // Minimum change threshold to trigger UI updates (prevents noise updates)
-    // 2% threshold prevents frequent redraws from tiny level changes
-    // Reduces CPU usage without perceptible visual degradation
-    static let audioLevelChangeThreshold: Float = 0.02
+    // 0.1% threshold allows immediate real-time visualization while preventing excessive redraws
+    // Provides immediate real-time feedback for microphone input
+    static let audioLevelChangeThreshold: Float = 0.001
     
     // Animation duration for smooth level changes
-    // 50ms (0.05s) provides smooth visual transition without latency
-    // Balances responsiveness with visual smoothness
-    static let audioLevelAnimationDuration: TimeInterval = 0.05
+    // 25ms (0.025s) provides responsive visual transition with minimal latency
+    // Optimized for real-time audio feedback
+    static let audioLevelAnimationDuration: TimeInterval = 0.025
     
     // Audio level animation - pre-defined Animation for reuse across UI
     // Uses easeOut timing function for natural-feeling decay

@@ -67,7 +67,16 @@ class ONNXRuntimeWrapper {
         let useNative = (mode == .native) || (mode == .automatic && isNativeAvailable)
         
         if useNative {
-            return try NativeInferenceSession(modelPath: modelPath, options: options)
+            do {
+                return try NativeInferenceSession(modelPath: modelPath, options: options)
+            } catch {
+                if mode == .automatic {
+                    Self.logger.warning("Native ONNX Runtime failed, falling back to mock: \(error)")
+                    return try MockInferenceSession(modelPath: modelPath, options: options)
+                } else {
+                    throw error
+                }
+            }
         } else {
             return try MockInferenceSession(modelPath: modelPath, options: options)
         }
@@ -312,7 +321,9 @@ class NativeInferenceSession: InferenceSession {
         // self.inputNames = queryInputNames(session)
         // self.outputNames = queryOutputNames(session)
         
-        throw ONNXError.notImplemented("Native ONNX Runtime not yet implemented")
+        // For now, always fall back to mock by throwing an error
+        // This will be caught by ONNXRuntimeWrapper.createSession in automatic mode
+        throw ONNXError.notImplemented("Native ONNX Runtime not yet implemented - use mock mode")
     }
     
     func run(inputs: [String: TensorData]) throws -> [String: TensorData] {

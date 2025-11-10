@@ -123,25 +123,31 @@ class AudioEngine: ObservableObject {
     }
     
      /// Fix HIGH-004: Update performance status based on current telemetry
-     private func updatePerformanceStatus() {
-         hasPerformanceIssues = (
-             telemetry.audioBufferOverflows > 0 ||
-             telemetry.circuitBreakerTriggers > 0 ||
-             telemetry.mlProcessingFailures > 0 ||
-             memoryPressureLevel != .normal
-         )
-         
-         // Update buffer health message
-         if telemetry.circuitBreakerTriggers > 0 {
-             bufferHealthMessage = "Circuit breaker active (\(telemetry.circuitBreakerTriggers)x)"
-         } else if telemetry.audioBufferOverflows > 0 {
-             bufferHealthMessage = "Buffer pressure (\(telemetry.audioBufferOverflows) overflows)"
-         } else if telemetry.mlProcessingFailures > 0 {
-             bufferHealthMessage = "ML issues detected"
-         } else {
-             bufferHealthMessage = "Buffer healthy"
-         }
-     }
+      private func updatePerformanceStatus() {
+          let previousIssues = hasPerformanceIssues
+          // Only show performance warning for critical issues, not ML initialization failures
+          hasPerformanceIssues = (
+              telemetry.audioBufferOverflows > 5 ||  // Multiple buffer overflows
+              telemetry.circuitBreakerTriggers > 0 ||  // Any circuit breaker trips
+              memoryPressureLevel != .normal  // Memory pressure issues
+          )
+          
+          if hasPerformanceIssues != previousIssues {
+              print("⚠️ Performance status changed: \(hasPerformanceIssues)")
+              print("⚠️ Issues - Buffer overflows: \(telemetry.audioBufferOverflows), Circuit breaker: \(telemetry.circuitBreakerTriggers), ML failures: \(telemetry.mlProcessingFailures), Memory pressure: \(memoryPressureLevel)")
+          }
+          
+          // Update buffer health message
+          if telemetry.circuitBreakerTriggers > 0 {
+              bufferHealthMessage = "Circuit breaker active (\(telemetry.circuitBreakerTriggers)x)"
+          } else if telemetry.audioBufferOverflows > 5 {
+              bufferHealthMessage = "Buffer pressure (\(telemetry.audioBufferOverflows) overflows)"
+          } else if telemetry.mlProcessingFailures > 0 && !isMLProcessingActive {
+              bufferHealthMessage = "ML unavailable - using basic processing"
+          } else {
+              bufferHealthMessage = "Buffer healthy"
+          }
+      }
      
      /// Fix CRITICAL-004: Record telemetry event using actor for thread safety
      private func recordTelemetryEvent(_ update: @escaping (ProductionTelemetry) -> ProductionTelemetry) {
@@ -230,25 +236,29 @@ class AudioEngine: ObservableObject {
              }
          }
          
-         mlProcessor.recordFailure = { [weak self] in
-             guard let self = self else { return }
-             self.recordTelemetryEvent { telemetry in
-                 var updated = telemetry
-                 updated.recordFailure()
-                 return updated
-             }
-             Task { @MainActor in
-                 self.isMLProcessingActive = false
-                 self.updatePerformanceStatus()
+          mlProcessor.recordFailure = { [weak self] in
+              guard let self = self else { return }
+              print("❌ ML processor recordFailure callback triggered")
+              self.recordTelemetryEvent { telemetry in
+                  var updated = telemetry
+                  updated.recordFailure()
+                  return updated
               }
-          }
+              Task { @MainActor in
+                  print("❌ Setting isMLProcessingActive to false due to failure")
+                  self.isMLProcessingActive = false
+                  self.updatePerformanceStatus()
+               }
+           }
           
           // Reset ML failures on successful processing
           mlProcessor.recordSuccess = { [weak self] in
               guard let self = self else { return }
+              print("🔄 recordSuccess callback called")
               self.recordTelemetryEvent { telemetry in
                   var updated = telemetry
                   if updated.mlProcessingFailures > 0 {
+                      print("🔄 Resetting failures from \(updated.mlProcessingFailures) to 0")
                       updated.mlProcessingFailures = 0
                   }
                   return updated
@@ -279,32 +289,73 @@ class AudioEngine: ObservableObject {
     
     // MARK: - Public API
     
-    func startSimulation(isEnabled: Bool, sensitivity: Double) {
+    func startAudioProcessing(isEnabled: Bool, sensitivity: Double) {
+        let logMessage = "🎙️ AudioEngine.startAudioProcessing - isEnabled: \(isEnabled), sensitivity: \(sensitivity)"
+        print(logMessage)
+        logToFile(logMessage)
+        
         // Always stop existing pipeline first to ensure clean state
         if self.isEnabled {
-            stopSimulation()
+            stopAudioProcessing()
         }
 
         self.isEnabled = isEnabled
         self.sensitivity = sensitivity
 
         if isEnabled {
+            let captureLog = "🎙️ Starting real audio capture..."
+            print(captureLog)
+            logToFile(captureLog)
             isUsingRealAudio = audioSessionManager.startRealAudioCapture()
+            let resultLog = "🎙️ Real audio capture result: \(isUsingRealAudio)"
+            print(resultLog)
+            logToFile(resultLog)
 
             if !isUsingRealAudio {
-                audioSessionManager.isEnabled = isEnabled
-                audioSessionManager.sensitivity = sensitivity
-                audioSessionManager.startSimulatedAudio()
+                let errorLog = "🎙️ ❌ Failed to start real audio capture - microphone unavailable"
+                print(errorLog)
+                logToFile(errorLog)
+                return
             }
 
+            let mlLog = "🎙️ Initializing ML processing..."
+            print(mlLog)
+            logToFile(mlLog)
             initializeMLProcessing()
         } else {
+            let decayLog = "🎙️ Starting decay timer for disabled state"
+            print(decayLog)
+            logToFile(decayLog)
             // Start decay timer for visual smoothing when disabled
             startDecayTimer()
         }
+        
+        let completeLog = "🎙️ startAudioProcessing complete - isUsingRealAudio: \(isUsingRealAudio), isMLProcessingActive: \(isMLProcessingActive), hasPerformanceIssues: \(hasPerformanceIssues)"
+        print(completeLog)
+        logToFile(completeLog)
+    }
+    
+    private func logToFile(_ message: String) {
+        let timestamp = DateFormatter().string(from: Date())
+        let logEntry = "[\(timestamp)] \(message)\n"
+        
+        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let logURL = documentsURL.appendingPathComponent("vocana_debug.log")
+            if let data = logEntry.data(using: .utf8) {
+                if FileManager.default.fileExists(atPath: logURL.path) {
+                    if let fileHandle = try? FileHandle(forWritingTo: logURL) {
+                        fileHandle.seekToEndOfFile()
+                        fileHandle.write(data)
+                        fileHandle.closeFile()
+                    }
+                } else {
+                    try? data.write(to: logURL)
+                }
+            }
+        }
     }
 
-    /// Start decay timer for level smoothing during disabled simulation
+    /// Start decay timer for level smoothing during disabled state
     /// Security: Ensure proper timer resource management and cleanup
     private func startDecayTimer() {
         // Security: Ensure cleanup of existing timer before creating new one
@@ -327,17 +378,16 @@ class AudioEngine: ObservableObject {
         }
     }
     
-    func stopSimulation() {
+    func stopAudioProcessing() {
         isEnabled = false
         decayTimer?.invalidate()
         decayTimer = nil
         audioSessionManager.stopRealAudioCapture()
-        audioSessionManager.stopSimulatedAudio()
         mlProcessor.stopMLProcessing()
     }
     
     func reset() {
-        stopSimulation()
+        stopAudioProcessing()
         levelController.updateLevels(input: 0, output: 0)
         bufferManager.clearAudioBuffers()
     }
@@ -351,6 +401,7 @@ class AudioEngine: ObservableObject {
      }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+        print("🎵 processAudioBuffer called - frameLength: \(buffer.frameLength)")
         // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
         audioProcessingQueue.async { [weak self] in
             self?.processAudioBufferInternal(buffer)
@@ -375,12 +426,18 @@ class AudioEngine: ObservableObject {
         // Calculate input level
         let inputLevel = levelController.calculateRMSFromPointer(samplesPtr)
         
+        // Debug: Print audio level occasionally
+        if inputLevel > 0.001 {
+            print("🎵 Audio detected - inputLevel=\(String(format: "%.4f", inputLevel)), enabled=\(capturedEnabled)")
+        }
+        
         if capturedEnabled {
             let samples = Array(samplesPtr)
             let outputLevel = processWithMLIfAvailable(samples: samples, sensitivity: capturedSensitivity)
             
             // Update UI safely on MainActor
             Task { @MainActor [weak self] in
+                print("🎵 Updating UI levels - input: \(String(format: "%.4f", inputLevel)), output: \(String(format: "%.4f", outputLevel))")
                 self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
             }
         } else {

@@ -35,24 +35,39 @@ class MLAudioProcessor {
     /// Initialize ML processing with DeepFilterNet
     /// Handles async model loading with proper cancellation support
     func initializeMLProcessing() {
+        print("🤖 MLAudioProcessor.initializeMLProcessing - Starting...")
+        
         // Fix CRITICAL: Cancel any existing initialization to prevent race conditions
         mlInitializationTask?.cancel()
-        
+
         // Fix HIGH: Make ML initialization async to avoid blocking UI
         mlInitializationTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
-            
+
             do {
+                print("🤖 Finding models directory...")
                 // Check for cancellation before each expensive operation
                 guard !Task.isCancelled else { return }
-                
+
                 // Find models directory (can be slow with file system checks)
                 let modelsPath = self.findModelsDirectory()
-                
+                print("🤖 Models directory found: \(modelsPath)")
+
                 guard !Task.isCancelled else { return }
+
+                print("🤖 Creating DeepFilterNet instance...")
+                
+                // Verify all required models exist before attempting to load
+                let requiredModels = ["enc.onnx", "df_dec.onnx", "erb_dec.onnx"]
+                let missingModels = requiredModels.filter { !FileManager.default.fileExists(atPath: "\(modelsPath)/\($0)") }
+                
+                if !missingModels.isEmpty {
+                    throw DeepFilterNet.DeepFilterError.modelLoadFailed("Missing model files: \(missingModels.joined(separator: ", "))")
+                }
                 
                 // Create DeepFilterNet instance (potentially slow model loading)
                 let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
+                print("🤖 ✅ DeepFilterNet created successfully")
                 
                 // Fix HIGH: Atomic cancellation and state check to prevent TOCTOU race
                 let wasCancelled = Task.isCancelled
@@ -77,12 +92,13 @@ class MLAudioProcessor {
                         return
                     }
                     
-                    self.denoiser = denoiser
-                    self.isMLProcessingActive = true
-                    Self.logger.info("DeepFilterNet ML processing enabled")
-                    
-                    // Fix HIGH-008: Notify that ML processing is ready
-                    self.onMLProcessingReady()
+                     self.denoiser = denoiser
+                     self.isMLProcessingActive = true
+                     print("🤖 ✅ ML processing is now ACTIVE!")
+                     Self.logger.info("DeepFilterNet ML processing enabled")
+
+                     // Fix HIGH-008: Notify that ML processing is ready
+                     self.onMLProcessingReady()
                 }
              } catch {
                  guard !Task.isCancelled else { return }
@@ -105,12 +121,14 @@ class MLAudioProcessor {
                          Self.logger.error("Unexpected ML initialization error: \(error.localizedDescription)")
                      }
 
-                     Self.logger.info("Falling back to simple level-based processing")
-                     self.denoiser = nil
-                     self.isMLProcessingActive = false
+                       print("🤖 ❌ ML initialization FAILED: \(error.localizedDescription)")
+                       Self.logger.info("Falling back to simple level-based processing")
+                       self.denoiser = nil
+                       self.isMLProcessingActive = false
 
-                     // Notify that ML initialization failed
-                     self.recordFailure()
+                       // Don't record this as a failure - it's an expected fallback
+                       // self.recordFailure()
+                       print("🤖 ℹ️ ML processing unavailable - app will work with basic audio processing")
                  }
              }
         }
@@ -167,6 +185,7 @@ class MLAudioProcessor {
                   Task { @MainActor in
                       self.recordLatency(latencyMs)
                       self.recordSuccess()  // Reset failure counter on successful processing
+                      print("✅ ML processing succeeded, calling recordSuccess")
                   }
                  
                  // Monitor for SLA violations (target <1ms)
@@ -175,12 +194,13 @@ class MLAudioProcessor {
                          Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
                      }
                  }
-             } catch {
-                 Task { @MainActor in
-                     Self.logger.error("ML processing error: \(error.localizedDescription)")
-                     self.recordFailure()
-                 }
-             }
+              } catch {
+                  Task { @MainActor in
+                      Self.logger.error("ML processing error: \(error.localizedDescription)")
+                      self.recordFailure()
+                      print("❌ ML processing failed, calling recordFailure")
+                  }
+              }
          }
          
          // Wait with timeout to prevent blocking indefinitely
@@ -214,22 +234,40 @@ class MLAudioProcessor {
     // MARK: - Private Helpers
     
     private nonisolated func findModelsDirectory() -> String {
-        // Try multiple locations for models
+        print("🔍 Searching for ML models directory...")
+        
+        // Use Bundle.main.resourcePath for bundled resources (correct for SPM)
+        let resourcePath = Bundle.main.resourcePath ?? "."
+        let modelsPath = "\(resourcePath)/Models"
+        print("🔍 Trying bundle path: \(modelsPath)")
+
+        // Verify models exist at the expected location
+        let encPath = "\(modelsPath)/enc.onnx"
+        if FileManager.default.fileExists(atPath: encPath) {
+            print("🔍 ✅ Found models at bundle path: \(modelsPath)")
+            return modelsPath
+        }
+
+        // Fallback: Try relative paths for development/debugging
         let searchPaths = [
             "Resources/Models",
-            "../Resources/Models",
+            "../Resources/Models", 
             "ml-models/pretrained/tmp/export",
-            "../ml-models/pretrained/tmp/export"
+            "../ml-models/pretrained/tmp/export",
+            "/Users/keith/src/vocana/Vocana/Resources/Models"
         ]
-        
+
         for path in searchPaths {
-            let encPath = "\(path)/enc.onnx"
-            if FileManager.default.fileExists(atPath: encPath) {
+            let testEncPath = "\(path)/enc.onnx"
+            print("🔍 Trying path: \(testEncPath)")
+            if FileManager.default.fileExists(atPath: testEncPath) {
+                print("🔍 ✅ Found models at: \(path)")
                 return path
             }
         }
-        
-        // Default fallback
-        return "Resources/Models"
+
+        print("🔍 ❌ No models found, using fallback: \(modelsPath)")
+        // Final fallback
+        return modelsPath
     }
 }

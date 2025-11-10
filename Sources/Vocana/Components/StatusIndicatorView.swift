@@ -63,15 +63,25 @@ struct StatusIndicatorView: View {
             // Audio mode indicator - changes color when enabled
             Image(systemName: audioEngine.isUsingRealAudio ? "mic.fill" : "waveform")
                 .font(.caption2)
-                .foregroundColor(settings.isEnabled && audioEngine.isMLProcessingActive ? .green : .secondary)
+                .foregroundColor(settings.isEnabled && audioEngine.isUsingRealAudio ? .green : .secondary)
                 .accessibilityLabel(audioEngine.isUsingRealAudio ? "Real audio input" : "Simulated audio")
+                .help(audioEngine.isUsingRealAudio ? "Microphone active" : "Microphone inactive")
+                .onAppear {
+                    print("🔍 StatusIndicator - Mic icon: isEnabled=\(settings.isEnabled), isMLProcessingActive=\(audioEngine.isMLProcessingActive), isUsingRealAudio=\(audioEngine.isUsingRealAudio)")
+                }
             
             // ML processing indicator - only show when enabled
             if settings.isEnabled {
-                Circle()
-                    .fill(audioEngine.isMLProcessingActive ? Color.green : Color.orange)
-                    .frame(width: 6, height: 6)
-                    .accessibilityLabel(audioEngine.isMLProcessingActive ? "ML processing active" : "ML processing unavailable")
+                Group {
+                    Circle()
+                        .fill(audioEngine.isMLProcessingActive ? Color.green : Color.orange)
+                        .frame(width: 6, height: 6)
+                        .accessibilityLabel(audioEngine.isMLProcessingActive ? "ML processing active" : "ML processing unavailable")
+                }
+                .help(audioEngine.isMLProcessingActive ? "ML noise reduction active" : "ML noise reduction unavailable")
+                .onAppear {
+                    print("🔍 StatusIndicator - ML circle: isMLProcessingActive=\(audioEngine.isMLProcessingActive)")
+                }
             }
             
             // Performance indicator - only show when enabled and has issues
@@ -80,6 +90,10 @@ struct StatusIndicatorView: View {
                     .font(.caption2)
                     .foregroundColor(.orange)
                     .accessibilityLabel("Performance issues detected: \(performanceWarningMessage)")
+                    .help(performanceWarningMessage)
+                    .onAppear {
+                        print("🔍 StatusIndicator - Warning triangle: hasPerformanceIssues=\(audioEngine.hasPerformanceIssues), message=\(performanceWarningMessage)")
+                    }
             }
         }
         .font(.caption2)
@@ -87,6 +101,12 @@ struct StatusIndicatorView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Audio Processing Status")
         .accessibilityHint("Shows current audio input source, ML processing state, and any performance warnings. Swipe through to hear individual status details.")
+        .onReceive(audioEngine.$isMLProcessingActive) { active in
+            print("🔍 StatusIndicator - Received ML processing update: \(active)")
+        }
+        .onReceive(audioEngine.$hasPerformanceIssues) { issues in
+            print("🔍 StatusIndicator - Received performance issues update: \(issues)")
+        }
     }
 }
 

@@ -325,6 +325,47 @@ guard coefficients.count == expectedCoefSize else {
 
 ---
 
+## NEW ISSUES: Virtual Audio Driver Implementation
+
+### Issue #10: HAL Plugin Framework Setup
+**Status:** ✅ **COMPLETED - FRAMEWORK ESTABLISHED**
+
+**Description:** Set up Core Audio HAL plugin architecture for system-wide virtual audio devices.
+
+**Files Created:**
+- `VocanaAudioDevice.h/m` - Device interface and management
+- `VocanaAudioManager.h/m` - Device lifecycle and app detection
+- `VirtualAudioControlsView.swift` - UI controls for virtual devices
+- `VirtualAudioManager.swift` - Swift bridge to Objective-C components
+
+**Implementation Status:**
+- ✅ Device management classes implemented
+- ✅ Application detection for conferencing apps
+- ✅ UI integration in menu bar
+- ✅ Package.swift configured for mixed targets
+- ⚠️ HAL plugin core (AudioServerPlugin) needs completion
+
+### Issue #11: AudioServerPlugin Implementation
+**Status:** 🔄 **IN PROGRESS - REQUIRES SPECIAL ACCESS**
+
+**Description:** Implement AudioServerPluginDriverInterface for actual HAL plugin functionality.
+
+**Challenges:**
+- AudioServerPlugIn.framework is private (requires special entitlements)
+- Requires kernel-level audio processing
+- Complex real-time threading model
+- Code signing requirements for audio drivers
+
+**Current Approach:** Using user-space AVAudioEngine as fallback until HAL plugin access is obtained.
+
+**Next Steps:**
+1. Apply for audio driver entitlements from Apple
+2. Implement AudioServerPluginDriverInterface
+3. Integrate DeepFilterNet into HAL I/O callbacks
+4. Test device registration with Core Audio
+
+---
+
 ## DETAILED FINDINGS
 
 ### Memory Management Excellence

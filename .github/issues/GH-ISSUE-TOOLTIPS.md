@@ -1,7 +1,13 @@
-# Tooltips Not Working on Status Indicators
+---
+name: Tooltips Not Working
+about: Tooltips not appearing on status indicators and virtual audio controls
+title: "[MEDIUM] Tooltips Not Working on Status Indicators"
+labels: medium, bug, ui, accessibility
+assignees: ''
+---
 
-## Issue Description
-Tooltips are not appearing when hovering over status indicators in the popover, particularly the orange ML dot.
+## Description
+Tooltips are not appearing when hovering over status indicators in the popover, particularly the orange ML dot and new virtual audio controls.
 
 ## Expected Behavior
 - Hover over mic icon: "Microphone active" / "Using simulated audio"
@@ -23,9 +29,6 @@ Tooltips are not appearing when hovering over status indicators in the popover, 
 - `StatusIndicatorView.swift` - Status indicator UI and tooltips
 - `VirtualAudioControlsView.swift` - New virtual audio controls with activity indicators
 
-## Priority
-Medium - Affects user understanding but not core functionality
-
 ## Testing Notes
 Virtual audio driver implementation adds new tooltip requirements:
 1. Device activity indicators should show "Active" / "Inactive"
@@ -35,3 +38,6 @@ Virtual audio driver implementation adds new tooltip requirements:
 ## Related Issues
 - **Virtual Audio Integration**: New controls may interfere with existing tooltip system
 - **Accessibility**: Need to ensure all new UI elements have proper help text
+
+## Priority
+Medium - Affects user understanding but not core functionality

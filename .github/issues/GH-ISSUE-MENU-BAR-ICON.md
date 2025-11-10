@@ -1,6 +1,12 @@
-# Menu Bar Icon Not Updating
+---
+name: Menu Bar Icon Not Updating
+about: Menu bar icon doesn't change when audio processing state changes
+title: "[HIGH] Menu Bar Icon Not Updating with Audio State"
+labels: high, bug, ui, menu-bar
+assignees: ''
+---
 
-## Issue Description
+## Description
 The menu bar icon does not change from white outline to green filled when enabling/disabling audio processing or when audio levels change.
 
 ## Expected Behavior
@@ -23,9 +29,6 @@ The menu bar icon does not change from white outline to green filled when enabli
 - `AudioCoordinator.swift` - State coordination
 - `VirtualAudioControlsView.swift` - New virtual audio controls (may affect state)
 
-## Priority
-High - Core user feedback mechanism
-
 ## Testing Notes
 Virtual audio driver implementation in progress. Once HAL plugin is complete, can test:
 1. Virtual device creation and registration
@@ -36,3 +39,6 @@ Virtual audio driver implementation in progress. Once HAL plugin is complete, ca
 ## Related Issues
 - **Virtual Audio Driver**: Need HAL plugin completion for proper device state monitoring
 - **Audio State Coordination**: VirtualAudioManager needs to publish state changes to menu bar
+
+## Priority
+High - Core user feedback mechanism

@@ -80,6 +80,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             
             // Register for system notifications
             registerSystemNotifications()
+            
+            // Set up global keyboard shortcut for Cmd+Q
+            setupGlobalKeyEquivalent()
         } catch {
             handleError(error)
         }
@@ -200,11 +203,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             throw VocanaError.statusBarButtonFailure
         }
         
-        // Set up menu with quit option
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Quit Vocana", action: #selector(quitApp), keyEquivalent: "q"))
-        statusItem?.menu = menu
-        
         // Icon will be set up by MenuBarIconManager after popover is created
         button.action = #selector(menuBarClicked)
         button.target = self
@@ -270,5 +268,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
         button.isHighlighted = popover.isShown
+    }
+    
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
+    }
+    
+    private func setupGlobalKeyEquivalent() {
+        // Create a hidden menu item that responds to Cmd+Q
+        let mainMenu = NSMenu()
+        let quitMenuItem = NSMenuItem(
+            title: "Quit Vocana",
+            action: #selector(quitApp),
+            keyEquivalent: "q"
+        )
+        quitMenuItem.target = self
+        mainMenu.addItem(quitMenuItem)
+        
+        // Set as main menu to enable Cmd+Q
+        NSApplication.shared.mainMenu = mainMenu
     }
 }

@@ -37,8 +37,21 @@ import SwiftUI
 /// - Reduced motion support
 struct ContentView: View {
     // Fix QUAL-001: Use concrete type with protocol conformance to reduce tight coupling
-    @StateObject private var coordinator = AudioCoordinator()
+    @ObservedObject var coordinator: AudioCoordinator
     @State private var showSettingsWindow = false
+    
+    // Expose coordinator for AppDelegate access
+    var audioCoordinator: AudioCoordinator { coordinator }
+    
+    // Default initializer for SwiftUI Preview
+    init() {
+        self.coordinator = AudioCoordinator()
+    }
+    
+    // Initializer for AppDelegate
+    init(coordinator: AudioCoordinator) {
+        self.coordinator = coordinator
+    }
     
     var body: some View {
         VStack(spacing: 16) {
@@ -55,10 +68,7 @@ struct ContentView: View {
             PowerToggleView(isEnabled: $coordinator.settings.isEnabled)
             
             // Real-time audio visualization
-            AudioVisualizerView(
-                inputLevel: coordinator.audioEngine.currentLevels.input,
-                outputLevel: coordinator.audioEngine.currentLevels.output
-            )
+            AudioVisualizerView(audioEngine: coordinator.audioEngine)
             
             // Sensitivity control with visual feedback
             SensitivityControlView(sensitivity: $coordinator.settings.sensitivity)
@@ -75,10 +85,10 @@ struct ContentView: View {
         .padding()
         .frame(width: AppConstants.popoverWidth, height: AppConstants.popoverHeight)
         .onAppear {
-            coordinator.startAudioSimulation()
+            coordinator.startAudioProcessing()
         }
         .onDisappear {
-            coordinator.stopAudioSimulation()
+            coordinator.stopAudioProcessing()
         }
          .overlay(
              // MEDIUM FIX: Use hidden Button with keyboardShortcut for proper keyboard handling

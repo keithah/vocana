@@ -7,11 +7,11 @@ final class AudioEngineTests: XCTestCase {
     
     override func setUp() {
         super.setUp()
-        audioEngine = AudioEngine()
+        let mockMLProcessor = MockMLAudioProcessor()
+        audioEngine = AudioEngine(mlProcessor: mockMLProcessor)
     }
     
     override func tearDown() {
-        audioEngine.stopSimulation()
         audioEngine = nil
         super.tearDown()
     }
@@ -21,8 +21,8 @@ final class AudioEngineTests: XCTestCase {
         XCTAssertEqual(audioEngine.currentLevels.output, 0.0)
     }
     
-    func testStartSimulation() {
-        audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
+    func testStartAudioProcessing() {
+        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
 
         // Allow timer to fire by running RunLoop cycles
         let deadline = Date().addingTimeInterval(0.6)
@@ -43,9 +43,9 @@ final class AudioEngineTests: XCTestCase {
         }
     }
     
-    func testStopSimulation() {
-        audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
-        audioEngine.stopSimulation()
+    func testStopAudioProcessing() {
+        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
         
         let levels = audioEngine.currentLevels
         
@@ -67,8 +67,8 @@ final class AudioEngineTests: XCTestCase {
         // Manually set non-zero levels to test decay
         audioEngine.currentLevels = AudioLevels(input: 0.8, output: 0.4)
         
-        // Start simulation in disabled mode
-        audioEngine.startSimulation(isEnabled: false, sensitivity: 0.5)
+        // Start audio processing in disabled mode
+        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
         
         // Wait for multiple timer ticks to allow decay
         let decayExpectation = XCTestExpectation(description: "Audio levels decay")
@@ -81,9 +81,26 @@ final class AudioEngineTests: XCTestCase {
         // Starting from 0.8 input: 0.8 * 0.35 = 0.28
         // Starting from 0.4 output: 0.4 * 0.35 = 0.14
         // Use conservative threshold of 0.5x to account for timing variance
-        XCTAssertLessThan(audioEngine.currentLevels.input, 0.5, 
+        XCTAssertLessThan(audioEngine.currentLevels.input, 0.5,
                          "Input should decay below 0.5: \(audioEngine.currentLevels.input)")
         XCTAssertLessThan(audioEngine.currentLevels.output, 0.25,
                          "Output should decay below 0.25: \(audioEngine.currentLevels.output)")
+    }
+
+    func testMLProcessingInitialization() {
+        // Initially ML processing should not be active
+        XCTAssertFalse(audioEngine.isMLProcessingActive, "ML processing should not be active initially")
+
+        // Start audio processing to trigger ML initialization
+        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+
+        // Wait for ML initialization to complete (should happen quickly with mock)
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline && !audioEngine.isMLProcessingActive {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        // With the mock implementation, ML processing should become active
+        XCTAssertTrue(audioEngine.isMLProcessingActive, "ML processing should be active after initialization")
     }
 }

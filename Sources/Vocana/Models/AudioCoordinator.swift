@@ -14,6 +14,12 @@ class AudioCoordinator: ObservableObject {
         setupBindings()
     }
     
+    /// Test initializer with dependency injection
+    init(audioEngine: AudioEngine) {
+        self.audioEngine = audioEngine
+        setupBindings()
+    }
+    
     deinit {
         // Fix CRITICAL: Clean up cancellables explicitly to prevent subscription leaks
         cancellables.removeAll()
@@ -47,19 +53,19 @@ class AudioCoordinator: ObservableObject {
      /// Update audio engine settings with state validation
     private func updateAudioSettings() {
         // Fix HIGH: Validate audio engine state before updating
-        audioEngine.startSimulation(
+        audioEngine.startAudioProcessing(
             isEnabled: settings.isEnabled,
             sensitivity: settings.sensitivity
         )
     }
     
-    /// Start audio simulation (called from UI)
-    func startAudioSimulation() {
+    /// Start audio processing (called from UI)
+    func startAudioProcessing() {
         updateAudioSettings()
     }
     
-    /// Stop audio simulation (called from UI)
-    func stopAudioSimulation() {
-        audioEngine.stopSimulation()
+    /// Stop audio processing (called from UI)
+    func stopAudioProcessing() {
+        audioEngine.stopAudioProcessing()
     }
 }

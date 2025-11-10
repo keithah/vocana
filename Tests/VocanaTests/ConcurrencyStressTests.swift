@@ -6,11 +6,11 @@ import XCTest
 final class ConcurrencyStressTests: XCTestCase {
     
     func testAudioEngineConcurrentAccess() throws {
-        let audioEngine = AudioEngine()
-        defer { audioEngine.stopSimulation() }
+        var audioEngine = AudioEngine()
+        defer { audioEngine = AudioEngine() }
         
-        // Start simulation
-        audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
+        // Start audio processing
+        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
         
         let expectation = XCTestExpectation(description: "Concurrent access completed")
         expectation.expectedFulfillmentCount = 10
@@ -26,10 +26,10 @@ final class ConcurrencyStressTests: XCTestCase {
                     
                     // Simulate rapid start/stop cycles
                     if i % 2 == 0 {
-                        audioEngine.startSimulation(isEnabled: false, sensitivity: Double(i) * 0.1)
+                        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: Double(i) * 0.1)
                         // Small delay to allow state changes to propagate
                         try? await Task.sleep(nanoseconds: 1_000_000) // 1ms
-                        audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
+                        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
                     }
                     
                     expectation.fulfill()
@@ -41,10 +41,10 @@ final class ConcurrencyStressTests: XCTestCase {
     }
     
     func testBufferOverflowHandling() throws {
-        let audioEngine = AudioEngine()
-        defer { audioEngine.stopSimulation() }
+        var audioEngine = AudioEngine()
+        defer { audioEngine = AudioEngine() }
         
-        audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
+        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
         
         let expectation = XCTestExpectation(description: "Buffer overflow handling")
         expectation.expectedFulfillmentCount = 5
@@ -73,10 +73,10 @@ final class ConcurrencyStressTests: XCTestCase {
     }
     
     func testMemoryPressureHandling() throws {
-        let audioEngine = AudioEngine()
-        defer { audioEngine.stopSimulation() }
+        var audioEngine = AudioEngine()
+        defer { audioEngine = AudioEngine() }
         
-        audioEngine.startSimulation(isEnabled: true, sensitivity: 0.5)
+        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
         
         // Test that memory pressure changes don't cause crashes
         Task { @MainActor in

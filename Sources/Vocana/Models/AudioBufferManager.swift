@@ -26,8 +26,23 @@ class AudioBufferManager {
     private var bufferState = BufferState()
     
     // Telemetry tracking (passed in from AudioEngine)
+    /// Callback invoked when audio buffer overflows.
+    /// - Important: This callback is invoked from the audioBufferQueue (user-initiated QoS).
+    /// Do NOT perform blocking operations. Do NOT call methods that require MainActor.
+    /// Use Task { @MainActor in ... } if main thread update needed.
     var recordBufferOverflow: () -> Void = {}
+    
+    /// Callback invoked when circuit breaker triggers due to repeated overflows.
+    /// - Important: This callback is invoked from the audioBufferQueue (user-initiated QoS).
+    /// Do NOT perform blocking operations. Do NOT call methods that require MainActor.
+    /// Use Task { @MainActor in ... } if main thread update needed.
     var recordCircuitBreakerTrigger: () -> Void = {}
+    
+    /// Callback invoked when circuit breaker suspends audio capture for a duration.
+    /// - Important: This callback is invoked from the audioBufferQueue (user-initiated QoS).
+    /// Do NOT perform blocking operations. Do NOT call methods that require MainActor.
+    /// Use Task { @MainActor in ... } if main thread update needed.
+    /// - Parameter duration: Suspension duration in seconds
     var recordCircuitBreakerSuspension: (TimeInterval) -> Void = { _ in }
     
     /// Thread-safe append samples to buffer and extract chunk if ready
@@ -40,7 +55,7 @@ class AudioBufferManager {
         onCircuitBreakerTriggered: @escaping (TimeInterval) -> Void
     ) -> [Float]? {
         return audioBufferQueue.sync {
-            // Fix CRI-002: Rate limiting to prevent DoS attacks
+            // Fix CRI-002: Rate limiting to prevent DoS attacks - check FIRST
             let now = Date()
             let timeSinceLastOperation = now.timeIntervalSince(lastOperationTime)
             
@@ -54,6 +69,14 @@ class AudioBufferManager {
             self.operationCount += 1
             if self.operationCount > maxOperationsPerSecond {
                 Self.logger.warning("Rate limit exceeded: \(self.operationCount) operations in \(timeSinceLastOperation)s")
+                return nil
+            }
+            
+            // Fix HIGH-003: Input validation to prevent excessive memory allocation
+            // Only check size AFTER rate limiting to ensure all buffers are subject to CRI-002
+            guard samples.count <= AppConstants.maxAudioBufferSize else {
+                Self.logger.warning("Samples array exceeds max buffer size: \(samples.count)")
+                recordBufferOverflow()
                 return nil
             }
             let maxBufferSize = AppConstants.maxAudioBufferSize
@@ -92,6 +115,7 @@ class AudioBufferManager {
                     }
                     
                     onCircuitBreakerTriggered(suspensionDuration)
+                    recordCircuitBreakerSuspension(suspensionDuration)
                     return nil // Skip this buffer append to help recovery
                 }
                 

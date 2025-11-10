@@ -38,18 +38,16 @@ import SwiftUI
 /// - Smoothing algorithm uses efficient exponential moving average
 /// - Minimal view hierarchy for optimal rendering
 struct AudioVisualizerView: View {
-    let inputLevel: Float
-    let outputLevel: Float
+    @ObservedObject var audioEngine: AudioEngine
     
     @State private var displayedInputLevel: Float
     @State private var displayedOutputLevel: Float
     
-    init(inputLevel: Float, outputLevel: Float) {
-        self.inputLevel = inputLevel
-        self.outputLevel = outputLevel
-        // Initialize displayed levels with input levels to avoid fade-in animation
-        _displayedInputLevel = State(initialValue: inputLevel)
-        _displayedOutputLevel = State(initialValue: outputLevel)
+    init(audioEngine: AudioEngine) {
+        self.audioEngine = audioEngine
+        // Initialize displayed levels with current levels to avoid fade-in animation
+        _displayedInputLevel = State(initialValue: audioEngine.currentLevels.input)
+        _displayedOutputLevel = State(initialValue: audioEngine.currentLevels.output)
     }
     
     var body: some View {
@@ -76,26 +74,22 @@ struct AudioVisualizerView: View {
         .accessibilityLabel("Audio Levels")
         .accessibilityHint("Shows real-time input and output audio levels")
          // Fix PERF-001: Use AppConstants for magic numbers and prevent race conditions
-         .onChange(of: inputLevel) { newValue in
-             let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
-             // Only update if change is significant (reduces noise)
-             guard abs(validatedValue - displayedInputLevel) > AppConstants.audioLevelChangeThreshold else { return }
-             
-             withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
-                 let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
-                 displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
-             }
-         }
-         .onChange(of: outputLevel) { newValue in
-             let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
-             // Only update if change is significant (reduces noise)
-             guard abs(validatedValue - displayedOutputLevel) > AppConstants.audioLevelChangeThreshold else { return }
-             
-             withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
-                 let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
-                 displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
-             }
-         }
+         .onChange(of: audioEngine.currentLevels.input) { newValue in
+               let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
+               // Update immediately for real-time visualization
+               withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
+                   let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
+                   displayedInputLevel = displayedInputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
+               }
+          }
+          .onChange(of: audioEngine.currentLevels.output) { newValue in
+               let validatedValue = AudioLevelValidator.validateAudioLevel(newValue)
+               // Update immediately for real-time visualization
+               withAnimation(.easeOut(duration: AppConstants.audioLevelAnimationDuration)) {
+                   let smoothingFactor: Float = AppConstants.audioLevelSmoothingFactor
+                   displayedOutputLevel = displayedOutputLevel * (1 - smoothingFactor) + validatedValue * smoothingFactor
+               }
+          }
     }
 }
 
@@ -154,16 +148,16 @@ private struct LevelBarView: View {
 }
 
 #Preview("Normal Levels") {
-    AudioVisualizerView(inputLevel: 0.5, outputLevel: 0.3)
+    AudioVisualizerView(audioEngine: AudioEngine())
         .padding()
 }
 
 #Preview("High Levels (Warning)") {
-    AudioVisualizerView(inputLevel: 0.8, outputLevel: 0.75)
+    AudioVisualizerView(audioEngine: AudioEngine())
         .padding()
 }
 
 #Preview("Edge Cases") {
-    AudioVisualizerView(inputLevel: 0.0, outputLevel: 1.0)
+    AudioVisualizerView(audioEngine: AudioEngine())
         .padding()
 }

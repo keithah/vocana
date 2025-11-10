@@ -1,6 +1,7 @@
 import Foundation
 import Accelerate
 import os.log
+import Darwin.Mach
 
 /// DeepFilterNet3 noise cancellation pipeline
 ///
@@ -83,6 +84,54 @@ final class DeepFilterNet: @unchecked Sendable {
     
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "DeepFilterNet")
+    
+    // MARK: - Memory Tracking
+    
+    /// Memory usage statistics for ML models
+    private struct MemoryStats {
+        var modelLoadMemoryMB: Double = 0.0
+        var peakInferenceMemoryMB: Double = 0.0
+        var currentInferenceMemoryMB: Double = 0.0
+        var totalInferences: UInt64 = 0
+    }
+    
+    /// Thread-safe memory statistics tracking
+    private let memoryStatsQueue = DispatchQueue(label: "com.vocana.deepfilternet.memory", qos: .utility)
+    private var _memoryStats = MemoryStats()
+    private var memoryStats: MemoryStats {
+        get { memoryStatsQueue.sync { _memoryStats } }
+        set { memoryStatsQueue.sync { _memoryStats = newValue } }
+    }
+    
+    /// Public memory usage information
+    var memoryUsageMB: Double {
+        return memoryStats.currentInferenceMemoryMB
+    }
+    
+    var peakMemoryUsageMB: Double {
+        return memoryStats.peakInferenceMemoryMB
+    }
+    
+    var modelLoadMemoryMB: Double {
+        return memoryStats.modelLoadMemoryMB
+    }
+    
+    /// Get comprehensive memory statistics
+    func getMemoryStatistics() -> (current: Double, peak: Double, modelLoad: Double, totalInferences: UInt64) {
+        return (
+            current: memoryStats.currentInferenceMemoryMB,
+            peak: memoryStats.peakInferenceMemoryMB,
+            modelLoad: memoryStats.modelLoadMemoryMB,
+            totalInferences: memoryStats.totalInferences
+        )
+    }
+    
+    /// Reset memory statistics (useful for testing)
+    func resetMemoryStatistics() {
+        memoryStatsQueue.sync { [weak self] in
+            self?._memoryStats = MemoryStats()
+        }
+    }
     
     enum DeepFilterError: Error {
         case modelLoadFailed(String)
@@ -237,6 +286,26 @@ final class DeepFilterNet: @unchecked Sendable {
         // Fix CRITICAL: Wrap entire processing in queue to prevent concurrent access
         // to non-thread-safe components (STFT, ERBFeatures, SpectralFeatures)
         return try processingQueue.sync {
+            // Track memory usage during inference
+            let memoryBefore = Self.getMemoryUsageMB()
+            
+            defer {
+                // Update memory statistics after processing
+                let memoryAfter = Self.getMemoryUsageMB()
+                let memoryUsedMB = memoryAfter - memoryBefore
+                
+                memoryStatsQueue.async { [weak self] in
+                    guard let self = self else { return }
+                    self._memoryStats.currentInferenceMemoryMB = memoryUsedMB
+                    self._memoryStats.peakInferenceMemoryMB = max(self._memoryStats.peakInferenceMemoryMB, memoryUsedMB)
+                    self._memoryStats.totalInferences += 1
+                    
+                    // Log memory usage every 100 inferences
+                    if self._memoryStats.totalInferences % 100 == 0 {
+                        Self.logger.info("📊 ML Memory - Current: \(String(format: "%.1f", memoryUsedMB))MB, Peak: \(String(format: "%.1f", self._memoryStats.peakInferenceMemoryMB))MB, Inferences: \(self._memoryStats.totalInferences)")
+                    }
+                }
+            }
             // Fix MEDIUM: Use configurable maximum size to prevent memory exhaustion attacks
             // Allows 1 hour of audio processing while preventing DoS attacks
             let maxAudioSize = sampleRate * AppConstants.maxAudioProcessingSeconds
@@ -557,10 +626,42 @@ final class DeepFilterNet: @unchecked Sendable {
             throw DeepFilterError.modelLoadFailed("\(name) model not found: \(path)")
         }
         
+        // Track memory before model loading
+        let memoryBefore = getMemoryUsageMB()
+        
         do {
-            return try ONNXModel(modelPath: path)
+            let model = try ONNXModel(modelPath: path)
+            
+            // Track memory after model loading
+            let memoryAfter = getMemoryUsageMB()
+            let modelMemoryMB = memoryAfter - memoryBefore
+            
+            Self.logger.info("📊 \(name) model loaded: \(String(format: "%.1f", modelMemoryMB))MB")
+            
+            return model
         } catch {
             throw DeepFilterError.modelLoadFailed("Failed to load \(name) model: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Get current memory usage in MB
+    private static func getMemoryUsageMB() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size)/4
+        
+        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                task_info(mach_task_self_,
+                         task_flavor_t(MACH_TASK_BASIC_INFO),
+                         $0,
+                         &count)
+            }
+        }
+        
+        if kerr == KERN_SUCCESS {
+            return Double(info.resident_size) / 1024.0 / 1024.0
+        } else {
+            return 0.0
         }
     }
     

@@ -54,7 +54,7 @@ jobs:
 
             Use the repository's existing code style and conventions. Be constructive and helpful in your feedback.
 
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+            IMPORTANT: You MUST leave your review as a comment on the PR using the Bash tool with `gh pr comment`.
 
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
@@ -69,4 +69,5 @@ jobs:
             Bash(gh pr list:*),
             Bash(gh repo view:*),
             Bash(gh api repos/*:GET)"
-          # Security constraints - no shell access, no file writes, only read-only GitHub operations
+           # Security constraints - no shell access, no file writes, only read-only GitHub operations
+          use_sticky_comment: true

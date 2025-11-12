@@ -328,6 +328,8 @@ class AudioEngine: ObservableObject {
 
         if isEnabled {
             _ = audioSessionManager.startRealAudioCapture()
+            // Ensure output device is set up for processed audio routing
+            _ = audioSessionManager.startVocanaAudioOutput()
         }
     }
 
@@ -346,6 +348,9 @@ class AudioEngine: ObservableObject {
 
         if isEnabled {
             isUsingRealAudio = audioSessionManager.startRealAudioCapture()
+
+            // Ensure output device is set up for processed audio routing
+            _ = audioSessionManager.startVocanaAudioOutput()
 
             // Always start simulated audio for testing and fallback
             audioSessionManager.isEnabled = isEnabled

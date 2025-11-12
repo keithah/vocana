@@ -31,7 +31,7 @@ class AudioSessionManager: NSObject {
     private let outputQueue = DispatchQueue(label: "com.vocana.audio.output", qos: .userInitiated)
     private var outputBufferQueue = [AVAudioPCMBuffer]()
     private let maxOutputBuffers = 8
-    private let outputBufferSemaphore = DispatchSemaphore(value: maxOutputBuffers)
+    private let outputBufferSemaphore = DispatchSemaphore(value: 8)
     private let outputBufferTimeout: DispatchTimeInterval = .milliseconds(10)
 
     // Fix HIGH-001: Dedicated queue for audio processing to avoid blocking MainActor
@@ -428,7 +428,7 @@ class AudioSessionManager: NSObject {
     }
     
     /// Start audio output to Vocana virtual device
-    private func startVocanaAudioOutput() {
+    private func startVocanaAudioOutput() -> Bool {
         Self.logger.info("Starting Vocana audio output")
 
         do {
@@ -483,7 +483,10 @@ class AudioSessionManager: NSObject {
 
         } catch {
             Self.logger.error("Failed to start Vocana audio output: \(error.localizedDescription)")
+            return false
         }
+
+        return true
     }
 
     /// Send audio buffer to Vocana output device
@@ -563,7 +566,7 @@ class AudioSessionManager: NSObject {
         var devicesAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMaster
+            mElement: kAudioObjectPropertyElementMain
         )
         guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &devicesAddress, 0, nil, &propertySize) == noErr else {
             return nil
@@ -580,7 +583,7 @@ class AudioSessionManager: NSObject {
             var nameAddress = AudioObjectPropertyAddress(
                 mSelector: kAudioObjectPropertyName,
                 mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMaster
+                mElement: kAudioObjectPropertyElementMain
             )
             guard AudioObjectGetPropertyDataSize(deviceID, &nameAddress, 0, nil, &nameSize) == noErr else {
                 continue

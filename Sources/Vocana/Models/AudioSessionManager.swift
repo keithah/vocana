@@ -3,6 +3,10 @@ import Foundation
 import os.log
 import AppKit
 import CoreMedia
+#if os(macOS)
+import AudioToolbox
+import CoreAudio
+#endif
 
 /// Manages AVAudioSession and audio capture lifecycle
 /// Responsibility: Audio session setup, tap management, audio buffer processing
@@ -27,7 +31,7 @@ class AudioSessionManager: NSObject {
     private let outputQueue = DispatchQueue(label: "com.vocana.audio.output", qos: .userInitiated)
     private var outputBufferQueue = [AVAudioPCMBuffer]()
     private let maxOutputBuffers = 8
-    private let outputBufferSemaphore = DispatchSemaphore(value: 8)
+    private let outputBufferSemaphore = DispatchSemaphore(value: maxOutputBuffers)
     private let outputBufferTimeout: DispatchTimeInterval = .milliseconds(10)
 
     // Fix HIGH-001: Dedicated queue for audio processing to avoid blocking MainActor
@@ -208,6 +212,15 @@ class AudioSessionManager: NSObject {
             cleanupAVCapture()
             return false
         }
+
+        // Start Vocana output when using AVAudioEngine fallback
+        if !startVocanaAudioOutput() {
+            Self.logger.error("Failed to start Vocana audio output with AVAudioEngine fallback")
+            cleanupAVAudioEngine()
+            return false
+        }
+
+        return true
     }
     
     /// Start audio input using AVAudioEngine (fallback)
@@ -439,6 +452,28 @@ class AudioSessionManager: NSObject {
             let outputFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)
             outputAudioEngine.connect(outputAudioPlayer, to: outputAudioEngine.mainMixerNode, format: outputFormat)
 
+            #if os(macOS)
+            if let vocanaDeviceID = Self.findAudioDeviceID(containing: "Vocana"),
+               let outputUnit = outputAudioEngine.outputNode.audioUnit {
+                var deviceID = vocanaDeviceID
+                let status = AudioUnitSetProperty(
+                    outputUnit,
+                    kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global,
+                    0,
+                    &deviceID,
+                    UInt32(MemoryLayout<AudioDeviceID>.size)
+                )
+                if status != noErr {
+                    Self.logger.error("Failed to set Vocana output device: \(status)")
+                } else {
+                    Self.logger.info("Set output to Vocana device")
+                }
+            } else {
+                Self.logger.warning("Vocana output device not found, using default")
+            }
+            #endif
+
             // Start the player node
             outputAudioPlayer.play()
 
@@ -521,6 +556,46 @@ class AudioSessionManager: NSObject {
         outputAudioEngine = nil
         Self.logger.info("Vocana audio output stopped")
     }
+
+#if os(macOS)
+    private static func findAudioDeviceID(containing name: String) -> AudioDeviceID? {
+        var propertySize: UInt32 = 0
+        var devicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMaster
+        )
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &devicesAddress, 0, nil, &propertySize) == noErr else {
+            return nil
+        }
+
+        let deviceCount = Int(propertySize) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &devicesAddress, 0, nil, &propertySize, &deviceIDs) == noErr else {
+            return nil
+        }
+
+        for deviceID in deviceIDs {
+            var nameSize: UInt32 = 0
+            var nameAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioObjectPropertyName,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMaster
+            )
+            guard AudioObjectGetPropertyDataSize(deviceID, &nameAddress, 0, nil, &nameSize) == noErr else {
+                continue
+            }
+            var cfName = "" as CFString
+            guard AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &cfName) == noErr else {
+                continue
+            }
+            if (cfName as String).localizedCaseInsensitiveContains(name) {
+                return deviceID
+            }
+        }
+        return nil
+    }
+#endif
 }
 
 // MARK: - AVCaptureAudioDataOutputSampleBufferDelegate

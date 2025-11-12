@@ -427,10 +427,12 @@ class AudioEngine: ObservableObject {
         // Process audio based on enabled state
         if enabled {
             // Perform ML processing and buffer management on background queue
-            let outputLevel = processAudioWithMLOnBackground(samples: samples, sensitivity: sensitivity, inputLevel: inputLevel)
+            let processingResult = processAudioWithMLOnBackground(samples: samples, sensitivity: sensitivity, inputLevel: inputLevel)
+            let processedSamples = processingResult.samples
+            let outputLevel = processingResult.level
 
             // Send processed audio to output device (async, doesn't block)
-            sendProcessedAudioToOutputOnBackground(samples: samples, sensitivity: sensitivity)
+            sendProcessedAudioToOutputOnBackground(samples: processedSamples)
 
             // Update UI levels on main actor
             Task { @MainActor [weak self] in
@@ -452,7 +454,7 @@ class AudioEngine: ObservableObject {
     ///   - sensitivity: Processing sensitivity
     ///   - inputLevel: Input RMS level
     /// - Returns: Output RMS level after processing
-    private nonisolated func processAudioWithMLOnBackground(samples: [Float], sensitivity: Double, inputLevel: Float) -> Float {
+    private nonisolated func processAudioWithMLOnBackground(samples: [Float], sensitivity: Double, inputLevel: Float) -> (samples: [Float], level: Float) {
         // For now, apply simple sensitivity scaling
         // TODO: Integrate with ML processor and buffer manager
         let sensitivityFloat = Float(sensitivity)
@@ -464,23 +466,26 @@ class AudioEngine: ObservableObject {
     /// - Parameters:
     ///   - samples: Processed audio samples
     ///   - sensitivity: Processing sensitivity
-    private nonisolated func sendProcessedAudioToOutputOnBackground(samples: [Float], sensitivity: Double) {
+    private nonisolated func sendProcessedAudioToOutputOnBackground(samples: [Float]) {
         // Create AVAudioPCMBuffer from samples
         let sampleRate: Double = 48000 // Match Vocana device sample rate
-        let channels: AVAudioChannelCount = 1
+        let channels: AVAudioChannelCount = 2
+        let frameCount = AVAudioFrameCount(samples.count)
 
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else {
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
             return
         }
 
-        buffer.frameLength = AVAudioFrameCount(samples.count)
+        buffer.frameLength = frameCount
 
         // Copy samples to buffer
         if let channelData = buffer.floatChannelData {
-            let channel = channelData.pointee
-            for i in 0..<samples.count {
-                channel[i] = samples[i]
+            for channelIndex in 0..<Int(channels) {
+                let channel = channelData[channelIndex]
+                for sampleIndex in 0..<Int(frameCount) {
+                    channel[sampleIndex] = samples[sampleIndex]
+                }
             }
         }
 
@@ -614,20 +619,23 @@ class AudioEngine: ObservableObject {
     private func sendProcessedAudioToOutput(_ samples: [Float]) {
         // Create AVAudioPCMBuffer from samples
         let sampleRate: Double = 48000.0 // Match Vocana device sample rate
-        let channels: AVAudioChannelCount = 1
+        let channels: AVAudioChannelCount = 2
+        let frameCount = AVAudioFrameCount(samples.count)
 
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else {
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
             return
         }
 
-        buffer.frameLength = AVAudioFrameCount(samples.count)
+        buffer.frameLength = frameCount
 
         // Copy samples to buffer
         if let channelData = buffer.floatChannelData {
-            let channel = channelData.pointee
-            for i in 0..<samples.count {
-                channel[i] = samples[i]
+            for channelIndex in 0..<Int(channels) {
+                let channel = channelData[channelIndex]
+                for sampleIndex in 0..<Int(frameCount) {
+                    channel[sampleIndex] = samples[sampleIndex]
+                }
             }
         }
 

@@ -85,7 +85,7 @@ final class AudioPipelineIntegrationTests: XCTestCase {
             .store(in: &cancellables)
 
         // Start audio processing
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
 
         wait(for: [expectation], timeout: 2.0)
     }
@@ -102,7 +102,7 @@ final class AudioPipelineIntegrationTests: XCTestCase {
         XCTAssertEqual(iconManager.currentState, .inactive, "Should start inactive")
 
         // Start audio processing
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
 
         // Update icon state based on engine state
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {

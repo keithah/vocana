@@ -1,0 +1,30 @@
+#!/bin/bash
+
+echo "=== Vocana DriverKit Extension Installation ==="
+echo ""
+echo "Since SIP is enabled, we need to use system-approved methods."
+echo ""
+echo "Option 1: Manual Installation (Recommended)"
+echo "1. Open Finder"
+echo "2. Navigate to: /Users/keith/src/vocana/VocanadaAudioDriver_new/VocanaAudioDriver/"
+echo "3. Double-click on 'com.vocana.VocanaAudioDriver.dext'"
+echo "4. System Settings should open with extension approval prompt"
+echo "5. Click 'Allow' to install the extension"
+echo ""
+echo "Option 2: Check Current Status"
+echo "Run: systemextensionsctl list"
+echo ""
+echo "Option 3: Monitor Logs"
+echo "Run: log stream --predicate 'subsystem == \"com.apple.iokit\"' --info"
+echo ""
+echo "After installation, look for:"
+echo "- 'VocanaAudioDriver: Starting audio driver'"
+echo "- Extension should appear as 'activated enabled'"
+echo ""
+
+# Check current status
+echo "=== Current System Extensions ==="
+systemextensionsctl list | grep -v "com.apple" | grep -v "TC3Q7MAJXF" | grep -v "P3FGV63VK7" || echo "No non-Apple extensions found"
+
+echo ""
+echo "=== Ready for manual installation ==="

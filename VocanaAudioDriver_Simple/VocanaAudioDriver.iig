@@ -1,0 +1,10 @@
+#include <DriverKit/IOService.iig>
+
+class VocanaAudioDriver : IOService
+{
+public:
+    bool init() KERNEL;
+    void free() KERNEL;
+    kern_return_t Start(IOService * provider) KERNEL;
+    kern_return_t Stop(IOService * provider) KERNEL;
+};

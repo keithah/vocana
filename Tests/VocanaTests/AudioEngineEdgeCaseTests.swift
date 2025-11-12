@@ -21,7 +21,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     
     func testEmptyAudioBufferHandling() {
         // Should not crash with empty buffer
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
         // Simulate processing empty buffer indirectly through UI updates
         let initialLevel = audioEngine.currentLevels.input
         XCTAssertGreaterThanOrEqual(initialLevel, 0.0, "Should handle empty buffers gracefully")
@@ -29,7 +29,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     
       func testNaNValuesInAudioInput() {
           // Engine should detect NaN and skip ML processing
-          audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+          audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
           
           // Wait for ML initialization
           let expectation = XCTestExpectation(description: "NaN handling verified")
@@ -56,7 +56,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     
       func testInfinityValuesInAudioInput() {
           // Engine should detect infinity and skip ML processing
-          audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+          audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
           
           // Wait for initialization
           let expectation = XCTestExpectation(description: "Infinity handling verified")
@@ -86,7 +86,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     
      func testExtremeAmplitudeValues() {
          // Should reject and skip ML processing on extreme amplitudes
-         audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+         audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
          
          let expectation = XCTestExpectation(description: "Extreme amplitude handling verified")
          DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -107,7 +107,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     
     func testClippedAudioDetection() {
         // Saturated signal with RMS near maximum should be detected
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
         // Should detect saturation and potentially skip ML processing
         let level = audioEngine.currentLevels.input
         XCTAssertGreaterThanOrEqual(level, 0.0, "Should detect clipped audio")
@@ -117,7 +117,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     
     func testVeryLargeAudioBuffer() {
         // Should not crash with large buffers (1 second of audio)
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
         
         // Should not crash with large buffers
         let level = audioEngine.currentLevels.input
@@ -126,8 +126,8 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     
     func testRapidStartStop() {
         for _ in 0..<10 {
-            audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
-            audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+            audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
+            audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
         }
         
         // Should end in stopped state
@@ -136,7 +136,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     }
     
     func testBufferOverflowRecovery() {
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
         
         // Simulate sustained buffer overflow scenario
         let overflowExpectation = XCTestExpectation(description: "Buffer pressure handled")
@@ -154,7 +154,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     
     func testMLProcessingWithSilence() {
         // Should not try ML processing on silence
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
         
         // Should not try ML processing on silence
         let initialLevel = audioEngine.currentLevels.input
@@ -162,7 +162,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     }
     
     func testMemoryPressureRecovery() {
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
         
         let expectation = XCTestExpectation(description: "Memory pressure handled")
         
@@ -180,7 +180,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     // MARK: - Sensitivity Edge Cases
     
     func testZeroSensitivity() {
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.0)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.0)
         
         // With zero sensitivity and simulation, output might be affected
         let level = audioEngine.currentLevels.output
@@ -188,7 +188,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     }
     
     func testMaximumSensitivity() {
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 1.0)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 1.0)
         
         // Should not crash with maximum sensitivity
         let level = audioEngine.currentLevels.output
@@ -199,32 +199,32 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
     
     func testStartStopStateTransitions() {
         // Test valid state transitions
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
         var level = audioEngine.currentLevels.input
         XCTAssertGreaterThanOrEqual(level, 0.0, "Should start simulation")
         
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
         level = audioEngine.currentLevels.input
         XCTAssertGreaterThanOrEqual(level, 0.0, "Should stop simulation")
     }
     
     func testDoubleStartIdempotent() {
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
         let firstLevel = audioEngine.currentLevels.input
         
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
         let secondLevel = audioEngine.currentLevels.input
         
         XCTAssertGreaterThanOrEqual(firstLevel, 0.0, "First start should work")
         XCTAssertGreaterThanOrEqual(secondLevel, 0.0, "Double start should be idempotent")
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
     }
     
     func testStopWhenAlreadyStopped() {
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
 
         // Should not crash
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
         let level = audioEngine.currentLevels.input
         XCTAssertGreaterThanOrEqual(level, 0.0, "Should handle double stop")
     }
@@ -233,7 +233,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
 
     func testResourceCleanupOnStop() {
         // Start simulation to initialize resources
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
 
         // Wait for initialization
         let startExpectation = XCTestExpectation(description: "Simulation started")
@@ -246,7 +246,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         let initialLevels = audioEngine.currentLevels
 
         // Stop simulation (this starts decay timer since isEnabled becomes false)
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
 
         // Verify decay is working properly after stop (levels should decrease over time)
         let decayExpectation = XCTestExpectation(description: "Decay working after stop")
@@ -265,7 +265,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
 
     func testStateTransitionWithParameterChanges() {
         // Test changing sensitivity during operation
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
 
         let initialExpectation = XCTestExpectation(description: "Initial state")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -274,7 +274,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         wait(for: [initialExpectation], timeout: 1.0)
 
         // Change sensitivity while running
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.8)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.8)
 
         let changedExpectation = XCTestExpectation(description: "Sensitivity changed")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -285,12 +285,12 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         }
         wait(for: [changedExpectation], timeout: 1.0)
 
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
     }
 
     func testDisabledToEnabledTransition() {
         // Start disabled
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
 
         let disabledExpectation = XCTestExpectation(description: "Disabled state")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -299,7 +299,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         wait(for: [disabledExpectation], timeout: 1.0)
 
         // Enable while running
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
 
         let enabledExpectation = XCTestExpectation(description: "Enabled state")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -309,12 +309,12 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         }
         wait(for: [enabledExpectation], timeout: 1.0)
 
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
     }
 
     func testEnabledToDisabledTransition() {
         // Start enabled
-        audioEngine.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.5)
 
         let enabledExpectation = XCTestExpectation(description: "Enabled state")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -323,7 +323,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         wait(for: [enabledExpectation], timeout: 1.0)
 
         // Disable while running
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
 
         let disabledExpectation = XCTestExpectation(description: "Disabled state")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -334,13 +334,13 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         }
         wait(for: [disabledExpectation], timeout: 1.0)
 
-        audioEngine.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        audioEngine.setAudioProcessingEnabled(false, sensitivity: 0.5)
     }
 
     func testDeinitCleanup() {
         // Test that deinit properly cleans up resources
         var engine: AudioEngine? = AudioEngine()
-        engine?.startAudioProcessing(isEnabled: true, sensitivity: 0.5)
+        engine?.setAudioProcessingEnabled(true, sensitivity: 0.5)
 
         let startExpectation = XCTestExpectation(description: "Engine started")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -349,7 +349,7 @@ final class AudioEngineEdgeCaseTests: XCTestCase {
         wait(for: [startExpectation], timeout: 1.0)
 
         // Simulate deinit by setting to nil
-        engine?.startAudioProcessing(isEnabled: false, sensitivity: 0.5)
+        engine?.setAudioProcessingEnabled(false, sensitivity: 0.5)
         engine = nil
 
         // Should not crash and resources should be cleaned up

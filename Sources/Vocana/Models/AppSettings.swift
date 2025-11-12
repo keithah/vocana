@@ -1,11 +1,8 @@
 import Foundation
 import Combine
-import OSLog
 
 @MainActor
 class AppSettings: ObservableObject {
-    private static let logger = Logger(subsystem: "Vocana", category: "AppSettings")
-    
     // MARK: - Constants
     
     private enum Keys {
@@ -58,32 +55,6 @@ class AppSettings: ObservableObject {
     @Published var launchAtLogin: Bool {
         didSet {
             UserDefaults.standard.set(launchAtLogin, forKey: Keys.launchAtLogin)
-            // Update system launch at login setting with error handling
-            LaunchAtLoginHelper.setLaunchAtLogin(launchAtLogin) { [weak self] success in
-                DispatchQueue.main.async {
-                    self?.handleLaunchAtLoginResult(success)
-                }
-            }
-        }
-    }
-    
-    // MARK: - Private Error Handling
-    
-    private func initializeLaunchAtLogin() {
-        LaunchAtLoginHelper.setLaunchAtLogin(launchAtLogin) { [weak self] success in
-            DispatchQueue.main.async {
-                self?.handleLaunchAtLoginResult(success)
-            }
-        }
-    }
-    
-    private func handleLaunchAtLoginResult(_ success: Bool) {
-        if success {
-            Self.logger.debug("Launch at login setting updated successfully")
-        } else {
-            Self.logger.error("Failed to update launch at login")
-            // Consider reverting the setting or notifying user
-            // For now, we'll log the error but keep the setting
         }
     }
     
@@ -110,9 +81,6 @@ class AppSettings: ObservableObject {
         
         self.launchAtLogin = UserDefaults.standard.object(forKey: Keys.launchAtLogin) as? Bool ?? Defaults.launchAtLogin
         self.showInMenuBar = UserDefaults.standard.object(forKey: Keys.showInMenuBar) as? Bool ?? Defaults.showInMenuBar
-        
-        // Initialize launch at login with error handling
-        initializeLaunchAtLogin()
     }
     
     // MARK: - Methods

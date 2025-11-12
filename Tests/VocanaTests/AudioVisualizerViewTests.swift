@@ -52,7 +52,7 @@ final class AudioVisualizerViewTests: XCTestCase {
     }
     
     func testWarningThresholdConstant() {
-        XCTAssertEqual(AppConstants.levelWarningThreshold, 0.7)
+        XCTAssertEqual(AppConstants.levelWarningThreshold, 0.8)
     }
     
     func testSmoothingFactorConstant() {

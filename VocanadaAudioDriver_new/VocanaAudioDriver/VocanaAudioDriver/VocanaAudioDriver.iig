@@ -1,0 +1,22 @@
+//
+//  VocanaAudioDriver.iig
+//  VocanaAudioDriver
+//
+//  Created by Keith on 11/10/25.
+//
+
+#include <DriverKit/IOService.iig>
+#include <AudioDriverKit/IOUserAudioDriver.iig>
+#include <AudioDriverKit/IOUserAudioDevice.iig>
+#include <AudioDriverKit/IOUserAudioStream.iig>
+
+class VocanaAudioDriver : IOUserAudioDriver
+{
+public:
+    virtual kern_return_t Start(IOService * provider) KERNEL override;
+    virtual kern_return_t Stop(IOService * provider) KERNEL override;
+    virtual void Free() KERNEL override;
+
+private:
+    IVars* ivars;
+};

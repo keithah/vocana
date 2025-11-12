@@ -1,8 +1,6 @@
 import SwiftUI
 import AppKit
-import Combine
 @preconcurrency import AVFoundation
-import OSLog
 
 enum VocanaError: Int, Error {
     case statusBarButtonFailure = 1
@@ -50,39 +48,18 @@ struct VocanaApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let logger = Logger(subsystem: "Vocana", category: "AppDelegate")
-    
     var statusItem: NSStatusItem?
     var popover: NSPopover?
-    private var systemEventMonitor: Any?
-    private var appSettings: AppSettings?
-    private var audioCoordinator: AudioCoordinator?
-    private var iconManager: MenuBarIconManager?
-    
-    @MainActor
-    private var audioEngine: AudioEngine? {
-        return audioCoordinator?.audioEngine
-    }
     
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             try setupMenuBar()
-            setupSystemEventMonitoring()
             
             // Hide main window since we're a menu bar app
             if let window = NSApplication.shared.windows.first {
                 window.close()
             }
-            
-            // Set up menu bar behavior
-            updateMenuBarVisibility()
-            
-            // Register for system notifications
-            registerSystemNotifications()
-            
-            // Set up global keyboard shortcut for Cmd+Q
-            setupGlobalKeyEquivalent()
         } catch {
             handleError(error)
         }
@@ -110,89 +87,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.statusItem = nil
             }
             
-            // Unregister system event monitoring
-            if let monitor = systemEventMonitor {
-                NSEvent.removeMonitor(monitor)
-            }
-            
-            // Unregister system notifications
-            NotificationCenter.default.removeObserver(self)
-            
-            // Clean up Combine subscriptions
-            iconManager?.cleanup()
-            cancellables.removeAll()
-            
             // Note: ContentView and AudioEngine will be cleaned up via deinit
             // when popover is deallocated, ensuring proper audio session cleanup
         }
         
         return .terminateNow
-    }
-    
-    // MARK: - System Event Monitoring
-    
-    private func setupSystemEventMonitoring() {
-        // Monitor keyboard events for app-wide shortcuts
-        // This would be used for global hotkeys if implemented
-    }
-    
-    private func registerSystemNotifications() {
-        // Monitor for system sleep/wake
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(handleSystemSleep),
-            name: NSWorkspace.willSleepNotification,
-            object: nil
-        )
-        
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(handleSystemWake),
-            name: NSWorkspace.didWakeNotification,
-            object: nil
-        )
-        
-        // Monitor for user session changes
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(handleUserSessionChange),
-            name: NSWorkspace.sessionDidBecomeActiveNotification,
-            object: nil
-        )
-    }
-    
-    @objc private func handleSystemSleep() {
-        // Pause audio processing when system sleeps
-        // Close popover to save memory
-        if let popover = popover, popover.isShown {
-            popover.performClose(nil)
-        }
-    }
-    
-    @objc private func handleSystemWake() {
-        // Resume audio processing when system wakes
-    }
-    
-    @objc private func handleUserSessionChange() {
-        // Handle user session changes (switching users, session resume)
-    }
-    
-    // MARK: - Menu Bar Management
-    
-    @MainActor
-    private func updateMenuBarVisibility() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            // Initialize app settings on main thread
-            if self.appSettings == nil {
-                self.appSettings = AppSettings()
-            }
-            
-            if let appSettings = self.appSettings, !appSettings.showInMenuBar {
-                // Optionally hide from menu bar if user preference
-                // This is typically not used, but available for advanced users
-            }
-        }
     }
     
     @MainActor
@@ -203,7 +102,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             throw VocanaError.statusBarButtonFailure
         }
         
-        // Icon will be set up by MenuBarIconManager after popover is created
+        button.image = NSImage(systemSymbolName: "waveform.and.mic", accessibilityDescription: AppConstants.accessibilityDescription)
         button.action = #selector(menuBarClicked)
         button.target = self
         
@@ -211,51 +110,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @MainActor
-    private func setupMenuBarIconUpdates() {
-        guard let audioEngine = audioEngine, let settings = audioCoordinator?.settings else { 
-            Self.logger.error("setupMenuBarIconUpdates: No audio engine or settings available")
-            return 
-        }
-        
-        // Initialize icon manager
-        iconManager = MenuBarIconManager()
-        
-        Self.logger.debug("Setting up consolidated menu bar icon updates...")
-        
-        // Consolidate multiple publishers into single update stream for performance
-        Publishers.CombineLatest3(
-            audioEngine.$isUsingRealAudio,
-            audioEngine.$currentLevels,
-            settings.$isEnabled
-        )
-        .debounce(for: .milliseconds(16), scheduler: DispatchQueue.main) // 60fps max
-        .sink { [weak self] isUsingRealAudio, _, isEnabled in
-            // Update icon manager state - UI will refresh automatically when state changes
-            self?.iconManager?.updateState(isEnabled: isEnabled, isUsingRealAudio: isUsingRealAudio)
-        }
-        .store(in: &cancellables)
-        
-        // Initial setup - apply current state to button
-        if let button = statusItem?.button {
-            iconManager?.applyToButton(button)
-        }
-    }
-    
-    private var cancellables = Set<AnyCancellable>()
-    
-    @MainActor
     private func setupPopover() {
         popover = NSPopover()
         popover?.contentSize = NSSize(width: AppConstants.popoverWidth, height: AppConstants.popoverHeight)
         popover?.behavior = .transient
         
-        // Create audio coordinator and content view
-        audioCoordinator = AudioCoordinator()
-        let contentView = ContentView(coordinator: audioCoordinator!)
+        let contentView = ContentView()
         popover?.contentViewController = NSHostingController(rootView: contentView)
-        
-        // Setup menu bar icon updates AFTER audioCoordinator is created
-        setupMenuBarIconUpdates()
     }
     
     @objc private func menuBarClicked() {
@@ -268,24 +129,5 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
         button.isHighlighted = popover.isShown
-    }
-    
-    @objc private func quitApp() {
-        NSApplication.shared.terminate(nil)
-    }
-    
-    private func setupGlobalKeyEquivalent() {
-        // Create a hidden menu item that responds to Cmd+Q
-        let mainMenu = NSMenu()
-        let quitMenuItem = NSMenuItem(
-            title: "Quit Vocana",
-            action: #selector(quitApp),
-            keyEquivalent: "q"
-        )
-        quitMenuItem.target = self
-        mainMenu.addItem(quitMenuItem)
-        
-        // Set as main menu to enable Cmd+Q
-        NSApplication.shared.mainMenu = mainMenu
     }
 }

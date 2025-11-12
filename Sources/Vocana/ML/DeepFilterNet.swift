@@ -1,7 +1,6 @@
 import Foundation
 import Accelerate
 import os.log
-import Darwin.Mach
 
 /// DeepFilterNet3 noise cancellation pipeline
 ///
@@ -85,54 +84,6 @@ final class DeepFilterNet: @unchecked Sendable {
     // Logging
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "DeepFilterNet")
     
-    // MARK: - Memory Tracking
-    
-    /// Memory usage statistics for ML models
-    private struct MemoryStats {
-        var modelLoadMemoryMB: Double = 0.0
-        var peakInferenceMemoryMB: Double = 0.0
-        var currentInferenceMemoryMB: Double = 0.0
-        var totalInferences: UInt64 = 0
-    }
-    
-    /// Thread-safe memory statistics tracking
-    private let memoryStatsQueue = DispatchQueue(label: "com.vocana.deepfilternet.memory", qos: .utility)
-    private var _memoryStats = MemoryStats()
-    private var memoryStats: MemoryStats {
-        get { memoryStatsQueue.sync { _memoryStats } }
-        set { memoryStatsQueue.sync { _memoryStats = newValue } }
-    }
-    
-    /// Public memory usage information
-    var memoryUsageMB: Double {
-        return memoryStats.currentInferenceMemoryMB
-    }
-    
-    var peakMemoryUsageMB: Double {
-        return memoryStats.peakInferenceMemoryMB
-    }
-    
-    var modelLoadMemoryMB: Double {
-        return memoryStats.modelLoadMemoryMB
-    }
-    
-    /// Get comprehensive memory statistics
-    func getMemoryStatistics() -> (current: Double, peak: Double, modelLoad: Double, totalInferences: UInt64) {
-        return (
-            current: memoryStats.currentInferenceMemoryMB,
-            peak: memoryStats.peakInferenceMemoryMB,
-            modelLoad: memoryStats.modelLoadMemoryMB,
-            totalInferences: memoryStats.totalInferences
-        )
-    }
-    
-    /// Reset memory statistics (useful for testing)
-    func resetMemoryStatistics() {
-        memoryStatsQueue.sync { [weak self] in
-            self?._memoryStats = MemoryStats()
-        }
-    }
-    
     enum DeepFilterError: Error {
         case modelLoadFailed(String)
         case processingFailed(String)
@@ -149,8 +100,7 @@ final class DeepFilterNet: @unchecked Sendable {
         Self.logger.info("Initializing DeepFilterNet from \(modelsDirectory)")
         
         // Initialize signal processing components
-        // Fix CRITICAL: Handle STFT initialization errors gracefully
-        let stft = try STFT(fftSize: AppConstants.fftSize, hopSize: AppConstants.hopSize, sampleRate: AppConstants.sampleRate)
+        let stft = STFT(fftSize: AppConstants.fftSize, hopSize: AppConstants.hopSize, sampleRate: AppConstants.sampleRate)
         let erbFeatures = ERBFeatures(
             numBands: AppConstants.erbBands,
             sampleRate: AppConstants.sampleRate,
@@ -286,26 +236,6 @@ final class DeepFilterNet: @unchecked Sendable {
         // Fix CRITICAL: Wrap entire processing in queue to prevent concurrent access
         // to non-thread-safe components (STFT, ERBFeatures, SpectralFeatures)
         return try processingQueue.sync {
-            // Track memory usage during inference
-            let memoryBefore = Self.getMemoryUsageMB()
-            
-            defer {
-                // Update memory statistics after processing
-                let memoryAfter = Self.getMemoryUsageMB()
-                let memoryUsedMB = memoryAfter - memoryBefore
-                
-                memoryStatsQueue.async { [weak self] in
-                    guard let self = self else { return }
-                    self._memoryStats.currentInferenceMemoryMB = memoryUsedMB
-                    self._memoryStats.peakInferenceMemoryMB = max(self._memoryStats.peakInferenceMemoryMB, memoryUsedMB)
-                    self._memoryStats.totalInferences += 1
-                    
-                    // Log memory usage every 100 inferences
-                    if self._memoryStats.totalInferences % 100 == 0 {
-                        Self.logger.info("📊 ML Memory - Current: \(String(format: "%.1f", memoryUsedMB))MB, Peak: \(String(format: "%.1f", self._memoryStats.peakInferenceMemoryMB))MB, Inferences: \(self._memoryStats.totalInferences)")
-                    }
-                }
-            }
             // Fix MEDIUM: Use configurable maximum size to prevent memory exhaustion attacks
             // Allows 1 hour of audio processing while preventing DoS attacks
             let maxAudioSize = sampleRate * AppConstants.maxAudioProcessingSeconds
@@ -365,25 +295,10 @@ final class DeepFilterNet: @unchecked Sendable {
                 throw DeepFilterError.processingFailed("Invalid STFT output dimensions")
             }
             
-            // Fix PERF-002: Use in-place operations to reduce memory allocations
-            // Pre-allocate arrays with known capacity to avoid reallocations
-            let totalFrames = spectrum2D.real.count
-            let binsPerFrame = spectrum2D.real.first?.count ?? 0
-            let totalElements = totalFrames * binsPerFrame
-            
-            var spectrumReal = [Float]()
-            var spectrumImag = [Float]()
-            spectrumReal.reserveCapacity(totalElements)
-            spectrumImag.reserveCapacity(totalElements)
-            
-            // Use in-place operations to avoid intermediate arrays
-            for frame in spectrum2D.real {
-                spectrumReal.append(contentsOf: frame)
-            }
-            for frame in spectrum2D.imag {
-                spectrumImag.append(contentsOf: frame)
-            }
-            
+            // OPTIMIZED: Use flatMap for O(n) complexity (already optimal)
+            // flatMap is O(n) - each element is visited exactly once
+            let spectrumReal = spectrum2D.real.flatMap { $0 }
+            let spectrumImag = spectrum2D.imag.flatMap { $0 }
             let spectrum = (real: spectrumReal, imag: spectrumImag)
             
             // 2. Extract features
@@ -499,17 +414,6 @@ final class DeepFilterNet: @unchecked Sendable {
     // MARK: - Model Inference
     
     private func runEncoder(erbFeat: Tensor, specFeat: Tensor) throws -> [String: Tensor] {
-        // Fix CRI-001: Validate tensor shapes before processing
-        guard erbFeat.shape.count == 4 && specFeat.shape.count == 4 else {
-            throw DeepFilterError.processingFailed("Invalid tensor shapes: erb_feat=\(erbFeat.shape), spec_feat=\(specFeat.shape)")
-        }
-        
-        // Fix CRI-001: Bounds check tensor dimensions
-        let maxTensorSize = 1024 * 1024 // Prevent memory exhaustion
-        guard erbFeat.data.count <= maxTensorSize && specFeat.data.count <= maxTensorSize else {
-            throw DeepFilterError.processingFailed("Tensor too large: erb_feat=\(erbFeat.data.count), spec_feat=\(specFeat.data.count)")
-        }
-        
         let inputs: [String: Tensor] = [
             "erb_feat": erbFeat,
             "spec_feat": specFeat
@@ -525,17 +429,12 @@ final class DeepFilterNet: @unchecked Sendable {
             }
         }
         
-        // Fix HIGH-002: Zero-initialize tensors before copying to prevent memory disclosure
-        let copiedOutputs = try outputs.mapValues { tensor in
-            // Validate tensor size before copying
-            guard tensor.data.count <= maxTensorSize else {
-                throw DeepFilterError.processingFailed("Output tensor too large: \(tensor.data.count)")
-            }
-            
-            // Create zero-initialized buffer then copy to prevent memory disclosure
-            var zeroInitializedData = [Float](repeating: 0.0, count: tensor.data.count)
-            zeroInitializedData.replaceSubrange(0..<tensor.data.count, with: tensor.data)
-            return Tensor(shape: tensor.shape, data: zeroInitializedData)
+        // Fix CRITICAL: Use proper state synchronization through computed property
+        // Fix CRITICAL #6: Clear old states before storing new ones to prevent memory leak
+        
+        // Deep copy new states outside the queue for better performance
+        let copiedOutputs = outputs.mapValues { tensor in
+            Tensor(shape: tensor.shape, data: Array(tensor.data))
         }
         
          // Fix CRITICAL: Improved memory management for state updates
@@ -626,42 +525,10 @@ final class DeepFilterNet: @unchecked Sendable {
             throw DeepFilterError.modelLoadFailed("\(name) model not found: \(path)")
         }
         
-        // Track memory before model loading
-        let memoryBefore = getMemoryUsageMB()
-        
         do {
-            let model = try ONNXModel(modelPath: path)
-            
-            // Track memory after model loading
-            let memoryAfter = getMemoryUsageMB()
-            let modelMemoryMB = memoryAfter - memoryBefore
-            
-            Self.logger.info("📊 \(name) model loaded: \(String(format: "%.1f", modelMemoryMB))MB")
-            
-            return model
+            return try ONNXModel(modelPath: path)
         } catch {
             throw DeepFilterError.modelLoadFailed("Failed to load \(name) model: \(error.localizedDescription)")
-        }
-    }
-    
-    /// Get current memory usage in MB
-    private static func getMemoryUsageMB() -> Double {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size)/4
-        
-        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
-                task_info(mach_task_self_,
-                         task_flavor_t(MACH_TASK_BASIC_INFO),
-                         $0,
-                         &count)
-            }
-        }
-        
-        if kerr == KERN_SUCCESS {
-            return Double(info.resident_size) / 1024.0 / 1024.0
-        } else {
-            return 0.0
         }
     }
     

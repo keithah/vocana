@@ -1,52 +1,9 @@
 import Foundation
-import AVFoundation
 import os.log
 
-/// Protocol for ML audio processing components
-/// Allows dependency injection for testing with mock implementations
-@MainActor
-protocol MLAudioProcessorProtocol: AnyObject {
-    var isMLProcessingActive: Bool { get }
-    var processingLatencyMs: Double { get }
-    var memoryPressureLevel: AudioEngine.MemoryPressureLevel { get set }
-    
-    var recordFailure: () -> Void { get set }
-    var recordLatency: (Double) -> Void { get set }
-    var recordSuccess: () -> Void { get set }
-    var onMLProcessingReady: () -> Void { get set }
-    
-    func initializeML() async
-    func initializeMLProcessing()
-    func stopMLProcessing()
-    func suspendMLProcessing(reason: String)
-    func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]?
-    func activateML() async -> Bool
-    func deactivateML() async
-    func isMemoryPressureSuspended() -> Bool
-    func cleanup() async
-}
-
-/// Manages ML model inference and audio processing with thread-safe state management
-/// 
-/// ## Threading Model
-/// This class uses a hybrid MainActor + queue synchronization approach:
-/// - **MainActor**: All public properties and UI-related state
-/// - **mlStateQueue**: Synchronizes ML processing state and model access
-/// - **mlInferenceQueue**: Dedicated queue for ML inference to prevent blocking audio thread
-/// 
-/// ## Responsibilities
-/// - DeepFilterNet initialization and lifecycle management
-/// - Audio processing with ML inference
-/// - Memory pressure handling and resource cleanup
-/// - Thread-safe state synchronization for concurrent access
-/// 
-/// ## Usage Notes
-/// - Isolated from audio capture, buffering, and level calculations
-/// - All callbacks are automatically dispatched to MainActor
-/// - Do not access MLAudioProcessor state directly from callbacks to avoid race conditions
-/// 
-/// - Important: Use `mlStateQueue.sync` for any synchronized state access
-/// - Important: ML inference runs on dedicated queue to prevent audio thread blocking
+/// Manages ML model inference and audio processing
+/// Responsibility: DeepFilterNet initialization, inference, memory pressure handling
+/// Isolated from audio capture, buffering, and level calculations
 @MainActor
 class MLAudioProcessor: MLAudioProcessorProtocol {
     private static let logger = Logger(subsystem: "Vocana", category: "MLAudioProcessor")
@@ -65,87 +22,38 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
      // Thread Safety: All callbacks are automatically dispatched to MainActor
      // Do not access MLAudioProcessor state directly from callbacks to avoid race conditions
       var telemetry: AudioEngine.ProductionTelemetry = .init()
-      var recordLatency: (Double) -> Void = { _ in }
+       var recordLatency: (Double) -> Void = { _ in }
        var recordFailure: () -> Void = {}
        var recordSuccess: () -> Void = {}
        var recordMemoryPressure: () -> Void = {}
        var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
     
-    // Public state - synchronized through mlStateQueue
-    private var _isMLProcessingActive = false
-    
-    var isMLProcessingActive: Bool {
-        return mlStateQueue.sync {
-            return _isMLProcessingActive
-        }
-    }
+    // Public state
+    var isMLProcessingActive = false
     var processingLatencyMs: Double = 0
-    var memoryPressureLevel: AudioEngine.MemoryPressureLevel = .normal
-    
-    // MARK: - Memory Tracking
-    
-    /// Current ML model memory usage in MB
-    var mlMemoryUsageMB: Double {
-        guard let denoiser = denoiser else { return 0.0 }
-        return denoiser.memoryUsageMB
-    }
-    
-    /// Peak ML model memory usage in MB
-    var mlPeakMemoryUsageMB: Double {
-        guard let denoiser = denoiser else { return 0.0 }
-        return denoiser.peakMemoryUsageMB
-    }
-    
-    /// Memory used during model loading in MB
-    var mlModelLoadMemoryMB: Double {
-        guard let denoiser = denoiser else { return 0.0 }
-        return denoiser.modelLoadMemoryMB
-    }
-    
-    /// Get comprehensive ML memory statistics
-    func getMLMemoryStatistics() -> (current: Double, peak: Double, modelLoad: Double, totalInferences: UInt64) {
-        guard let denoiser = denoiser else { 
-            return (current: 0.0, peak: 0.0, modelLoad: 0.0, totalInferences: 0)
-        }
-        return denoiser.getMemoryStatistics()
-    }
+    var memoryPressureLevel: Int = 0
     
     /// Initialize ML processing with DeepFilterNet
     /// Handles async model loading with proper cancellation support
     func initializeMLProcessing() {
-
-        
         // Fix CRITICAL: Cancel any existing initialization to prevent race conditions
         mlInitializationTask?.cancel()
-
+        
         // Fix HIGH: Make ML initialization async to avoid blocking UI
         mlInitializationTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
-
+            
             do {
-                print("🤖 Finding models directory...")
                 // Check for cancellation before each expensive operation
                 guard !Task.isCancelled else { return }
-
+                
                 // Find models directory (can be slow with file system checks)
                 let modelsPath = self.findModelsDirectory()
-                print("🤖 Models directory found: \(modelsPath)")
-
+                
                 guard !Task.isCancelled else { return }
-
-                print("🤖 Creating DeepFilterNet instance...")
-                
-                // Verify all required models exist before attempting to load
-                let requiredModels = ["enc.onnx", "df_dec.onnx", "erb_dec.onnx"]
-                let missingModels = requiredModels.filter { !FileManager.default.fileExists(atPath: "\(modelsPath)/\($0)") }
-                
-                if !missingModels.isEmpty {
-                    throw DeepFilterNet.DeepFilterError.modelLoadFailed("Missing model files: \(missingModels.joined(separator: ", "))")
-                }
                 
                 // Create DeepFilterNet instance (potentially slow model loading)
                 let denoiser = try DeepFilterNet(modelsDirectory: modelsPath)
-                Logger(subsystem: "Vocana", category: "MLAudioProcessor").info("DeepFilterNet created successfully")
                 
                 // Fix HIGH: Atomic cancellation and state check to prevent TOCTOU race
                 let wasCancelled = Task.isCancelled
@@ -170,14 +78,12 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                         return
                     }
                     
-                     self.denoiser = denoiser
-                     self.mlStateQueue.sync {
-                         self._isMLProcessingActive = true
-                     }
-                     Self.logger.info("DeepFilterNet ML processing enabled")
-
-                     // Fix HIGH-008: Notify that ML processing is ready
-                     self.onMLProcessingReady()
+                    self.denoiser = denoiser
+                    self.isMLProcessingActive = true
+                    Self.logger.info("DeepFilterNet ML processing enabled")
+                    
+                    // Fix HIGH-008: Notify that ML processing is ready
+                    self.onMLProcessingReady()
                 }
              } catch {
                  guard !Task.isCancelled else { return }
@@ -198,17 +104,14 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                          }
                      } else {
                          Self.logger.error("Unexpected ML initialization error: \(error.localizedDescription)")
-                       }
+                     }
 
-                        Self.logger.error("ML initialization failed: \(error.localizedDescription)")
-                        Self.logger.info("Falling back to simple level-based processing")
-                       self.denoiser = nil
-                       self.mlStateQueue.sync {
-                           self._isMLProcessingActive = false
-                       }
+                     Self.logger.info("Falling back to simple level-based processing")
+                     self.denoiser = nil
+                     self.isMLProcessingActive = false
 
-                       // Don't record this as a failure - it's an expected fallback
-                        // self.recordFailure()
+                     // Notify that ML initialization failed
+                     self.recordFailure()
                  }
              }
         }
@@ -219,9 +122,7 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
         mlInitializationTask?.cancel()
         mlInitializationTask = nil
         denoiser = nil
-        mlStateQueue.sync {
-            _isMLProcessingActive = false
-        }
+        isMLProcessingActive = false
     }
     
     deinit {
@@ -263,11 +164,10 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                  let endTime = CFAbsoluteTimeGetCurrent()
                  let latencyMs = (endTime - startTime) * 1000.0
                  
-                  // Fix CRITICAL: Record telemetry for production monitoring
-                  Task { @MainActor in
-                      self.recordLatency(latencyMs)
-                      self.recordSuccess()  // Reset failure counter on successful processing
-                  }
+                 // Fix CRITICAL: Record telemetry for production monitoring
+                 Task { @MainActor in
+                     self.recordLatency(latencyMs)
+                 }
                  
                  // Monitor for SLA violations (target <1ms)
                  if latencyMs > 1.0 {
@@ -275,12 +175,12 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                          Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
                      }
                  }
-               } catch {
-                    Task { @MainActor in
-                        Self.logger.error("ML processing error: \(error.localizedDescription)")
-                        self.recordFailure()
-                    }
-               }
+             } catch {
+                 Task { @MainActor in
+                     Self.logger.error("ML processing error: \(error.localizedDescription)")
+                     self.recordFailure()
+                 }
+             }
          }
          
          // Wait with timeout to prevent blocking indefinitely
@@ -314,58 +214,22 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
     // MARK: - Private Helpers
     
     private nonisolated func findModelsDirectory() -> String {
-        Logger(subsystem: "Vocana", category: "MLAudioProcessor").info("Searching for ML models directory...")
-        
-        // Use Bundle.main.resourcePath for bundled resources (correct for SPM)
-        let resourcePath = Bundle.main.resourcePath ?? "."
-        let modelsPath = "\(resourcePath)/Models"
-
-        // Verify models exist at the expected location
-        let encPath = "\(modelsPath)/enc.onnx"
-        if FileManager.default.fileExists(atPath: encPath) {
-            return modelsPath
-        }
-
-        // Fallback: Try relative paths for development/debugging
+        // Try multiple locations for models
         let searchPaths = [
             "Resources/Models",
-            "../Resources/Models", 
+            "../Resources/Models",
             "ml-models/pretrained/tmp/export",
             "../ml-models/pretrained/tmp/export"
         ]
-
+        
         for path in searchPaths {
-            let testEncPath = "\(path)/enc.onnx"
-            if FileManager.default.fileExists(atPath: testEncPath) {
+            let encPath = "\(path)/enc.onnx"
+            if FileManager.default.fileExists(atPath: encPath) {
                 return path
             }
         }
-
-        // Final fallback
-        return modelsPath
-    }
-    
-    // MARK: - MLAudioProcessorProtocol
-    
-    func initializeML() async {
-        initializeMLProcessing()
-    }
-    
-    func activateML() async -> Bool {
-        return !mlProcessingSuspendedDueToMemory
-    }
-    
-    func deactivateML() async {
-        mlStateQueue.sync {
-            _isMLProcessingActive = false
-        }
-    }
-    
-    func cleanup() async {
-        mlInitializationTask?.cancel()
-        denoiser = nil
-        mlStateQueue.sync {
-            _isMLProcessingActive = false
-        }
+        
+        // Default fallback
+        return "Resources/Models"
     }
 }

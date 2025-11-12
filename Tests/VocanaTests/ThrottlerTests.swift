@@ -92,7 +92,7 @@ final class ThrottlerTests: XCTestCase {
         var callCount = 0
         let queue = DispatchQueue(label: "test.concurrent", attributes: .concurrent)
         let group = DispatchGroup()
-        
+
         // Simulate concurrent calls from multiple threads
         for _ in 0..<10 {
             group.enter()
@@ -103,18 +103,19 @@ final class ThrottlerTests: XCTestCase {
                 group.leave()
             }
         }
-        
+
         group.wait()
-        
+
         let expectation = XCTestExpectation(description: "Waiting for concurrent throttle")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             expectation.fulfill()
         }
-        
+
         XCTWaiter.wait(for: [expectation], timeout: 0.3)
-        
-        // Should have executed at least twice (immediate + pending)
-        XCTAssertGreaterThanOrEqual(callCount, 2, "Should handle concurrent calls without deadlock")
+
+        // With concurrent calls, throttling should coalesce them into single execution
+        // The first call executes immediately, subsequent calls are throttled
+        XCTAssertEqual(callCount, 1, "Concurrent calls should be throttled to single execution")
     }
     
     func testThrottlerDoesNotDeadlock() {

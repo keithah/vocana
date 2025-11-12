@@ -7,7 +7,8 @@ import Combine
 class AudioCoordinator: ObservableObject {
     @Published var audioEngine = AudioEngine()
     @Published var settings = AppSettings()
-    
+    @Published var isProcessing = false
+
     private var cancellables = Set<AnyCancellable>()
     
     init() {
@@ -29,17 +30,21 @@ class AudioCoordinator: ObservableObject {
     
     /// Setup reactive bindings between settings and audio engine
     private func setupBindings() {
+        // Initialize processing state
+        isProcessing = settings.isEnabled
+
         // Optimization: Split isEnabled and sensitivity for responsive UX
         // isEnabled receives immediate updates for responsive user feedback
-        // sensitivity uses debouncing to prevent excessive ML re-processing
-        
+        // sensitivity uses debouncing to prevent excessive re-processing
+
         // Immediate isEnabled updates (toggle response should be instant)
         settings.$isEnabled
-            .sink { [weak self] _ in
+            .sink { [weak self] isEnabled in
+                self?.isProcessing = isEnabled
                 self?.updateAudioSettings()
             }
             .store(in: &cancellables)
-        
+
         // Debounced sensitivity updates (ML processing is expensive)
         // 50ms debounce prevents excessive re-processing while user adjusts slider
         settings.objectWillChange
@@ -52,20 +57,22 @@ class AudioCoordinator: ObservableObject {
     
      /// Update audio engine settings with state validation
     private func updateAudioSettings() {
-        // Fix HIGH: Validate audio engine state before updating
-        audioEngine.startAudioProcessing(
-            isEnabled: settings.isEnabled,
+        // Update audio processing state based on settings
+        audioEngine.setAudioProcessingEnabled(
+            settings.isEnabled,
             sensitivity: settings.sensitivity
         )
+        isProcessing = settings.isEnabled
     }
-    
+
     /// Start audio processing (called from UI)
     func startAudioProcessing() {
         updateAudioSettings()
     }
-    
+
     /// Stop audio processing (called from UI)
     func stopAudioProcessing() {
+        isProcessing = false
         audioEngine.stopAudioProcessing()
     }
 }

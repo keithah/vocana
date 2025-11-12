@@ -1,5 +1,6 @@
 import Foundation
-import os.log
+
+import OSLog
 
 /// Swift wrapper for ONNX Runtime C API
 ///
@@ -13,8 +14,8 @@ import os.log
 /// let outputs = try session.run(inputs: ["input": tensorData])
 /// ```
 class ONNXRuntimeWrapper {
-    private static let logger = Logger(subsystem: "com.vocana.app", category: "ONNXRuntime")
-    
+    nonisolated private static let logger = Logger(subsystem: "Vocana", category: "ONNXRuntime")
+
     // MARK: - Configuration
     
     enum RuntimeMode {
@@ -38,7 +39,8 @@ class ONNXRuntimeWrapper {
             if isNativeAvailable {
                 Self.logger.info("ONNX Runtime native library detected")
             } else {
-                Self.logger.warning("ONNX Runtime not found - using mock implementation. To install: Download from https://github.com/microsoft/onnxruntime/releases")
+                Self.logger.warning("ONNX Runtime not found - using mock implementation")
+                Self.logger.info("To install ONNX Runtime: Download from https://github.com/microsoft/onnxruntime/releases")
             }
         }
     }
@@ -67,16 +69,7 @@ class ONNXRuntimeWrapper {
         let useNative = (mode == .native) || (mode == .automatic && isNativeAvailable)
         
         if useNative {
-            do {
-                return try NativeInferenceSession(modelPath: modelPath, options: options)
-            } catch {
-                if mode == .automatic {
-                    Self.logger.warning("Native ONNX Runtime failed, falling back to mock: \(error)")
-                    return try MockInferenceSession(modelPath: modelPath, options: options)
-                } else {
-                    throw error
-                }
-            }
+            return try NativeInferenceSession(modelPath: modelPath, options: options)
         } else {
             return try MockInferenceSession(modelPath: modelPath, options: options)
         }
@@ -321,9 +314,7 @@ class NativeInferenceSession: InferenceSession {
         // self.inputNames = queryInputNames(session)
         // self.outputNames = queryOutputNames(session)
         
-        // For now, always fall back to mock by throwing an error
-        // This will be caught by ONNXRuntimeWrapper.createSession in automatic mode
-        throw ONNXError.notImplemented("Native ONNX Runtime not yet implemented - use mock mode")
+        throw ONNXError.notImplemented("Native ONNX Runtime not yet implemented")
     }
     
     func run(inputs: [String: TensorData]) throws -> [String: TensorData] {

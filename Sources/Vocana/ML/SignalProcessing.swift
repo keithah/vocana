@@ -2,26 +2,6 @@ import Foundation
 import Accelerate
 import os.log
 
-// MARK: - Error Types
-
-/// Errors that can occur during STFT operation
-enum STFTError: LocalizedError {
-    case invalidWindowValues(String)
-    case lowWindowAmplitude(Float)
-    case fftSetupFailed(String)
-    
-    var errorDescription: String? {
-        switch self {
-        case .invalidWindowValues(let msg):
-            return "STFT window generation failed: \(msg)"
-        case .lowWindowAmplitude(let minAmplitude):
-            return "STFT window amplitude too low (minimum required: \(minAmplitude))"
-        case .fftSetupFailed(let msg):
-            return "FFT setup failed: \(msg)"
-        }
-    }
-}
-
 /// Short-Time Fourier Transform (STFT) and Inverse STFT for audio processing
 /// Implements real-time compatible spectral analysis with overlap-add synthesis
 ///
@@ -81,21 +61,17 @@ final class STFT {
     
     // MARK: - Initialization
     
-    init(fftSize: Int = AppConstants.fftSize, hopSize: Int = AppConstants.hopSize, sampleRate: Int = AppConstants.sampleRate) throws {
-        guard fftSize > 0 && fftSize <= 16384 else {
-            throw STFTError.fftSetupFailed("FFT size must be in range [1, 16384], got \(fftSize)")
-        }
-        guard hopSize > 0 && hopSize <= fftSize else {
-            throw STFTError.fftSetupFailed("Hop size must be positive and <= FFT size, got hopSize=\(hopSize), fftSize=\(fftSize)")
-        }
+    init(fftSize: Int = AppConstants.fftSize, hopSize: Int = AppConstants.hopSize, sampleRate: Int = AppConstants.sampleRate) {
+        precondition(fftSize > 0 && fftSize <= 16384, 
+                    "FFT size must be in range [1, 16384], got \(fftSize)")
+        precondition(hopSize > 0 && hopSize <= fftSize, 
+                    "Hop size must be positive and <= FFT size, got hopSize=\(hopSize), fftSize=\(fftSize)")
         // Fix CRITICAL: Add COLA validation for STFT window change
         // vDSP_HANN_DENORM requires 50% overlap (hop=fft/2) for proper reconstruction
-        guard hopSize == fftSize / 2 else {
-            throw STFTError.fftSetupFailed("vDSP_HANN_DENORM requires 50% overlap (hop=fft/2). Got hop=\(hopSize), fft=\(fftSize)")
-        }
-        guard sampleRate > 0 && sampleRate <= 192000 else {
-            throw STFTError.fftSetupFailed("Sample rate must be in range [1, 192000], got \(sampleRate)")
-        }
+        precondition(hopSize == fftSize / 2, 
+                    "vDSP_HANN_DENORM requires 50% overlap (hop=fft/2). Got hop=\(hopSize), fft=\(fftSize)")
+        precondition(sampleRate > 0 && sampleRate <= 192000, 
+                    "Sample rate must be in range [1, 192000], got \(sampleRate)")
         
         self.fftSize = fftSize
         self.hopSize = hopSize
@@ -106,17 +82,17 @@ final class STFT {
         var hannWindow = [Float](repeating: 0, count: fftSize)
         vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_DENORM))
         
-         // Fix CRITICAL: Fix Hann window amplitude validation for DENORM output
-         // vDSP_HANN_DENORM yields samples up to 2.0, so validate against correct range
-         guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 2.0 }) else {
-             let invalidValues = hannWindow.enumerated().filter { !($0.element.isFinite && $0.element >= 0 && $0.element <= 2.0) }
-             throw STFTError.invalidWindowValues("Invalid values at indices: \(invalidValues.map(\.offset))")
+        // Fix CRITICAL: Fix Hann window amplitude validation for DENORM output
+        // vDSP_HANN_DENORM yields samples up to 2.0, so validate against correct range
+        guard hannWindow.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 2.0 }) else {
+            let invalidValues = hannWindow.enumerated().filter { !($0.element.isFinite && $0.element >= 0 && $0.element <= 2.0) }
+            preconditionFailure("Window generation failed - invalid values at indices: \(invalidValues.map(\.offset))")
+        }
+        
+         // Verify window has proper COLA properties for overlap-add
+         guard hannWindow.max() ?? 0 > AppConstants.minWindowPeakAmplitude else {
+             preconditionFailure("Window amplitude too low (< \(AppConstants.minWindowPeakAmplitude)) - may cause reconstruction artifacts")
          }
-         
-          // Verify window has proper COLA properties for overlap-add
-          guard hannWindow.max() ?? 0 > AppConstants.minWindowPeakAmplitude else {
-              throw STFTError.lowWindowAmplitude(AppConstants.minWindowPeakAmplitude)
-          }
         
         self.window = hannWindow
         
@@ -124,11 +100,11 @@ final class STFT {
         self.fftSizePowerOf2 = Int(pow(2.0, ceil(log2(Double(fftSize)))))
         self.log2n = vDSP_Length(log2(Double(fftSizePowerOf2)))
         
-         // Create FFT setup - must succeed or initialization fails
-         guard let setup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
-             throw STFTError.fftSetupFailed("Failed to create FFT setup for size \(fftSizePowerOf2)")
-         }
-         self.fftSetup = setup
+        // Create FFT setup - must succeed or initialization fails
+        guard let setup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
+            preconditionFailure("Failed to create FFT setup for size \(fftSizePowerOf2)")
+        }
+        self.fftSetup = setup
         
         // Initialize buffers (use power-of-2 size for FFT compatibility)
         self.inputReal = [Float](repeating: 0, count: fftSizePowerOf2)

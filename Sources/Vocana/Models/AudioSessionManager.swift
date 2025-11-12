@@ -435,14 +435,14 @@ class AudioSessionManager: NSObject {
             outputAudioEngine = AVAudioEngine()
             guard let outputAudioEngine = outputAudioEngine else {
                 Self.logger.error("Failed to create output audio engine")
-                return
+                return false
             }
 
             // Create player node for output
             outputAudioPlayer = AVAudioPlayerNode()
             guard let outputAudioPlayer = outputAudioPlayer else {
                 Self.logger.error("Failed to create output audio player")
-                return
+                return false
             }
 
             // Attach and connect

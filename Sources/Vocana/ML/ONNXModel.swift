@@ -9,7 +9,7 @@ import os.log
 ///
 /// Supports both mock and native ONNX Runtime implementations.
 final class ONNXModel {
-    enum ONNXError: Error {
+    enum ONNXError: Error, LocalizedError {
         case modelNotFound(String)
         case sessionCreationFailed(String)
         case inferenceError(String)
@@ -19,6 +19,29 @@ final class ONNXModel {
         case emptyInputs
         case emptyOutputs
         case invalidInput(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .modelNotFound(let message):
+                return "Model not found: \(message)"
+            case .sessionCreationFailed(let message):
+                return "Session creation failed: \(message)"
+            case .inferenceError(let message):
+                return "Inference error: \(message)"
+            case .invalidInputShape(let message):
+                return "Invalid input shape: \(message)"
+            case .invalidOutputShape(let message):
+                return "Invalid output shape: \(message)"
+            case .shapeOverflow(let message):
+                return "Shape overflow: \(message)"
+            case .emptyInputs:
+                return "Empty inputs"
+            case .emptyOutputs:
+                return "Empty outputs"
+            case .invalidInput(let message):
+                return "Invalid input: \(message)"
+            }
+        }
     }
     
     private let modelPath: String
@@ -36,15 +59,17 @@ final class ONNXModel {
     ///   - modelPath: Path to .onnx model file
     ///   - useNative: If true, try to use native ONNX Runtime (falls back to mock if unavailable)
     init(modelPath: String, useNative: Bool = false) throws {
-        // Fix CRITICAL: Sanitize model path to prevent directory traversal attacks
-        let sanitizedPath = try Self.sanitizeModelPath(modelPath)
-        
+        // Sanitize path for security - allow simple names for mock mode
+        let sanitizedPath = try Self.sanitizeModelPath(modelPath, allowSimpleNames: !useNative)
+
         self.modelPath = sanitizedPath
         self.modelName = URL(fileURLWithPath: sanitizedPath).deletingPathExtension().lastPathComponent
-        
-        // Verify model exists
-        guard FileManager.default.fileExists(atPath: sanitizedPath) else {
-            throw ONNXError.modelNotFound(sanitizedPath)
+
+        // For native mode, verify model file exists
+        if useNative {
+            guard FileManager.default.fileExists(atPath: sanitizedPath) else {
+                throw ONNXError.modelNotFound(sanitizedPath)
+            }
         }
         
         // Create ONNX Runtime session
@@ -178,7 +203,7 @@ final class ONNXModel {
     /// - Parameter path: User-provided model path
     /// - Returns: Sanitized canonical path safe to use
     /// - Throws: ONNXError if path is invalid or outside allowed directories
-    private static func sanitizeModelPath(_ path: String) throws -> String {
+    private static func sanitizeModelPath(_ path: String, allowSimpleNames: Bool = false) throws -> String {
         let fm = FileManager.default
         
         // Fix CRITICAL-007: Prevent path traversal attacks with comprehensive validation
@@ -187,7 +212,12 @@ final class ONNXModel {
         guard !path.isEmpty else {
             throw ONNXError.modelNotFound("Empty model path")
         }
-        
+
+        // Allow simple model names for mock/testing scenarios
+        if allowSimpleNames && !path.contains("/") && !path.contains("\\") {
+            return path // Simple name like "enc", "erb_dec" is allowed for mock mode
+        }
+
         // Prevent obvious traversal attempts
         guard !path.contains("../") && !path.contains("..\\") && !path.hasPrefix("/") else {
             throw ONNXError.modelNotFound("Invalid path format: potential traversal attack")

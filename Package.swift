@@ -18,6 +18,25 @@ let package = Package(
             name: "Vocana",
             dependencies: []
         ),
+
+        .target(
+            name: "VocanaAudioServerPlugin",
+            dependencies: [],
+
+            sources: [
+                "VocanaAudioServerPlugin.c"
+            ],
+            cSettings: [
+                .headerSearchPath("include"),
+                .define("DEBUG", .when(configuration: .debug))
+            ],
+            linkerSettings: [
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("AudioToolbox"),
+                .linkedFramework("CoreFoundation"),
+                .linkedFramework("Accelerate")
+            ]
+        ),
         .testTarget(
             name: "VocanaTests",
             dependencies: ["Vocana"]

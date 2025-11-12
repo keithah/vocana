@@ -23,6 +23,6 @@
 		</dict>
 	</dict>
 	<key>OSBundleUsageDescription</key>
-	<string></string>
+	<string>Vocana Audio Driver provides virtual audio devices for real-time noise cancellation.</string>
 </dict>
 </plist>

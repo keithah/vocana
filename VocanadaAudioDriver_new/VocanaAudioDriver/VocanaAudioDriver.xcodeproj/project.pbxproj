@@ -8,11 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		53A4A9E62EC1DCEC006093FC /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 53A4A9E52EC1DCEC006093FC /* DriverKit.framework */; };
+		53A4A9E72EC1DCEC006093FD /* AudioDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 53A4A9E82EC1DCEC006093FD /* AudioDriverKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		53A4A9E22EC1DCEC006093FC /* com.vocana.VocanaAudioDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = com.vocana.VocanaAudioDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		53A4A9E52EC1DCEC006093FC /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = Library/Frameworks/DriverKit.framework; sourceTree = DEVELOPER_DIR; };
+		53A4A9E82EC1DCEC006093FD /* AudioDriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioDriverKit.framework; path = Library/Frameworks/AudioDriverKit.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -42,6 +44,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				53A4A9E62EC1DCEC006093FC /* DriverKit.framework in Frameworks */,
+				53A4A9E72EC1DCEC006093FD /* AudioDriverKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

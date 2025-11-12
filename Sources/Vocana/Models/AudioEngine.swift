@@ -613,7 +613,7 @@ class AudioEngine: ObservableObject {
     /// Send processed audio to Vocana output device
     private func sendProcessedAudioToOutput(_ samples: [Float]) {
         // Create AVAudioPCMBuffer from samples
-        let sampleRate: Double = 48000 // Match Vocana device sample rate
+        let sampleRate: Double = 48000.0 // Match Vocana device sample rate
         let channels: AVAudioChannelCount = 1
 
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels),

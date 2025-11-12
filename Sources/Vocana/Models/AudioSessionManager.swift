@@ -27,8 +27,9 @@ class AudioSessionManager: NSObject {
     private let outputQueue = DispatchQueue(label: "com.vocana.audio.output", qos: .userInitiated)
     private var outputBufferQueue = [AVAudioPCMBuffer]()
     private let maxOutputBuffers = 8
-    private let outputBufferSemaphore = DispatchSemaphore(value: 8)
-    
+    private let outputBufferSemaphore = DispatchSemaphore(value: maxOutputBuffers)
+    private let outputBufferTimeout: DispatchTimeInterval = .milliseconds(10)
+
     // Fix HIGH-001: Dedicated queue for audio processing to avoid blocking MainActor
     private let audioProcessingQueue = DispatchQueue(label: "com.vocana.audioprocessing", qos: .userInitiated)
     
@@ -451,9 +452,9 @@ class AudioSessionManager: NSObject {
     }
 
     /// Send audio buffer to Vocana output device
-    private nonisolated func sendAudioBufferToOutput(_ buffer: AVAudioPCMBuffer) {
+    private func sendAudioBufferToOutput(_ buffer: AVAudioPCMBuffer) {
         // Wait for buffer slot availability (with timeout to prevent blocking)
-        guard outputBufferSemaphore.wait(timeout: .now() + .milliseconds(10)) == .success else {
+        guard outputBufferSemaphore.wait(timeout: .now() + outputBufferTimeout) == .success else {
             Self.logger.warning("Audio output buffer full, dropping frame")
             return
         }

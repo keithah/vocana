@@ -4,7 +4,8 @@
 
 set -e
 
-PROJECT_DIR="/Users/keith/src/vocana"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$SCRIPT_DIR"
 BUILD_DIR="$PROJECT_DIR/.build/debug"
 BUNDLE_DIR="/Library/Audio/Plug-Ins/HAL/VocanaAudioServerPlugin.driver"
 

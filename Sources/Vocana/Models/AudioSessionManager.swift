@@ -19,7 +19,10 @@ class AudioSessionManager {
     
     // Callback for processing audio buffers
     var onAudioBufferReceived: ((AVAudioPCMBuffer) -> Void)?
-    
+
+    // HAL Plugin: Callback for processed audio output to virtual devices
+    var onProcessedAudioOutput: (([Float]) -> Void)?
+
     // State for simulated audio
     var isEnabled = false
     var sensitivity: Double = 0.5
@@ -27,6 +30,23 @@ class AudioSessionManager {
     // Callbacks for updates
     var updateLevels: ((Float, Float) -> Void)?
     
+    /// Start Vocana audio output for processed audio routing
+    /// - Returns: true if successful, false otherwise
+    func startVocanaAudioOutput() -> Bool {
+        Self.logger.info("Starting Vocana audio output for virtual devices")
+
+        // On macOS, set up CoreAudio device routing for Vocana virtual devices
+        #if os(macOS)
+        // TODO: Implement CoreAudio device routing to direct output to Vocana HAL devices
+        // This will route AVAudioEngine output to Vocana virtual devices
+        Self.logger.info("CoreAudio device routing setup (placeholder)")
+        return true
+        #else
+        // iOS/tvOS/watchOS don't use HAL plugins
+        return false
+        #endif
+    }
+
     /// Start real audio capture from microphone
     /// - Returns: true if successful, false otherwise
     func startRealAudioCapture() -> Bool {
@@ -87,6 +107,10 @@ class AudioSessionManager {
             isTapInstalled = true
             
             try audioEngine.start()
+
+            // HAL Plugin: Start Vocana output for processed audio routing
+            _ = startVocanaAudioOutput()
+
             return true
         } catch {
             Self.logger.error("Failed to start real audio capture: \(error.localizedDescription)")

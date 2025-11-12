@@ -153,11 +153,14 @@ class AudioEngine: ObservableObject {
      }
     
     // MARK: - Component Instances
-    
+
     private var levelController: AudioLevelController
     private var bufferManager: AudioBufferManager
     private var mlProcessor: MLAudioProcessor
     private var audioSessionManager: AudioSessionManager
+
+    // HAL Plugin: Audio output callback for virtual devices
+    var onProcessedAudioBufferReady: (([Float]) -> Void)?
     
     init() {
         // Initialize MainActor components
@@ -215,7 +218,7 @@ class AudioEngine: ObservableObject {
          // ML processor callbacks
          // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
          // Fix HIGH-005: Use async instead of sync to avoid blocking audio processing
-         mlProcessor.recordLatency = { [weak self] latency in
+          mlProcessor.recordLatency = { [weak self] (latency: Double) in
              guard let self = self else { return }
              Task { @MainActor in
                  self.processingLatencyMs = latency
@@ -252,10 +255,15 @@ class AudioEngine: ObservableObject {
             guard let self = self else { return }
             self.processAudioBuffer(buffer)
         }
-        
+
         audioSessionManager.updateLevels = { [weak self] input, output in
             guard let self = self else { return }
             self.currentLevels = AudioLevels(input: input, output: output)
+        }
+
+        // HAL Plugin: Connect processed audio output to AudioSessionManager
+        onProcessedAudioBufferReady = { [weak self] processedSamples in
+            self?.audioSessionManager.onProcessedAudioOutput?(processedSamples)
         }
     }
     
@@ -273,11 +281,10 @@ class AudioEngine: ObservableObject {
         if isEnabled {
             isUsingRealAudio = audioSessionManager.startRealAudioCapture()
 
-            if !isUsingRealAudio {
-                audioSessionManager.isEnabled = isEnabled
-                audioSessionManager.sensitivity = sensitivity
-                audioSessionManager.startSimulatedAudio()
-            }
+            // Always start simulated audio for testing and fallback
+            audioSessionManager.isEnabled = isEnabled
+            audioSessionManager.sensitivity = sensitivity
+            audioSessionManager.startSimulatedAudio()
 
             initializeMLProcessing()
         } else {
@@ -323,33 +330,38 @@ class AudioEngine: ObservableObject {
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
+        // Capture MainActor state before dispatching to background
+        let capturedEnabled = isEnabled
+        let capturedSensitivity = sensitivity
+        let capturedCallback = onProcessedAudioBufferReady
+
         audioProcessingQueue.async { [weak self] in
-            self?.processAudioBufferInternal(buffer)
+            self?.processAudioBufferInternal(buffer, enabled: capturedEnabled, sensitivity: capturedSensitivity, callback: capturedCallback)
         }
     }
     
-    private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer) {
+    private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer, enabled: Bool, sensitivity: Double, callback: (([Float]) -> Void)?) {
         // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
         // Use AudioBufferManager as single source of truth for suspension state
         guard !bufferManager.isAudioCaptureSuspended() else { return }
-        
+
         guard let channelData = buffer.floatChannelData else { return }
         let channelDataValue = channelData.pointee
         let frames = buffer.frameLength
-        
-         // Capture state atomically for this processing cycle
-         let capturedEnabled = isEnabled
-         let capturedSensitivity = sensitivity
-        
+
         let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
-        
+
         // Calculate input level
         let inputLevel = levelController.calculateRMSFromPointer(samplesPtr)
-        
-        if capturedEnabled {
+
+        if enabled {
             let samples = Array(samplesPtr)
-            let outputLevel = processWithMLIfAvailable(samples: samples, sensitivity: capturedSensitivity)
-            
+            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity)
+            let outputLevel = levelController.calculateRMS(samples: processedSamples)
+
+            // HAL Plugin: Emit processed stereo buffer to virtual devices
+            callback?(processedSamples)
+
             // Update UI safely on MainActor
             Task { @MainActor [weak self] in
                 self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
@@ -357,7 +369,7 @@ class AudioEngine: ObservableObject {
         } else {
             // Apply level decay when disabled
             let decayedLevels = levelController.applyDecay()
-            
+
             // Update UI safely on MainActor
             Task { @MainActor [weak self] in
                 self?.currentLevels = decayedLevels
@@ -365,17 +377,26 @@ class AudioEngine: ObservableObject {
         }
     }
     
-    private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
+    /// Process audio samples with ML and return processed samples for output
+    /// - Parameters:
+    ///   - samples: Input audio samples
+    ///   - sensitivity: Processing sensitivity
+    /// - Returns: Processed audio samples (stereo if available)
+    private func processWithMLForOutput(samples: [Float], sensitivity: Double) -> [Float] {
         // Validate audio input
         guard levelController.validateAudioInput(samples) else {
-            return levelController.calculateRMS(samples: samples) * Float(sensitivity)
+            // Apply sensitivity and convert to stereo
+            let processed = samples.map { $0 * Float(sensitivity) }
+            return convertToStereo(processed)
         }
-        
+
         // Check if ML is available
         guard isMLProcessingActive, !mlProcessor.isMemoryPressureSuspended() else {
-            return levelController.calculateRMS(samples: samples) * Float(sensitivity)
+            // Apply sensitivity and convert to stereo
+            let processed = samples.map { $0 * Float(sensitivity) }
+            return convertToStereo(processed)
         }
-        
+
          // Append to buffer and extract chunk
          // Fix HIGH-006: Circuit breaker suspension is handled via recordCircuitBreakerSuspension callback
          let chunk = bufferManager.appendToBufferAndExtractChunk(samples: samples) { [weak self] duration in
@@ -384,19 +405,43 @@ class AudioEngine: ObservableObject {
              // The actual suspension is managed within AudioBufferManager.audioBufferQueue
              self.bufferManager.recordCircuitBreakerSuspension(duration)
          }
-        
+
         // Process when we have enough samples
         guard let chunk = chunk else {
-            return levelController.calculateRMS(samples: samples) * Float(sensitivity)
+            // Apply sensitivity and convert to stereo
+            let processed = samples.map { $0 * Float(sensitivity) }
+            return convertToStereo(processed)
         }
-        
+
         // Run ML inference
         if let enhanced = mlProcessor.processAudioWithML(chunk: chunk, sensitivity: sensitivity) {
-            return levelController.calculateRMS(samples: enhanced)
+            return convertToStereo(enhanced)
         } else {
-            // ML failed, use fallback
-            return levelController.calculateRMS(samples: chunk) * Float(sensitivity)
+            // ML failed, use fallback with sensitivity
+            let processed = chunk.map { $0 * Float(sensitivity) }
+            return convertToStereo(processed)
         }
+    }
+
+    /// Convert mono audio samples to stereo format for HAL plugin output
+    /// - Parameter monoSamples: Mono audio samples
+    /// - Returns: Stereo audio samples (duplicated mono channel)
+    private func convertToStereo(_ monoSamples: [Float]) -> [Float] {
+        // For HAL plugin: duplicate mono channel to create stereo output
+        var stereoSamples = [Float]()
+        stereoSamples.reserveCapacity(monoSamples.count * 2)
+
+        for sample in monoSamples {
+            stereoSamples.append(sample) // Left channel
+            stereoSamples.append(sample) // Right channel
+        }
+
+        return stereoSamples
+    }
+
+    private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
+        let processed = processWithMLForOutput(samples: samples, sensitivity: sensitivity)
+        return levelController.calculateRMS(samples: processed)
     }
     
     // MARK: - Memory Pressure Monitoring

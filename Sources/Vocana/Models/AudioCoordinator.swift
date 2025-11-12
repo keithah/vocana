@@ -7,7 +7,8 @@ import Combine
 class AudioCoordinator: ObservableObject {
     @Published var audioEngine = AudioEngine()
     @Published var settings = AppSettings()
-    
+    @Published var isProcessing = false
+
     private var cancellables = Set<AnyCancellable>()
     
     init() {

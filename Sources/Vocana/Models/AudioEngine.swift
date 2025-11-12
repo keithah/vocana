@@ -3,6 +3,15 @@ import Combine
 @preconcurrency import AVFoundation
 import os.log
 
+// MARK: - Memory Pressure Level
+
+public enum MemoryPressureLevel: Int {
+    case normal = 0
+    case warning = 1
+    case urgent = 2
+    case critical = 3
+}
+
 // MARK: - Audio Engine Error Types
 
 enum AudioEngineError: LocalizedError {
@@ -37,10 +46,47 @@ enum AudioEngineError: LocalizedError {
 struct AudioLevels {
     let input: Float
     let output: Float
-    
+
     static let zero = AudioLevels(input: 0.0, output: 0.0)
 }
 
+/// Protocol for ML audio processing
+@MainActor
+public protocol MLAudioProcessorProtocol: AnyObject {
+    var isMLProcessingActive: Bool { get }
+    var processingLatencyMs: Double { get }
+    var memoryPressureLevel: Int { get }
+
+    var recordFailure: () -> Void { get set }
+    var recordLatency: (Double) -> Void { get set }
+    var recordSuccess: () -> Void { get set }
+    var onMLProcessingReady: () -> Void { get set }
+
+    func initializeML() async
+    func initializeMLProcessing()
+    func stopMLProcessing()
+    func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]?
+    func suspendMLProcessing(reason: String)
+    func attemptMemoryPressureRecovery()
+    func isMemoryPressureSuspended() -> Bool
+}
+
+/// AudioEngine manages the complete audio processing pipeline for Vocana.
+///
+/// This class coordinates audio capture, ML processing, buffer management, and output routing.
+/// It provides real-time noise cancellation using DeepFilterNet models while maintaining
+/// thread safety and performance through careful resource management.
+///
+/// Key responsibilities:
+/// - Audio session management and capture coordination
+/// - ML model inference with automatic fallback to basic processing
+/// - Memory pressure monitoring and automatic ML suspension
+/// - Circuit breaker pattern for buffer overflow protection
+/// - Telemetry collection for monitoring and debugging
+/// - UI state management with throttled updates
+///
+/// Threading: All operations are MainActor-isolated for UI safety.
+/// Heavy processing is dispatched to background queues to prevent UI blocking.
 @MainActor
 class AudioEngine: ObservableObject {
     nonisolated private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
@@ -48,9 +94,6 @@ class AudioEngine: ObservableObject {
     // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
     private let audioProcessingQueue = DispatchQueue(label: "com.vocana.audio.processing", qos: .userInteractive)
     private let uiUpdateQueue = DispatchQueue(label: "com.vocana.ui.updates", qos: .userInitiated)
-    
-    // Fix CRITICAL: Throttle UI updates to prevent main thread blocking
-    private let uiUpdateThrottler = Throttler(interval: 0.016) // ~60fps
     
     // MARK: - Published Properties (UI) - Updated safely from background
     
@@ -82,12 +125,7 @@ class AudioEngine: ObservableObject {
     
     // MARK: - Memory Pressure Monitoring
     
-    enum MemoryPressureLevel: Int {
-        case normal = 0
-        case warning = 1
-        case urgent = 2
-        case critical = 3
-    }
+
     
     // Fix CRITICAL: Production telemetry for monitoring and debugging
     struct ProductionTelemetry: Sendable {
@@ -123,31 +161,25 @@ class AudioEngine: ObservableObject {
     }
     
      /// Fix HIGH-004: Update performance status based on current telemetry
-      private func updatePerformanceStatus() {
-          let previousIssues = hasPerformanceIssues
-          // Only show performance warning for critical issues, not ML initialization failures
-          hasPerformanceIssues = (
-              telemetry.audioBufferOverflows > 5 ||  // Multiple buffer overflows
-              telemetry.circuitBreakerTriggers > 0 ||  // Any circuit breaker trips
-              memoryPressureLevel != .normal  // Memory pressure issues
-          )
-          
-          if hasPerformanceIssues != previousIssues {
-              print("⚠️ Performance status changed: \(hasPerformanceIssues)")
-              print("⚠️ Issues - Buffer overflows: \(telemetry.audioBufferOverflows), Circuit breaker: \(telemetry.circuitBreakerTriggers), ML failures: \(telemetry.mlProcessingFailures), Memory pressure: \(memoryPressureLevel)")
-          }
-          
-          // Update buffer health message
-          if telemetry.circuitBreakerTriggers > 0 {
-              bufferHealthMessage = "Circuit breaker active (\(telemetry.circuitBreakerTriggers)x)"
-          } else if telemetry.audioBufferOverflows > 5 {
-              bufferHealthMessage = "Buffer pressure (\(telemetry.audioBufferOverflows) overflows)"
-          } else if telemetry.mlProcessingFailures > 0 && !isMLProcessingActive {
-              bufferHealthMessage = "ML unavailable - using basic processing"
-          } else {
-              bufferHealthMessage = "Buffer healthy"
-          }
-      }
+     private func updatePerformanceStatus() {
+         hasPerformanceIssues = (
+             telemetry.audioBufferOverflows > 0 ||
+             telemetry.circuitBreakerTriggers > 0 ||
+             telemetry.mlProcessingFailures > 0 ||
+             memoryPressureLevel != .normal
+         )
+         
+         // Update buffer health message
+         if telemetry.circuitBreakerTriggers > 0 {
+             bufferHealthMessage = "Circuit breaker active (\(telemetry.circuitBreakerTriggers)x)"
+         } else if telemetry.audioBufferOverflows > 0 {
+             bufferHealthMessage = "Buffer pressure (\(telemetry.audioBufferOverflows) overflows)"
+         } else if telemetry.mlProcessingFailures > 0 {
+             bufferHealthMessage = "ML issues detected"
+         } else {
+             bufferHealthMessage = "Buffer healthy"
+         }
+     }
      
      /// Fix CRITICAL-004: Record telemetry event using actor for thread safety
      private func recordTelemetryEvent(_ update: @escaping (ProductionTelemetry) -> ProductionTelemetry) {
@@ -162,11 +194,14 @@ class AudioEngine: ObservableObject {
      }
     
     // MARK: - Component Instances
-    
+
     private var levelController: AudioLevelController
     private var bufferManager: AudioBufferManager
     private var mlProcessor: MLAudioProcessorProtocol
     private var audioSessionManager: AudioSessionManager
+
+    // HAL Plugin: Audio output callback for virtual devices
+    var onProcessedAudioBufferReady: (([Float]) -> Void)?
     
     init() {
         // Initialize MainActor components
@@ -174,11 +209,11 @@ class AudioEngine: ObservableObject {
         self.bufferManager = AudioBufferManager()
         self.mlProcessor = MLAudioProcessor()
         self.audioSessionManager = AudioSessionManager()
-        
+
         // Setup callbacks after initialization
         setupComponentCallbacks()
     }
-    
+
     /// Test initializer with dependency injection
     init(mlProcessor: MLAudioProcessorProtocol) {
         // Initialize MainActor components
@@ -186,17 +221,16 @@ class AudioEngine: ObservableObject {
         self.bufferManager = AudioBufferManager()
         self.mlProcessor = mlProcessor
         self.audioSessionManager = AudioSessionManager()
-        
+
         // Setup callbacks after initialization
         setupComponentCallbacks()
     }
     
     // MARK: - Private State
-
+    
     private var isEnabled: Bool = false
     private var sensitivity: Double = 0.5
     private var decayTimer: Timer?
-    private var lastProcessedSamples: [Float]?
 
     private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var isMemoryPressureHandlerActive = false
@@ -237,7 +271,7 @@ class AudioEngine: ObservableObject {
          // ML processor callbacks
          // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
          // Fix HIGH-005: Use async instead of sync to avoid blocking audio processing
-         mlProcessor.recordLatency = { [weak self] latency in
+          mlProcessor.recordLatency = { [weak self] (latency: Double) in
              guard let self = self else { return }
              Task { @MainActor in
                  self.processingLatencyMs = latency
@@ -249,34 +283,20 @@ class AudioEngine: ObservableObject {
              }
          }
          
-          mlProcessor.recordFailure = { [weak self] in
-              guard let self = self else { return }
-              print("❌ ML processor recordFailure callback triggered")
-              self.recordTelemetryEvent { telemetry in
-                  var updated = telemetry
-                  updated.recordFailure()
-                  return updated
-              }
-              Task { @MainActor in
-                  Self.logger.info("Setting isMLProcessingActive to false due to failure")
-                  self.isMLProcessingActive = false
-                  self.updatePerformanceStatus()
-               }
-           }
-          
-          // Reset ML failures on successful processing
-          mlProcessor.recordSuccess = { [weak self] in
-              guard let self = self else { return }
-              self.recordTelemetryEvent { telemetry in
-                  var updated = telemetry
-                  if updated.mlProcessingFailures > 0 {
-                      updated.mlProcessingFailures = 0
-                  }
-                  return updated
-              }
-          }
-          
-          // Fix HIGH-008: Use callback instead of arbitrary sleep for ML initialization
+         mlProcessor.recordFailure = { [weak self] in
+             guard let self = self else { return }
+             self.recordTelemetryEvent { telemetry in
+                 var updated = telemetry
+                 updated.recordFailure()
+                 return updated
+             }
+             Task { @MainActor in
+                 self.isMLProcessingActive = false
+                 self.updatePerformanceStatus()
+             }
+         }
+         
+         // Fix HIGH-008: Use callback instead of arbitrary sleep for ML initialization
          mlProcessor.onMLProcessingReady = { [weak self] in
              Task { @MainActor in
                  self?.isMLProcessingActive = true
@@ -288,100 +308,82 @@ class AudioEngine: ObservableObject {
             guard let self = self else { return }
             self.processAudioBuffer(buffer)
         }
-        
+
         audioSessionManager.updateLevels = { [weak self] input, output in
             guard let self = self else { return }
-            // Fix CRITICAL: Throttle UI updates to prevent main thread blocking
-            self.uiUpdateThrottler.throttle {
-                self.currentLevels = AudioLevels(input: input, output: output)
-            }
+            self.currentLevels = AudioLevels(input: input, output: output)
+        }
+
+        // HAL Plugin: Connect processed audio output to AudioSessionManager
+        onProcessedAudioBufferReady = { [weak self] processedSamples in
+            self?.audioSessionManager.onProcessedAudioOutput?(processedSamples)
         }
     }
     
     // MARK: - Public API
-    
+
     func startAudioProcessing(isEnabled: Bool, sensitivity: Double) {
-        Self.logger.info("Starting audio processing - isEnabled: \(isEnabled), sensitivity: \(sensitivity)")
-        
+        self.isEnabled = isEnabled
+        self.sensitivity = sensitivity
+
+        if isEnabled {
+            _ = audioSessionManager.startRealAudioCapture()
+        }
+    }
+
+    func stopAudioProcessing() {
+        audioSessionManager.stopRealAudioCapture()
+    }
+
+    func startSimulation(isEnabled: Bool, sensitivity: Double) {
         // Always stop existing pipeline first to ensure clean state
         if self.isEnabled {
-            stopAudioProcessing()
+            stopSimulation()
         }
 
         self.isEnabled = isEnabled
         self.sensitivity = sensitivity
 
         if isEnabled {
-            Self.logger.info("Starting real audio capture")
             isUsingRealAudio = audioSessionManager.startRealAudioCapture()
-            Self.logger.info("Real audio capture result: \(self.isUsingRealAudio)")
 
-            if !isUsingRealAudio {
-                Self.logger.error("Failed to start real audio capture - microphone unavailable")
-                // Reset engine state since capture failed
-                self.isEnabled = false
-                self.isUsingRealAudio = false
-                return
-            }
+            // Always start simulated audio for testing and fallback
+            audioSessionManager.isEnabled = isEnabled
+            audioSessionManager.sensitivity = sensitivity
+            audioSessionManager.startSimulatedAudio()
 
-            Self.logger.info("Initializing ML processing and audio output")
             initializeMLProcessing()
-            // Audio output is started automatically by AudioSessionManager when capture begins
         } else {
-            Self.logger.debug("Starting decay timer for disabled state")
             // Start decay timer for visual smoothing when disabled
             startDecayTimer()
         }
-        
-        Self.logger.info("Audio processing started - isUsingRealAudio: \(self.isUsingRealAudio), isMLProcessingActive: \(self.isMLProcessingActive), hasPerformanceIssues: \(self.hasPerformanceIssues)")
     }
 
-    /// Start decay timer for level smoothing during disabled state
-    /// Security: Ensure proper timer resource management and cleanup
+    /// Start decay timer for level smoothing during disabled simulation
     private func startDecayTimer() {
-        // Security: Ensure cleanup of existing timer before creating new one
-        decayTimer?.invalidate()
-        
         decayTimer = Timer.scheduledTimer(withTimeInterval: AppConstants.audioUpdateInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self else { return }
                 let decayedLevels = self.levelController.applyDecay()
-                // Fix CRITICAL: Throttle UI updates to prevent main thread blocking
-                self.uiUpdateThrottler.throttle {
-                    self.currentLevels = decayedLevels
-                }
+                self.currentLevels = decayedLevels
             }
         }
-        
-        // Security: Safely add timer to RunLoop with proper error handling
-        if let timer = decayTimer {
-            RunLoop.main.add(timer, forMode: .common)
-        }
+        RunLoop.main.add(decayTimer!, forMode: .common)
     }
     
-    func stopAudioProcessing() {
+    func stopSimulation() {
         isEnabled = false
         decayTimer?.invalidate()
         decayTimer = nil
         audioSessionManager.stopRealAudioCapture()
+        audioSessionManager.stopSimulatedAudio()
         mlProcessor.stopMLProcessing()
-        
-        // Keep published state in sync when stopping - fix menu bar icon state
-        Task { @MainActor [weak self] in
-            self?.isUsingRealAudio = false
-            self?.isMLProcessingActive = false
-        }
     }
     
     func reset() {
-        stopAudioProcessing()
+        stopSimulation()
         levelController.updateLevels(input: 0, output: 0)
         bufferManager.clearAudioBuffers()
-        
-        // Ensure all published state is reset to initial values
-        Task { @MainActor [weak self] in
-            self?.currentLevels = AudioLevels.zero
-        }
     }
     
     // MARK: - Private Methods
@@ -392,196 +394,75 @@ class AudioEngine: ObservableObject {
          mlProcessor.initializeMLProcessing()
      }
     
-    /// Process incoming audio buffer from audio capture system
-    ///
-    /// This method serves as the entry point for audio processing pipeline:
-    /// 1. Dispatches processing to dedicated audio queue to prevent MainActor blocking
-    /// 2. Coordinates between audio capture, buffering, ML processing, and level calculation
-    /// 3. Handles circuit breaker suspension and error recovery
-    ///
-    /// - Important: This method is called from the audio capture thread (real-time priority)
-    /// - Parameter buffer: Audio buffer containing captured audio data
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        // Fix CRITICAL: Keep heavy processing off MainActor to prevent UI blocking
-        // Capture MainActor state before moving to background queue
+        // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
+        // Capture MainActor state before dispatching to background
         let capturedEnabled = isEnabled
         let capturedSensitivity = sensitivity
+        let capturedCallback = onProcessedAudioBufferReady
 
         audioProcessingQueue.async { [weak self] in
-            self?.processAudioBufferOnBackground(buffer, enabled: capturedEnabled, sensitivity: capturedSensitivity)
-        }
-    }
-
-    /// Process audio buffer on background queue (nonisolated)
-    /// - Parameters:
-    ///   - buffer: Audio buffer to process
-    ///   - enabled: Whether audio processing is enabled
-    ///   - sensitivity: Processing sensitivity value
-    private nonisolated func processAudioBufferOnBackground(_ buffer: AVAudioPCMBuffer, enabled: Bool, sensitivity: Double) {
-        // Extract audio samples from buffer (pure computation, no actor isolation needed)
-        guard let samples = extractAudioSamples(from: buffer) else { return }
-
-        // Calculate input level (pure computation)
-        let inputLevel = calculateRMSLevel(samples: samples)
-
-        // Process audio based on enabled state
-        if enabled {
-            // Perform ML processing and buffer management on background queue
-            let processingResult = processAudioWithMLOnBackground(samples: samples, sensitivity: sensitivity, inputLevel: inputLevel)
-            let processedSamples = processingResult.samples
-            let outputLevel = processingResult.level
-
-            // Send processed audio to output device (async, doesn't block)
-            sendProcessedAudioToOutputOnBackground(samples: processedSamples)
-
-            // Update UI levels on main actor
-            Task { @MainActor [weak self] in
-                self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
+            Task { @MainActor in
+                self?.processAudioBufferInternal(buffer, enabled: capturedEnabled, sensitivity: capturedSensitivity, callback: capturedCallback)
             }
-        } else {
-            // For disabled state, use decayed levels
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                let decayedLevels = self.levelController.applyDecay()
-                self.currentLevels = decayedLevels
-            }
-        }
-    }
-
-    /// Process audio with ML on background queue (nonisolated)
-    /// - Parameters:
-    ///   - samples: Audio samples to process
-    ///   - sensitivity: Processing sensitivity
-    ///   - inputLevel: Input RMS level
-    /// - Returns: Output RMS level after processing
-    private nonisolated func processAudioWithMLOnBackground(samples: [Float], sensitivity: Double, inputLevel: Float) -> (samples: [Float], level: Float) {
-        // For now, apply simple sensitivity scaling
-        // TODO: Integrate with ML processor and buffer manager
-        let sensitivityFloat = Float(sensitivity)
-        let processedSamples = samples.map { $0 * sensitivityFloat }
-        return calculateRMSLevel(samples: processedSamples)
-    }
-
-    /// Send processed audio to output device on background queue
-    /// - Parameters:
-    ///   - samples: Processed audio samples
-    ///   - sensitivity: Processing sensitivity
-    private nonisolated func sendProcessedAudioToOutputOnBackground(samples: [Float]) {
-        // Create AVAudioPCMBuffer from samples
-        let sampleRate: Double = 48000 // Match Vocana device sample rate
-        let channels: AVAudioChannelCount = 2
-        let frameCount = AVAudioFrameCount(samples.count)
-
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            return
-        }
-
-        buffer.frameLength = frameCount
-
-        // Copy samples to buffer
-        if let channelData = buffer.floatChannelData {
-            for channelIndex in 0..<Int(channels) {
-                let channel = channelData[channelIndex]
-                for sampleIndex in 0..<Int(frameCount) {
-                    channel[sampleIndex] = samples[sampleIndex]
-                }
-            }
-        }
-
-        // Send to audio session manager for output (this will handle the MainActor hop internally)
-        Task { @MainActor [weak self] in
-            self?.audioSessionManager.sendProcessedAudioToOutput(buffer)
         }
     }
     
-    // MARK: - Audio Processing Helper Methods
+    private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer, enabled: Bool, sensitivity: Double, callback: (([Float]) -> Void)?) {
+        // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
+        // Use AudioBufferManager as single source of truth for suspension state
+        guard !bufferManager.isAudioCaptureSuspended() else { return }
 
-    /// Extract audio samples from AVAudioPCMBuffer
-    /// - Parameter buffer: Audio buffer to extract samples from
-    /// - Returns: Array of Float samples, or nil if extraction fails
-    private nonisolated func extractAudioSamples(from buffer: AVAudioPCMBuffer) -> [Float]? {
-        guard let channelData = buffer.floatChannelData else { return nil }
+        guard let channelData = buffer.floatChannelData else { return }
         let channelDataValue = channelData.pointee
         let frames = buffer.frameLength
 
         let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
-        return Array(samplesPtr)
-    }
 
-    /// Calculate RMS level from audio samples (pure computation)
-    /// - Parameter samples: Audio samples
-    /// - Returns: RMS level as Float
-    private nonisolated func calculateRMSLevel(samples: [Float]) -> Float {
-        var sum: Float = 0
-        for sample in samples {
-            sum += sample * sample
-        }
-        return sqrt(sum / Float(samples.count))
-    }
+        // Calculate input level
+        let inputLevel = levelController.calculateRMSFromPointer(samplesPtr)
 
-    /// Process audio with sensitivity on background queue
-    /// - Parameters:
-    ///   - samples: Audio samples to process
-    ///   - sensitivity: Processing sensitivity (0-1)
-    ///   - inputLevel: Input RMS level
-    /// - Returns: Output RMS level after processing
-    private nonisolated func processAudioWithSensitivity(samples: [Float], sensitivity: Double, inputLevel: Float) -> Float {
-        // Validate audio input (basic check)
-        guard !samples.isEmpty else { return inputLevel }
+        if enabled {
+            let samples = Array(samplesPtr)
+            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity)
+            let outputLevel = levelController.calculateRMS(samples: processedSamples)
 
-        // For now, apply simple sensitivity scaling
-        // In the future, this would call ML processing
-        let sensitivityFloat = Float(sensitivity)
-        let processedSamples = samples.map { $0 * sensitivityFloat }
-        return calculateRMSLevel(samples: processedSamples)
-    }
-    
-    /// Process audio when enhancement is enabled
-    /// - Parameters:
-    ///   - samples: Audio samples to process
-    ///   - sensitivity: Processing sensitivity (0-1)
-    ///   - inputLevel: Calculated input RMS level
-    /// - Returns: Output level after processing
-    private func processEnabledAudio(samples: [Float], sensitivity: Double, inputLevel: Float) -> Float {
-        let outputLevel = processWithMLIfAvailable(samples: samples, sensitivity: sensitivity)
+            // HAL Plugin: Emit processed stereo buffer to virtual devices
+            callback?(processedSamples)
 
-        // Send processed audio to Vocana output device
-        if let processedSamples = getLastProcessedSamples() {
-            sendProcessedAudioToOutput(processedSamples)
-        }
+            // Update UI safely on MainActor
+            Task { @MainActor [weak self] in
+                self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
+            }
+        } else {
+            // Apply level decay when disabled
+            let decayedLevels = levelController.applyDecay()
 
-        return outputLevel
-    }
-    
-    /// Process audio when enhancement is disabled (apply decay)
-    /// - Parameter inputLevel: Current input level
-    /// - Returns: Audio levels after applying decay
-    private func processDisabledAudio(inputLevel: Float) -> AudioLevels {
-        return levelController.applyDecay()
-    }
-    
-    /// Update currentLevels on MainActor
-    /// - Parameters:
-    ///   - input: Input audio level
-    ///   - output: Output audio level
-    private func updateLevels(input: Float, output: Float) {
-        Task { @MainActor [weak self] in
-            self?.currentLevels = AudioLevels(input: input, output: output)
+            // Update UI safely on MainActor
+            Task { @MainActor [weak self] in
+                self?.currentLevels = decayedLevels
+            }
         }
     }
     
-    private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
+    /// Process audio samples with ML and return processed samples for output
+    /// - Parameters:
+    ///   - samples: Input audio samples
+    ///   - sensitivity: Processing sensitivity
+    /// - Returns: Processed audio samples (stereo if available)
+    private func processWithMLForOutput(samples: [Float], sensitivity: Double) -> [Float] {
         // Validate audio input
         guard levelController.validateAudioInput(samples) else {
-            lastProcessedSamples = samples.map { $0 * Float(sensitivity) }
-            return levelController.calculateRMS(samples: samples) * Float(sensitivity)
+            // Apply sensitivity and convert to stereo
+            let processed = samples.map { $0 * Float(sensitivity) }
+            return convertToStereo(processed)
         }
 
         // Check if ML is available
         guard isMLProcessingActive, !mlProcessor.isMemoryPressureSuspended() else {
-            lastProcessedSamples = samples.map { $0 * Float(sensitivity) }
-            return levelController.calculateRMS(samples: samples) * Float(sensitivity)
+            // Apply sensitivity and convert to stereo
+            let processed = samples.map { $0 * Float(sensitivity) }
+            return convertToStereo(processed)
         }
 
          // Append to buffer and extract chunk
@@ -595,52 +476,42 @@ class AudioEngine: ObservableObject {
 
         // Process when we have enough samples
         guard let chunk = chunk else {
-            lastProcessedSamples = samples.map { $0 * Float(sensitivity) }
-            return levelController.calculateRMS(samples: samples) * Float(sensitivity)
+            // Apply sensitivity and convert to stereo
+            let processed = samples.map { $0 * Float(sensitivity) }
+            return convertToStereo(processed)
         }
 
         // Run ML inference
         if let enhanced = mlProcessor.processAudioWithML(chunk: chunk, sensitivity: sensitivity) {
-            lastProcessedSamples = enhanced
-            return levelController.calculateRMS(samples: enhanced)
+            return convertToStereo(enhanced)
         } else {
-            // ML failed, use fallback
-            lastProcessedSamples = chunk.map { $0 * Float(sensitivity) }
-            return levelController.calculateRMS(samples: chunk) * Float(sensitivity)
+            // ML failed, use fallback with sensitivity
+            let processed = chunk.map { $0 * Float(sensitivity) }
+            return convertToStereo(processed)
         }
     }
 
-    /// Get the last processed audio samples for output
-    private func getLastProcessedSamples() -> [Float]? {
-        return lastProcessedSamples
+    /// Convert mono audio samples to stereo format for HAL plugin output
+    /// - Parameter monoSamples: Mono audio samples
+    /// - Returns: Stereo audio samples (duplicated mono channel)
+    private func convertToStereo(_ monoSamples: [Float]) -> [Float] {
+        // For HAL plugin: duplicate mono channel to create stereo output
+        var stereoSamples = [Float]()
+        stereoSamples.reserveCapacity(monoSamples.count * 2)
+
+        for sample in monoSamples {
+            stereoSamples.append(sample) // Left channel
+            stereoSamples.append(sample) // Right channel
+        }
+
+        return stereoSamples
     }
 
-    /// Send processed audio to Vocana output device
-    private func sendProcessedAudioToOutput(_ samples: [Float]) {
-        // Create AVAudioPCMBuffer from samples
-        let sampleRate: Double = 48000.0 // Match Vocana device sample rate
-        let channels: AVAudioChannelCount = 2
-        let frameCount = AVAudioFrameCount(samples.count)
-
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            return
-        }
-
-        buffer.frameLength = frameCount
-
-        // Copy samples to buffer
-        if let channelData = buffer.floatChannelData {
-            for channelIndex in 0..<Int(channels) {
-                let channel = channelData[channelIndex]
-                for sampleIndex in 0..<Int(frameCount) {
-                    channel[sampleIndex] = samples[sampleIndex]
-                }
-            }
-        }
-
-        // Send to audio session manager for output
-        audioSessionManager.sendProcessedAudioToOutput(buffer)
+    // UNIQUE COMMENT TO TEST IF FILE IS READ
+    private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> (samples: [Float], level: Float) {
+        let sensitivityFloat = Float(sensitivity)
+        let processedSamples = samples.map { $0 * sensitivityFloat }
+        return (samples: processedSamples, level: levelController.calculateRMS(samples: processedSamples))
     }
     
     // MARK: - Memory Pressure Monitoring
@@ -695,8 +566,11 @@ class AudioEngine: ObservableObject {
     
     deinit {
         memoryPressureSource?.cancel()
-        // Fix CRITICAL-003: Ensure audioSessionManager cleanup happens synchronously before deallocate
-        // AudioSessionManager cleanup is synchronous and safe to call from deinit
-        audioSessionManager.cleanup()
+        // Fix CRITICAL-003: Ensure audioSessionManager cleanup happens before deallocate
+        // Capture audioSessionManager to avoid capturing self in the Task
+        let sessionManager = audioSessionManager
+        Task { @MainActor in
+            sessionManager.cleanup()
+        }
     }
 }

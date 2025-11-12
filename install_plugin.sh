@@ -17,24 +17,24 @@ fi
 
 # Install plugin
 echo "Installing plugin..."
-sudo cp -R VocanaAudioServerPlugin.driver /Library/Audio/Plug-Ins/HAL/
-
-if [ $? -eq 0 ]; then
-    echo "Plugin installed successfully!"
-    echo ""
-    echo "Restarting Core Audio..."
-    sudo launchctl kickstart -k system/com.apple.audio.coreaudiod
-    
-    echo ""
-    echo "Installation complete!"
-    echo "You should now see 'Vocana Virtual Microphone' and 'Vocana Virtual Speaker' in:"
-    echo "- Audio MIDI Setup"
-    echo "- System Settings → Sound"
-    echo ""
-    echo "To test the plugin, run:"
-    echo "afrecord -l"
-    echo "afplay -l"
-else
+if ! sudo cp -R VocanaAudioServerPlugin.driver /Library/Audio/Plug-Ins/HAL/; then
     echo "Error: Installation failed!"
     exit 1
 fi
+
+echo "Plugin installed successfully!"
+echo ""
+echo "Restarting Core Audio..."
+if ! sudo launchctl kickstart -k system/com.apple.audio.coreaudiod; then
+    echo "Warning: Failed to restart Core Audio (you may need to restart manually)"
+fi
+
+echo ""
+echo "Installation complete!"
+echo "You should now see 'Vocana Virtual Microphone' and 'Vocana Virtual Speaker' in:"
+echo "- Audio MIDI Setup"
+echo "- System Settings → Sound"
+echo ""
+echo "To test the plugin, run:"
+echo "afrecord -l"
+echo "afplay -l"

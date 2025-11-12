@@ -30,6 +30,9 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 
+# Code signing
+_CodeSignature/
+
 ## Playgrounds
 timeline.xctimeline
 playground.xcworkspace

@@ -3,17 +3,37 @@
 echo "=== Reinstalling Vocana Audio Server Plugin ==="
 echo ""
 
+# Check if plugin bundle exists
+if [ ! -d "VocanaAudioServerPlugin.driver" ]; then
+    echo "Error: Plugin bundle not found!"
+    echo "Please build the plugin first."
+    exit 1
+fi
+
 # Remove old plugin
 echo "Removing old plugin..."
-sudo rm -rf /Library/Audio/Plug-Ins/HAL/VocanaAudioServerPlugin.driver
+if ! sudo rm -rf /Library/Audio/Plug-Ins/HAL/VocanaAudioServerPlugin.driver; then
+    echo "Warning: Failed to remove old plugin (may not exist)"
+fi
 
 # Install new plugin
 echo "Installing new plugin..."
-sudo cp -R VocanaAudioServerPlugin.driver /Library/Audio/Plug-Ins/HAL/
+if ! sudo cp -R VocanaAudioServerPlugin.driver /Library/Audio/Plug-Ins/HAL/; then
+    echo "Error: Failed to install plugin!"
+    exit 1
+fi
 
 # Set proper permissions
-sudo chown -R root:wheel /Library/Audio/Plug-Ins/HAL/VocanaAudioServerPlugin.driver
-sudo chmod -R 755 /Library/Audio/Plug-Ins/HAL/VocanaAudioServerPlugin.driver
+echo "Setting permissions..."
+if ! sudo chown -R root:wheel /Library/Audio/Plug-Ins/HAL/VocanaAudioServerPlugin.driver; then
+    echo "Error: Failed to set ownership!"
+    exit 1
+fi
+
+if ! sudo chmod -R 755 /Library/Audio/Plug-Ins/HAL/VocanaAudioServerPlugin.driver; then
+    echo "Error: Failed to set permissions!"
+    exit 1
+fi
 
 echo "Plugin reinstalled successfully!"
 echo ""

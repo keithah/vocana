@@ -688,10 +688,7 @@ class AudioEngine: ObservableObject {
     deinit {
         memoryPressureSource?.cancel()
         // Fix CRITICAL-003: Ensure audioSessionManager cleanup happens synchronously before deallocate
-        // Capture audioSessionManager before self is deallocated
-        let sessionManager = audioSessionManager
-        Task { @MainActor in
-            sessionManager.cleanup()
-        }
+        // AudioSessionManager cleanup is synchronous and safe to call from deinit
+        audioSessionManager.cleanup()
     }
 }

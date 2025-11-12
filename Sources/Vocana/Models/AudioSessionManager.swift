@@ -497,9 +497,12 @@ class AudioSessionManager: NSObject {
     }
 
     /// Clean up resources
-    func cleanup() {
-        stopRealAudioCapture()
-        stopVocanaAudioOutput()
+    nonisolated func cleanup() {
+        // Ensure cleanup happens on main actor since it uses AVFoundation
+        Task { @MainActor in
+            stopRealAudioCapture()
+            stopVocanaAudioOutput()
+        }
     }
 
     /// Stop Vocana audio output

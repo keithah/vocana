@@ -39,6 +39,7 @@
 #if DEBUG
 
     #define    DebugMsg(inFormat, ...)    syslog(LOG_NOTICE, inFormat, ## __VA_ARGS__)
+    #define    ErrorMsg(inFormat, ...)    syslog(LOG_ERR, "VocanaAudioServerPlugin ERROR: " inFormat, ## __VA_ARGS__)
 
     #define    FailIf(inCondition, inHandler, inMessage)                           \
     if(inCondition)                                                                \
@@ -51,6 +52,7 @@
     if(inCondition)                                                                \
     {                                                                              \
         DebugMsg(inMessage);                                                       \
+        RecordError(kAudioHardwareUnspecifiedError, CFSTR(inMessage));             \
         { inAction; }                                                              \
         goto inHandler;                                                            \
         }
@@ -58,6 +60,7 @@
 #else
 
     #define    DebugMsg(inFormat, ...)
+    #define    ErrorMsg(inFormat, ...)
 
     #define    FailIf(inCondition, inHandler, inMessage)                           \
     if(inCondition)                                                                \
@@ -252,6 +255,25 @@ struct ObjectInfo {
 static pthread_mutex_t              gPlugIn_StateMutex                  = PTHREAD_MUTEX_INITIALIZER;
 static UInt32                       gPlugIn_RefCount                    = 0;
 static AudioServerPlugInHostRef     gPlugIn_Host                        = NULL;
+
+// Error state tracking for better diagnostics
+static OSStatus                     gLast_ErrorCode                     = noErr;
+static CFStringRef                  gLast_ErrorMessage                  = NULL;
+static UInt32                       gError_Count                        = 0;
+
+// Function to record errors for diagnostics
+static void RecordError(OSStatus errorCode, CFStringRef errorMessage) {
+    pthread_mutex_lock(&gPlugIn_StateMutex);
+    gLast_ErrorCode = errorCode;
+    if (gLast_ErrorMessage != NULL) {
+        CFRelease(gLast_ErrorMessage);
+    }
+    gLast_ErrorMessage = errorMessage ? CFRetain(errorMessage) : NULL;
+    gError_Count++;
+    pthread_mutex_unlock(&gPlugIn_StateMutex);
+
+    ErrorMsg("Error recorded: %d, count: %d", (int)errorCode, (int)gError_Count);
+}
 
 
 static CFStringRef                  gBox_Name                           = NULL;

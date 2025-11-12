@@ -44,7 +44,7 @@ class AudioCoordinator: ObservableObject {
                 self?.updateAudioSettings()
             }
             .store(in: &cancellables)
-        
+
         // Debounced sensitivity updates (ML processing is expensive)
         // 50ms debounce prevents excessive re-processing while user adjusts slider
         settings.objectWillChange
@@ -62,6 +62,7 @@ class AudioCoordinator: ObservableObject {
             settings.isEnabled,
             sensitivity: settings.sensitivity
         )
+        isProcessing = settings.isEnabled
     }
 
     /// Start audio processing (called from UI)

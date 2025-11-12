@@ -21,6 +21,18 @@
 	<key>OSBundleUsageDescription</key>
 	<string>Vocana Audio Driver provides virtual audio devices for noise cancellation</string>
 
+	<!-- Driver Extension Configuration -->
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.driverkit</string>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>IOUserClass</key>
+			<string>VocanaAudioDriver</string>
+		</dict>
+	</dict>
+
 	<!-- DriverKit Configuration -->
 	<key>IOKitPersonalities</key>
 	<dict>

@@ -25,6 +25,13 @@ enum {
     kObjectID_Device                    = 3,
     kObjectID_Stream_Input              = 4,
     kObjectID_Stream_Output             = 5,
+    kObjectID_Volume_Input_Master       = 6,
+    kObjectID_Mute_Input_Master         = 7,
+    kObjectID_Volume_Output_Master      = 8,
+    kObjectID_Mute_Output_Master        = 9,
+    kObjectID_Pitch_Adjust              = 10,
+    kObjectID_ClockSource               = 11,
+    kObjectID_Device2                   = 12,
 };
 
 // ============================================================================

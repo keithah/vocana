@@ -20,6 +20,7 @@
 #include <sys/syslog.h>
 #include <Accelerate/Accelerate.h>
 #include <Availability.h>
+#include "VocanaAudioServerPlugin.h"
 
 //==================================================================================================
 #pragma mark -
@@ -110,21 +111,7 @@
 //    to realize that a lot of the structure of this driver is vastly simpler when the IDs are all
 //    known a priori. Comments in the code will try to identify some of these simplifications and
 //    point out what a more complicated driver will need to do.
-enum
-{
-    kObjectID_PlugIn                    = kAudioObjectPlugInObject,
-    kObjectID_Box                       = 2,
-    kObjectID_Device                    = 3,
-    kObjectID_Stream_Input              = 4,
-    kObjectID_Volume_Input_Master       = 5,
-    kObjectID_Mute_Input_Master         = 6,
-    kObjectID_Stream_Output             = 7,
-    kObjectID_Volume_Output_Master      = 8,
-    kObjectID_Mute_Output_Master        = 9,
-    kObjectID_Pitch_Adjust              = 10,
-    kObjectID_ClockSource               = 11,
-    kObjectID_Device2                   = 12,
-};
+// Object IDs are defined in VocanaAudioServerPlugin.h
 
 enum
 {
@@ -235,10 +222,6 @@ struct ObjectInfo {
 #endif
 
 #define                             kLatency_Frame_Size                 0
-
-#ifndef kNumber_Of_Channels
-#define                             kNumber_Of_Channels                 1
-#endif
 
 #ifndef kEnableVolumeControl
 #define                             kEnableVolumeControl                 true

@@ -323,6 +323,11 @@ class AudioEngine: ObservableObject {
     // MARK: - Public API
 
     func startAudioProcessing(isEnabled: Bool, sensitivity: Double) {
+        // Always stop existing pipeline first to ensure clean state
+        if self.isEnabled && !isEnabled {
+            stopAudioProcessing()
+        }
+
         self.isEnabled = isEnabled
         self.sensitivity = sensitivity
 
@@ -330,11 +335,20 @@ class AudioEngine: ObservableObject {
             _ = audioSessionManager.startRealAudioCapture()
             // Ensure output device is set up for processed audio routing
             _ = audioSessionManager.startVocanaAudioOutput()
+            // Initialize ML processing for noise cancellation
+            initializeMLProcessing()
+        } else {
+            // Start decay timer for visual smoothing when disabled
+            startDecayTimer()
         }
     }
 
     func stopAudioProcessing() {
+        isEnabled = false
+        decayTimer?.invalidate()
+        decayTimer = nil
         audioSessionManager.stopRealAudioCapture()
+        mlProcessor.stopMLProcessing()
     }
 
     func startSimulation(isEnabled: Bool, sensitivity: Double) {

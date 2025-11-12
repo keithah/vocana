@@ -20,6 +20,14 @@ class AudioSessionManager: NSObject {
     private var audioOutput: AVCaptureAudioDataOutput?
     private var audioInput: AVCaptureDeviceInput?
     private var captureQueue = DispatchQueue(label: "com.vocana.audio.capture", qos: .userInitiated)
+
+    // AVAudioEngine-based audio output for Vocana virtual device
+    private var outputAudioEngine: AVAudioEngine?
+    private var outputAudioPlayer: AVAudioPlayerNode?
+    private let outputQueue = DispatchQueue(label: "com.vocana.audio.output", qos: .userInitiated)
+    private var outputBufferQueue = [AVAudioPCMBuffer]()
+    private let maxOutputBuffers = 8
+    private let outputBufferSemaphore = DispatchSemaphore(value: 8)
     
     // Fix HIGH-001: Dedicated queue for audio processing to avoid blocking MainActor
     private let audioProcessingQueue = DispatchQueue(label: "com.vocana.audioprocessing", qos: .userInitiated)
@@ -30,6 +38,14 @@ class AudioSessionManager: NSObject {
     /// Use Task { @MainActor in ... } if main thread update needed.
     /// - Parameter buffer: Audio buffer containing captured audio data
     var onAudioBufferReceived: ((AVAudioPCMBuffer) -> Void)?
+
+    /// Send processed audio buffer to Vocana output device
+    /// - Parameter buffer: Processed audio buffer to output
+    func sendProcessedAudioToOutput(_ buffer: AVAudioPCMBuffer) {
+        outputQueue.async { [weak self] in
+            self?.sendAudioBufferToOutput(buffer)
+        }
+    }
     
     // State for audio processing
     var isEnabled = false
@@ -61,13 +77,21 @@ class AudioSessionManager: NSObject {
             return false
         }
         
-        // Check available input devices
+        // Check available input devices - prioritize Vocana virtual device
         let inputDevices = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInMicrophone, .externalUnknown], mediaType: .audio, position: .unspecified).devices
         Self.logger.info("Found \(inputDevices.count) available input devices")
         for device in inputDevices {
             Self.logger.debug("Available device: \(device.localizedName)")
         }
-        
+
+        // Look for Vocana virtual input device
+        let vocanaInputDevice = inputDevices.first { $0.localizedName.contains("Vocana") }
+        if let vocanaDevice = vocanaInputDevice {
+            Self.logger.info("Found Vocana virtual input device: \(vocanaDevice.localizedName)")
+        } else {
+            Self.logger.warning("Vocana virtual input device not found - using physical microphone")
+        }
+
         if inputDevices.isEmpty {
             Self.logger.error("No input devices found")
             return false
@@ -87,9 +111,11 @@ class AudioSessionManager: NSObject {
         
         // Try AVCapture approach first (more reliable on macOS)
         if startAVCaptureAudioInput() {
+            // Start audio output to Vocana device
+            startVocanaAudioOutput()
             return true
         }
-        
+
         // Fallback to AVAudioEngine if AVCapture fails
         Self.logger.info("AVCapture failed, trying AVAudioEngine fallback")
         return startAVAudioEngineInput()
@@ -111,14 +137,18 @@ class AudioSessionManager: NSObject {
             captureSession.beginConfiguration()
             // No specific preset needed for audio-only capture
             
-            // Find default audio device
-            guard let audioDevice = AVCaptureDevice.default(for: .audio) else {
-                Self.logger.error("No default audio device found")
+            // Find Vocana virtual audio device, fallback to default
+            let inputDevices = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInMicrophone, .externalUnknown], mediaType: .audio, position: .unspecified).devices
+            let vocanaDevice = inputDevices.first { $0.localizedName.contains("Vocana") }
+            let audioDevice = vocanaDevice ?? AVCaptureDevice.default(for: .audio)
+
+            guard let audioDevice = audioDevice else {
+                Self.logger.error("No audio device found")
                 captureSession.commitConfiguration()
                 return false
             }
-            
-            Self.logger.info("Using audio device: \(audioDevice.localizedName)")
+
+            Self.logger.info("Using audio device: \(audioDevice.localizedName) (Vocana: \(vocanaDevice != nil))")
             
             // Create audio input
             audioInput = try AVCaptureDeviceInput(device: audioDevice)
@@ -383,9 +413,109 @@ class AudioSessionManager: NSObject {
         Self.logger.info("Alternative tap installed")
     }
     
+    /// Start audio output to Vocana virtual device
+    private func startVocanaAudioOutput() {
+        Self.logger.info("Starting Vocana audio output")
+
+        do {
+            outputAudioEngine = AVAudioEngine()
+            guard let outputAudioEngine = outputAudioEngine else {
+                Self.logger.error("Failed to create output audio engine")
+                return
+            }
+
+            // Create player node for output
+            outputAudioPlayer = AVAudioPlayerNode()
+            guard let outputAudioPlayer = outputAudioPlayer else {
+                Self.logger.error("Failed to create output audio player")
+                return
+            }
+
+            // Attach and connect
+            outputAudioEngine.attach(outputAudioPlayer)
+
+            // Use the same format as our processing (48kHz mono)
+            let outputFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)
+            outputAudioEngine.connect(outputAudioPlayer, to: outputAudioEngine.mainMixerNode, format: outputFormat)
+
+            // Start the player node
+            outputAudioPlayer.play()
+
+            // Start the engine
+            try outputAudioEngine.start()
+            Self.logger.info("Vocana audio output started successfully")
+
+        } catch {
+            Self.logger.error("Failed to start Vocana audio output: \(error.localizedDescription)")
+        }
+    }
+
+    /// Send audio buffer to Vocana output device
+    private nonisolated func sendAudioBufferToOutput(_ buffer: AVAudioPCMBuffer) {
+        // Wait for buffer slot availability (with timeout to prevent blocking)
+        guard outputBufferSemaphore.wait(timeout: .now() + .milliseconds(10)) == .success else {
+            Self.logger.warning("Audio output buffer full, dropping frame")
+            return
+        }
+
+        // Add buffer to queue on main actor
+        Task { @MainActor [weak self, outputBufferSemaphore] in
+            guard let self = self else {
+                // Release semaphore if we can't process
+                outputBufferSemaphore.signal()
+                return
+            }
+
+            // Add to buffer queue
+            self.outputBufferQueue.append(buffer)
+
+            // Process buffers
+            self.processOutputBuffers()
+        }
+    }
+
+    /// Process queued output buffers
+    private func processOutputBuffers() {
+        guard let outputAudioPlayer = outputAudioPlayer, outputAudioPlayer.isPlaying else {
+            // Clear queue and release semaphores if not playing
+            while !outputBufferQueue.isEmpty {
+                outputBufferQueue.removeFirst()
+                outputBufferSemaphore.signal()
+            }
+            return
+        }
+
+        // Schedule available buffers
+        while !outputBufferQueue.isEmpty && outputAudioPlayer.isPlaying {
+            let buffer = outputBufferQueue.removeFirst()
+
+            outputAudioPlayer.scheduleBuffer(buffer) { [weak self] in
+                // Release semaphore when buffer is done
+                self?.outputBufferSemaphore.signal()
+            }
+        }
+    }
+
     /// Clean up resources
     func cleanup() {
         stopRealAudioCapture()
+        stopVocanaAudioOutput()
+    }
+
+    /// Stop Vocana audio output
+    private func stopVocanaAudioOutput() {
+        outputAudioPlayer?.stop()
+        outputAudioEngine?.stop()
+
+        // Clear output buffer queue and release semaphores
+        while !outputBufferQueue.isEmpty {
+            outputBufferQueue.removeFirst()
+            outputBufferSemaphore.signal()
+        }
+
+        outputAudioPlayer = nil
+        outputAudioEngine = nil
+        Self.logger.info("Vocana audio output stopped")
     }
 }
 

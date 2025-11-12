@@ -192,10 +192,11 @@ class AudioEngine: ObservableObject {
     }
     
     // MARK: - Private State
-    
+
     private var isEnabled: Bool = false
     private var sensitivity: Double = 0.5
     private var decayTimer: Timer?
+    private var lastProcessedSamples: [Float]?
 
     private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var isMemoryPressureHandlerActive = false
@@ -323,8 +324,9 @@ class AudioEngine: ObservableObject {
                 return
             }
 
-            Self.logger.info("Initializing ML processing")
+            Self.logger.info("Initializing ML processing and audio output")
             initializeMLProcessing()
+            // Audio output is started automatically by AudioSessionManager when capture begins
         } else {
             Self.logger.debug("Starting decay timer for disabled state")
             // Start decay timer for visual smoothing when disabled
@@ -454,7 +456,14 @@ class AudioEngine: ObservableObject {
     ///   - inputLevel: Calculated input RMS level
     /// - Returns: Output level after processing
     private func processEnabledAudio(samples: [Float], sensitivity: Double, inputLevel: Float) -> Float {
-        return processWithMLIfAvailable(samples: samples, sensitivity: sensitivity)
+        let outputLevel = processWithMLIfAvailable(samples: samples, sensitivity: sensitivity)
+
+        // Send processed audio to Vocana output device
+        if let processedSamples = getLastProcessedSamples() {
+            sendProcessedAudioToOutput(processedSamples)
+        }
+
+        return outputLevel
     }
     
     /// Process audio when enhancement is disabled (apply decay)
@@ -477,14 +486,16 @@ class AudioEngine: ObservableObject {
     private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
         // Validate audio input
         guard levelController.validateAudioInput(samples) else {
+            lastProcessedSamples = samples.map { $0 * Float(sensitivity) }
             return levelController.calculateRMS(samples: samples) * Float(sensitivity)
         }
-        
+
         // Check if ML is available
         guard isMLProcessingActive, !mlProcessor.isMemoryPressureSuspended() else {
+            lastProcessedSamples = samples.map { $0 * Float(sensitivity) }
             return levelController.calculateRMS(samples: samples) * Float(sensitivity)
         }
-        
+
          // Append to buffer and extract chunk
          // Fix HIGH-006: Circuit breaker suspension is handled via recordCircuitBreakerSuspension callback
          let chunk = bufferManager.appendToBufferAndExtractChunk(samples: samples) { [weak self] duration in
@@ -493,19 +504,52 @@ class AudioEngine: ObservableObject {
              // The actual suspension is managed within AudioBufferManager.audioBufferQueue
              self.bufferManager.recordCircuitBreakerSuspension(duration)
          }
-        
+
         // Process when we have enough samples
         guard let chunk = chunk else {
+            lastProcessedSamples = samples.map { $0 * Float(sensitivity) }
             return levelController.calculateRMS(samples: samples) * Float(sensitivity)
         }
-        
+
         // Run ML inference
         if let enhanced = mlProcessor.processAudioWithML(chunk: chunk, sensitivity: sensitivity) {
+            lastProcessedSamples = enhanced
             return levelController.calculateRMS(samples: enhanced)
         } else {
             // ML failed, use fallback
+            lastProcessedSamples = chunk.map { $0 * Float(sensitivity) }
             return levelController.calculateRMS(samples: chunk) * Float(sensitivity)
         }
+    }
+
+    /// Get the last processed audio samples for output
+    private func getLastProcessedSamples() -> [Float]? {
+        return lastProcessedSamples
+    }
+
+    /// Send processed audio to Vocana output device
+    private func sendProcessedAudioToOutput(_ samples: [Float]) {
+        // Create AVAudioPCMBuffer from samples
+        let sampleRate: Double = 48000 // Match Vocana device sample rate
+        let channels: AVAudioChannelCount = 1
+
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else {
+            return
+        }
+
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+
+        // Copy samples to buffer
+        if let channelData = buffer.floatChannelData {
+            let channel = channelData.pointee
+            for i in 0..<samples.count {
+                channel[i] = samples[i]
+            }
+        }
+
+        // Send to audio session manager for output
+        audioSessionManager.sendProcessedAudioToOutput(buffer)
     }
     
     // MARK: - Memory Pressure Monitoring

@@ -336,7 +336,9 @@ class AudioEngine: ObservableObject {
         let capturedCallback = onProcessedAudioBufferReady
 
         audioProcessingQueue.async { [weak self] in
-            self?.processAudioBufferInternal(buffer, enabled: capturedEnabled, sensitivity: capturedSensitivity, callback: capturedCallback)
+            Task { @MainActor in
+                self?.processAudioBufferInternal(buffer, enabled: capturedEnabled, sensitivity: capturedSensitivity, callback: capturedCallback)
+            }
         }
     }
     
@@ -496,8 +498,8 @@ class AudioEngine: ObservableObject {
     
     deinit {
         memoryPressureSource?.cancel()
-        // Fix CRITICAL-003: Ensure audioSessionManager cleanup happens synchronously before deallocate
-        // Capture audioSessionManager before self is deallocated
+        // Fix CRITICAL-003: Ensure audioSessionManager cleanup happens before deallocate
+        // Capture audioSessionManager to avoid capturing self in the Task
         let sessionManager = audioSessionManager
         Task { @MainActor in
             sessionManager.cleanup()

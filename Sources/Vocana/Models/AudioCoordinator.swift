@@ -30,13 +30,17 @@ class AudioCoordinator: ObservableObject {
     
     /// Setup reactive bindings between settings and audio engine
     private func setupBindings() {
+        // Initialize processing state
+        isProcessing = settings.isEnabled
+
         // Optimization: Split isEnabled and sensitivity for responsive UX
         // isEnabled receives immediate updates for responsive user feedback
-        // sensitivity uses debouncing to prevent excessive ML re-processing
-        
+        // sensitivity uses debouncing to prevent excessive re-processing
+
         // Immediate isEnabled updates (toggle response should be instant)
         settings.$isEnabled
-            .sink { [weak self] _ in
+            .sink { [weak self] isEnabled in
+                self?.isProcessing = isEnabled
                 self?.updateAudioSettings()
             }
             .store(in: &cancellables)
@@ -67,6 +71,7 @@ class AudioCoordinator: ObservableObject {
 
     /// Stop audio processing (called from UI)
     func stopAudioProcessing() {
+        isProcessing = false
         audioEngine.stopAudioProcessing()
     }
 }

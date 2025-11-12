@@ -1,110 +1,98 @@
 import SwiftUI
 
-/// Main content view for Vocana menu bar interface
-/// 
-/// This view orchestrates the entire menu bar interface, coordinating
-/// between audio processing, user controls, and status indicators.
-/// It uses the coordinator pattern to maintain clean separation of concerns.
-/// 
-/// Layout Structure:
-/// - Header: App title and status indicators
-/// - Main Controls: Power toggle for noise cancellation
-/// - Audio Visualization: Real-time input/output level meters
-/// - Sensitivity Control: Adjustable noise cancellation sensitivity
-/// - Settings: Access to advanced configuration
-/// 
-/// Features:
-/// - Coordinator pattern for clean architecture
-/// - Keyboard shortcuts for power users
-/// - Accessibility support throughout
-/// - Responsive layout for different screen sizes
-/// 
-/// Usage:
-/// ```swift
-/// ContentView()
-///     .frame(width: 300, height: 400)
-/// ```
-/// 
-/// Performance:
-/// - Efficient state management through coordinator
-/// - Minimal view updates through optimized change detection
-/// - Background audio processing with UI throttling
-/// 
-/// Accessibility:
-/// - Full VoiceOver support
-/// - Keyboard navigation
-/// - High contrast mode compatibility
-/// - Reduced motion support
 struct ContentView: View {
-    // Fix QUAL-001: Use concrete type with protocol conformance to reduce tight coupling
-    @ObservedObject var coordinator: AudioCoordinator
-    @State private var showSettingsWindow = false
-    
-    // Expose coordinator for AppDelegate access
-    var audioCoordinator: AudioCoordinator { coordinator }
-    
-    // Default initializer for SwiftUI Preview
-    init() {
-        self.coordinator = AudioCoordinator()
-    }
-    
-    // Initializer for AppDelegate
-    init(coordinator: AudioCoordinator) {
-        self.coordinator = coordinator
+    @StateObject private var settings = AppSettings()
+    @StateObject private var audioEngine = AudioEngine()
+
+    private func openSettingsWindow() {
+        #if os(macOS)
+        let settingsWindow = SettingsWindow(audioEngine: audioEngine, settings: settings)
+        settingsWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        #endif
     }
     
     var body: some View {
-        VStack(spacing: 16) {
-            // Header with status indicator
-            HStack {
-                HeaderView()
-                Spacer()
-                StatusIndicatorView(audioEngine: coordinator.audioEngine, settings: coordinator.settings)
+        VStack(spacing: 20) {
+            HeaderView()
+            
+            Divider()
+            
+            PowerToggleView(isEnabled: $settings.isEnabled)
+            
+            AudioLevelsView(levels: audioEngine.currentLevels)
+            
+            SensitivityControlView(sensitivity: $settings.sensitivity)
+            
+            Divider()
+            
+            SettingsButtonView {
+                openSettingsWindow()
             }
             
-            Divider()
-            
-            // Main controls
-            PowerToggleView(isEnabled: $coordinator.settings.isEnabled)
-            
-            // Real-time audio visualization
-            AudioVisualizerView(audioEngine: coordinator.audioEngine)
-            
-            // Sensitivity control with visual feedback
-            SensitivityControlView(sensitivity: $coordinator.settings.sensitivity)
-            
-            Divider()
-            
-             // Settings button - opens settings window
-             SettingsButtonView {
-                 showSettingsWindow = true
-             }
-            
             Spacer()
+            
+             // Status indicators
+             VStack(spacing: 4) {
+                 // Audio mode indicator
+                 HStack {
+                     Image(systemName: audioEngine.isUsingRealAudio ? "mic.fill" : "waveform")
+                         .font(.caption2)
+                         .foregroundColor(.secondary)
+                     Text(audioEngine.isUsingRealAudio ? "Real Audio" : "Simulated")
+                         .font(.caption2)
+                         .foregroundColor(.secondary)
+                 }
+                 
+                 // ML processing indicator
+                 if settings.isEnabled {
+                     HStack(spacing: 4) {
+                         Image(systemName: audioEngine.isMLProcessingActive ? "cpu.fill" : "cpu")
+                             .font(.caption2)
+                             .foregroundColor(audioEngine.isMLProcessingActive ? .green : .orange)
+                         
+                         Text(audioEngine.isMLProcessingActive ? "ML Active" : "ML Unavailable")
+                             .font(.caption2)
+                             .foregroundColor(.secondary)
+                         
+                         if audioEngine.isMLProcessingActive && audioEngine.processingLatencyMs > 0 {
+                             Text("(\(String(format: "%.1f", audioEngine.processingLatencyMs))ms)")
+                                 .font(.caption2)
+                                 .foregroundColor(.secondary)
+                         }
+                     }
+                 }
+                 
+                 // Buffer health indicator (shows when audio engine is under stress)
+                 // Fix: Add buffer overflow telemetry for UI visibility
+                 if audioEngine.hasPerformanceIssues {
+                     HStack(spacing: 4) {
+                         Image(systemName: "exclamationmark.triangle.fill")
+                             .font(.caption2)
+                             .foregroundColor(.orange)
+                         
+                         Text(audioEngine.bufferHealthMessage)
+                             .font(.caption2)
+                             .foregroundColor(.secondary)
+                     }
+                 }
+             }
+             .padding(.top, 4)
         }
         .padding()
         .frame(width: AppConstants.popoverWidth, height: AppConstants.popoverHeight)
         .onAppear {
-            coordinator.startAudioProcessing()
+            audioEngine.startSimulation(isEnabled: settings.isEnabled, sensitivity: settings.sensitivity)
         }
         .onDisappear {
-            coordinator.stopAudioProcessing()
+            audioEngine.stopSimulation()
         }
-         .overlay(
-             // MEDIUM FIX: Use hidden Button with keyboardShortcut for proper keyboard handling
-             // This allows ⌥⌘N to toggle the noise cancellation
-             Button {
-                 coordinator.settings.isEnabled.toggle()
-             } label: {
-                 EmptyView()
-             }
-             .keyboardShortcut("n", modifiers: [.command, .option])
-             .opacity(0)
-             .accessibilityHidden(true)
-         )
-         .sheet(isPresented: $showSettingsWindow) {
-             SettingsWindow(isPresented: $showSettingsWindow, settings: coordinator.settings)
-         }
+        .onChange(of: settings.isEnabled) { newValue in
+            audioEngine.startSimulation(isEnabled: newValue, sensitivity: settings.sensitivity)
+        }
+        .onChange(of: settings.sensitivity) { newValue in
+            audioEngine.startSimulation(isEnabled: settings.isEnabled, sensitivity: newValue)
+        }
     }
 }
 

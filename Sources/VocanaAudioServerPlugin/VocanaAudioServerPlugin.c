@@ -455,14 +455,7 @@ static AudioServerPlugInDriverRef            gAudioServerPlugInDriverRef        
 
 
 #define RETURN_FORMATTED_STRING(_string_fmt)                          \
-if(kHas_Driver_Name_Format)                                           \
-{                                                                     \
-	return CFStringCreateWithFormat(NULL, NULL, CFSTR(_string_fmt), kNumber_Of_Channels); \
-}                                                                     \
-else                                                                  \
-{                                                                     \
-	return CFStringCreateWithCString(NULL, _string_fmt, kCFStringEncodingUTF8); \
-}
+	return CFStringCreateWithCString(NULL, _string_fmt, kCFStringEncodingUTF8);
 
 static CFStringRef get_box_uid(void)          { RETURN_FORMATTED_STRING(kBox_UID) }
 static CFStringRef get_device_uid(void)       { RETURN_FORMATTED_STRING(kDevice_UID) }
@@ -1525,7 +1518,7 @@ static OSStatus	BlackHole_GetPlugInPropertyData(AudioServerPlugInDriverRef inDri
 
 			if(CFStringCompare(*((CFStringRef*)inQualifierData), boxUID, 0) == kCFCompareEqualTo)
 			{
-				CFStringRef formattedString = CFStringCreateWithFormat(NULL, NULL, CFSTR(kBox_UID), kNumber_Of_Channels);
+				CFStringRef formattedString = CFStringCreateWithFormat(NULL, NULL, CFSTR(kBox_UID));
 				if(CFStringCompare(*((CFStringRef*)inQualifierData), formattedString, 0) == kCFCompareEqualTo)
 				{
 					*((AudioObjectID*)outData) = kObjectID_Box;

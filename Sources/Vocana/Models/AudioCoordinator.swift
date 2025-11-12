@@ -53,18 +53,18 @@ class AudioCoordinator: ObservableObject {
     
      /// Update audio engine settings with state validation
     private func updateAudioSettings() {
-        // Fix HIGH: Validate audio engine state before updating
-        audioEngine.startAudioProcessing(
-            isEnabled: settings.isEnabled,
+        // Update audio processing state based on settings
+        audioEngine.setAudioProcessingEnabled(
+            settings.isEnabled,
             sensitivity: settings.sensitivity
         )
     }
-    
+
     /// Start audio processing (called from UI)
     func startAudioProcessing() {
         updateAudioSettings()
     }
-    
+
     /// Stop audio processing (called from UI)
     func stopAudioProcessing() {
         audioEngine.stopAudioProcessing()

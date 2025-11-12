@@ -73,7 +73,7 @@ struct VirtualAudioControlsView: View {
         .cornerRadius(8)
         .onAppear {
             // Refresh device state when view appears
-            virtualAudioManager.createVirtualDevices()
+            _ = virtualAudioManager.createVirtualDevices()
         }
     }
 }

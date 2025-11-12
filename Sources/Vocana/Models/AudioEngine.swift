@@ -62,7 +62,6 @@ public protocol MLAudioProcessorProtocol: AnyObject {
     var recordSuccess: () -> Void { get set }
     var onMLProcessingReady: () -> Void { get set }
 
-    func initializeML() async
     func initializeMLProcessing()
     func stopMLProcessing()
     func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]?
@@ -322,19 +321,27 @@ class AudioEngine: ObservableObject {
     
     // MARK: - Public API
 
-    func startAudioProcessing(isEnabled: Bool, sensitivity: Double) {
+    func setAudioProcessingEnabled(_ enabled: Bool, sensitivity: Double) {
         // Always stop existing pipeline first to ensure clean state
-        if self.isEnabled && !isEnabled {
-            stopAudioProcessing()
+        if self.isEnabled && !enabled {
+            performCompleteCleanup()
         }
 
-        self.isEnabled = isEnabled
+        self.isEnabled = enabled
         self.sensitivity = sensitivity
 
-        if isEnabled {
-            _ = audioSessionManager.startRealAudioCapture()
+        if enabled {
+            let captureSuccess = audioSessionManager.startRealAudioCapture()
+            if !captureSuccess {
+                Self.logger.warning("Real audio capture failed, continuing with limited functionality")
+            }
+
             // Ensure output device is set up for processed audio routing
-            _ = audioSessionManager.startVocanaAudioOutput()
+            let outputSuccess = audioSessionManager.startVocanaAudioOutput()
+            if !outputSuccess {
+                Self.logger.warning("Vocana output setup failed, virtual devices may not be available")
+            }
+
             // Initialize ML processing for noise cancellation
             initializeMLProcessing()
         } else {
@@ -343,12 +350,18 @@ class AudioEngine: ObservableObject {
         }
     }
 
-    func stopAudioProcessing() {
+    /// Perform complete cleanup of all audio processing resources
+    private func performCompleteCleanup() {
         isEnabled = false
         decayTimer?.invalidate()
         decayTimer = nil
         audioSessionManager.stopRealAudioCapture()
+        audioSessionManager.stopSimulatedAudio()
         mlProcessor.stopMLProcessing()
+    }
+
+    func stopAudioProcessing() {
+        performCompleteCleanup()
     }
 
     func startSimulation(isEnabled: Bool, sensitivity: Double) {
@@ -378,8 +391,12 @@ class AudioEngine: ObservableObject {
         }
     }
 
-    /// Start decay timer for level smoothing during disabled simulation
+    /// Start decay timer for level smoothing during disabled state
     private func startDecayTimer() {
+        // Clean up any existing timer first
+        decayTimer?.invalidate()
+        decayTimer = nil
+
         decayTimer = Timer.scheduledTimer(withTimeInterval: AppConstants.audioUpdateInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self else { return }
@@ -387,16 +404,11 @@ class AudioEngine: ObservableObject {
                 self.currentLevels = decayedLevels
             }
         }
-        RunLoop.main.add(decayTimer!, forMode: .common)
+        // Timer is already scheduled on main run loop by scheduledTimer
     }
     
     func stopSimulation() {
-        isEnabled = false
-        decayTimer?.invalidate()
-        decayTimer = nil
-        audioSessionManager.stopRealAudioCapture()
-        audioSessionManager.stopSimulatedAudio()
-        mlProcessor.stopMLProcessing()
+        performCompleteCleanup()
     }
     
     func reset() {

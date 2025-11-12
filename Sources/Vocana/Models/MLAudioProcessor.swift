@@ -35,13 +35,6 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
     
     /// Initialize ML processing with DeepFilterNet
     /// Handles async model loading with proper cancellation support
-    func initializeML() async {
-        // For compatibility with protocol - delegate to existing method
-        initializeMLProcessing()
-    }
-
-    /// Initialize ML processing with DeepFilterNet
-    /// Handles async model loading with proper cancellation support
     func initializeMLProcessing() {
         // Fix CRITICAL: Cancel any existing initialization to prevent race conditions
         mlInitializationTask?.cancel()

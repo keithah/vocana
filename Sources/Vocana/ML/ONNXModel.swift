@@ -85,25 +85,24 @@ final class ONNXModel {
             for (name, tensor) in inputs {
                 // Fix HIGH: Security validation of tensor data
                 guard !tensor.data.isEmpty else {
-                    throw ONNXError.invalidInput("Tensor '\(name)' has empty data")
+                    throw ONNXError.invalidInput("Tensor has empty data")
                 }
                 
                 guard tensor.data.allSatisfy({ $0.isFinite }) else {
-                    throw ONNXError.invalidInput("Tensor '\(name)' contains NaN or infinite values")
+                    throw ONNXError.invalidInput("Tensor contains NaN or infinite values")
                 }
                 
                 // Fix CRITICAL: Use more appropriate range validation for audio ML models
                 // Audio spectrograms can have large magnitude values, especially for loud signals
                 let maxSafeValue: Float = 1e8 // Allow large spectral values but prevent overflow
                 guard tensor.data.allSatisfy({ abs($0) <= maxSafeValue }) else {
-                    let maxValue = tensor.data.max { abs($0) < abs($1) } ?? 0
-                    throw ONNXError.invalidInput("Tensor '\(name)' max value \(maxValue) exceeds safe range (±\(maxSafeValue))")
+                    throw ONNXError.invalidInput("Tensor max value exceeds safe range")
                 }
                 
                 // Fix CRITICAL: Safe Int to Int64 conversion with proper error handling
                 let shape = try tensor.shape.map { value in
                     guard let int64Value = Int64(exactly: value) else {
-                        throw ONNXError.invalidInputShape("Shape dimension \(value) cannot be converted to Int64")
+                        throw ONNXError.invalidInputShape("Shape dimension cannot be converted to Int64")
                     }
                     return int64Value
                 }
@@ -125,7 +124,7 @@ final class ONNXModel {
             // Safe Int64 to Int conversion with bounds checking
             let shape = try tensorData.shape.map { value in
                 guard let intValue = Int(exactly: value) else {
-                    throw ONNXError.invalidOutputShape("Shape dimension \(value) exceeds Int range")
+                    throw ONNXError.invalidOutputShape("Shape dimension exceeds Int range")
                 }
                 return intValue
             }
@@ -137,25 +136,23 @@ final class ONNXModel {
                 // DeepFilterNet models typically have dimensions: batch(1), channels(32-96), time(1), freq(481)
                 let maxReasonableDim = 1_000_000 // Allow for large spectrograms but prevent memory exhaustion
                 guard dim > 0 && dim <= maxReasonableDim else {
-                    throw ONNXError.invalidOutputShape("Output '\(name)' dimension \(dim) outside valid range [1, \(maxReasonableDim)]")
+                    throw ONNXError.invalidOutputShape("Output dimension outside valid range")
                 }
                 
                 // Check if multiplication would exceed reasonable limits before overflow check
                 guard expectedCount <= Int.max / max(dim, 1) else {
-                    throw ONNXError.invalidOutputShape("Output '\(name)' shape \(shape) would exceed memory limits")
+                    throw ONNXError.invalidOutputShape("Output shape would exceed memory limits")
                 }
                 
                 let (product, overflow) = expectedCount.multipliedReportingOverflow(by: dim)
                 guard !overflow else {
-                    throw ONNXError.invalidOutputShape("Output '\(name)' shape \(shape) causes overflow")
+                    throw ONNXError.invalidOutputShape("Output shape causes overflow")
                 }
                 expectedCount = product
             }
             
             guard tensorData.data.count == expectedCount else {
-                throw ONNXError.invalidOutputShape(
-                    "Output '\(name)' expected \(expectedCount) elements for shape \(shape), got \(tensorData.data.count)"
-                )
+                throw ONNXError.invalidOutputShape("Output data count mismatch")
             }
             
             outputs[name] = Tensor(shape: shape, data: tensorData.data)
@@ -214,9 +211,9 @@ final class ONNXModel {
         }
         
         guard isPathAllowed else {
-            throw ONNXError.modelNotFound("Model path not in allowed directories: \(resolvedPath)")
+            throw ONNXError.modelNotFound("Model path not in allowed directories")
         }
-        
+
         // Step 5: Additional security checks
         let resourceValues = try resolvedURL.resourceValues(forKeys: [
             .isReadableKey, 
@@ -234,26 +231,26 @@ final class ONNXModel {
         
         // Reasonable size limit for ONNX models (prevent DoS)
         guard fileSize <= 500 * 1024 * 1024 else { // 500MB limit
-            throw ONNXError.modelNotFound("Model file too large: \(fileSize) bytes")
+            throw ONNXError.modelNotFound("Model file too large")
         }
         
         guard isPathAllowed else {
-            throw ONNXError.modelNotFound("Model path not in allowed directories: \(resolvedPath)")
+            throw ONNXError.modelNotFound("Model path not in allowed directories")
         }
-        
+
         // Step 4: File existence and readability check (TOCTOU: check happens immediately before use)
         // This is checked again at model loading time before actual file operations
         guard fm.fileExists(atPath: resolvedPath) else {
-            throw ONNXError.modelNotFound("Model file does not exist: \(resolvedPath)")
+            throw ONNXError.modelNotFound("Model file does not exist")
         }
         
         guard fm.isReadableFile(atPath: resolvedPath) else {
-            throw ONNXError.modelNotFound("Model file is not readable: \(resolvedPath)")
+            throw ONNXError.modelNotFound("Model file is not readable")
         }
         
         // Step 5: File extension validation (case-insensitive)
         guard resolvedPath.lowercased().hasSuffix(".onnx") else {
-            throw ONNXError.modelNotFound("Model file must have .onnx extension: \(resolvedPath)")
+            throw ONNXError.modelNotFound("Model file must have .onnx extension")
         }
         
         // Step 6: Additional security: Validate file size to prevent DoS
@@ -263,7 +260,7 @@ final class ONNXModel {
             if let fileSize = attributes[.size] as? NSNumber {
                 let maxFileSize = 1_000_000_000 as Int64  // 1GB
                 guard fileSize.int64Value <= maxFileSize else {
-                    throw ONNXError.modelNotFound("Model file size exceeds maximum allowed (1GB): \(resolvedPath)")
+                    throw ONNXError.modelNotFound("Model file size exceeds maximum allowed")
                 }
             }
         } catch {

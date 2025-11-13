@@ -3,6 +3,15 @@ import Combine
 @preconcurrency import AVFoundation
 import os.log
 
+// MARK: - Memory Pressure Levels
+
+public enum MemoryPressureLevel: Int {
+    case normal = 0
+    case warning = 1
+    case urgent = 2
+    case critical = 3
+}
+
 // MARK: - Audio Engine Error Types
 
 enum AudioEngineError: LocalizedError {
@@ -41,6 +50,22 @@ struct AudioLevels {
     static let zero = AudioLevels(input: 0.0, output: 0.0)
 }
 
+/// AudioEngine manages the complete audio processing pipeline for Vocana.
+///
+/// This class coordinates audio capture, ML processing, buffer management, and output routing.
+/// It provides real-time noise cancellation using DeepFilterNet models while maintaining
+/// thread safety and performance through careful resource management.
+///
+/// Key responsibilities:
+/// - Audio session management and capture coordination
+/// - ML model inference with automatic fallback to basic processing
+/// - Memory pressure monitoring and automatic ML suspension
+/// - Circuit breaker pattern for buffer overflow protection
+/// - Telemetry collection for monitoring and debugging
+/// - UI state management with throttled updates
+///
+/// Threading: All operations are MainActor-isolated for UI safety.
+/// Heavy processing is dispatched to background queues to prevent UI blocking.
 @MainActor
 class AudioEngine: ObservableObject {
     nonisolated private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
@@ -78,14 +103,7 @@ class AudioEngine: ObservableObject {
      }
     
     // MARK: - Memory Pressure Monitoring
-    
-    enum MemoryPressureLevel: Int {
-        case normal = 0
-        case warning = 1
-        case urgent = 2
-        case critical = 3
-    }
-    
+
     // Fix CRITICAL: Production telemetry for monitoring and debugging
     struct ProductionTelemetry: Sendable {
         var totalFramesProcessed: UInt64 = 0
@@ -441,9 +459,11 @@ class AudioEngine: ObservableObject {
         return stereoSamples
     }
 
-    private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {
-        let processed = processWithMLForOutput(samples: samples, sensitivity: sensitivity)
-        return levelController.calculateRMS(samples: processed)
+    // UNIQUE COMMENT TO TEST IF FILE IS READ
+    private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> (samples: [Float], level: Float) {
+        let sensitivityFloat = Float(sensitivity)
+        let processedSamples = samples.map { $0 * sensitivityFloat }
+        return (samples: processedSamples, level: levelController.calculateRMS(samples: processedSamples))
     }
     
     // MARK: - Memory Pressure Monitoring

@@ -1,5 +1,7 @@
 import Foundation
 
+import OSLog
+
 /// Swift wrapper for ONNX Runtime C API
 ///
 /// This provides a Swift-friendly interface to ONNX Runtime while maintaining
@@ -12,7 +14,8 @@ import Foundation
 /// let outputs = try session.run(inputs: ["input": tensorData])
 /// ```
 class ONNXRuntimeWrapper {
-    
+    nonisolated private static let logger = Logger(subsystem: "Vocana", category: "ONNXRuntime")
+
     // MARK: - Configuration
     
     enum RuntimeMode {
@@ -34,10 +37,10 @@ class ONNXRuntimeWrapper {
         
         if mode == .automatic {
             if isNativeAvailable {
-                print("✓ ONNX Runtime native library detected")
+                Self.logger.info("ONNX Runtime native library detected")
             } else {
-                print("⚠️  ONNX Runtime not found - using mock implementation")
-                print("   To install: Download from https://github.com/microsoft/onnxruntime/releases")
+                Self.logger.warning("ONNX Runtime not found - using mock implementation")
+                Self.logger.info("To install ONNX Runtime: Download from https://github.com/microsoft/onnxruntime/releases")
             }
         }
     }
@@ -118,18 +121,18 @@ struct TensorData {
         for dim in shape {
             let (product, overflow) = expectedSize.multipliedReportingOverflow(by: dim)
             if overflow {
-                throw ONNXError.runtimeError("Shape dimensions overflow Int64: \(shape)")
+                throw ONNXError.runtimeError("Shape dimensions overflow Int64")
             }
             expectedSize = product
         }
         
         // Safe conversion for comparison
         guard let expectedInt = Int(exactly: expectedSize) else {
-            throw ONNXError.runtimeError("Expected size exceeds Int range: \(expectedSize)")
+            throw ONNXError.runtimeError("Expected size exceeds Int range")
         }
         
         guard data.count == expectedInt else {
-            throw ONNXError.runtimeError("Data size \(data.count) doesn't match shape (expected \(expectedSize))")
+            throw ONNXError.runtimeError("Data size doesn't match expected shape")
         }
     }
     
@@ -147,13 +150,13 @@ struct TensorData {
             for dim in shape {
                 let (result, overflow) = product.multipliedReportingOverflow(by: dim)
                 guard !overflow else {
-                    throw ONNXError.runtimeError("Tensor size overflow during multiplication: \(shape)")
+                    throw ONNXError.runtimeError("Tensor size overflow during multiplication")
                 }
                 product = result
             }
             
             guard let intValue = Int(exactly: product) else {
-                throw ONNXError.runtimeError("Tensor size exceeds Int range: \(product)")
+                throw ONNXError.runtimeError("Tensor size exceeds Int range")
             }
             return intValue
         }
@@ -174,13 +177,13 @@ class MockInferenceSession: InferenceSession {
         for dim in values {
             let (result, overflow) = product.multipliedReportingOverflow(by: dim)
             guard !overflow else {
-                throw ONNXError.runtimeError("Shape dimensions overflow during multiplication: \(values)")
+                throw ONNXError.runtimeError("Shape dimensions overflow during multiplication")
             }
             product = result
         }
         
         guard let count = Int(exactly: product) else {
-            throw ONNXError.runtimeError("Tensor size exceeds Int.max: \(product)")
+            throw ONNXError.runtimeError("Tensor size exceeds Int.max")
         }
         return count
     }

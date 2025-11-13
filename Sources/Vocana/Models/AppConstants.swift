@@ -101,6 +101,11 @@ struct AppConstants {
     // Accessibility
     static let accessibilityDescription = "Vocana"
     
+    // Audio Level Visualization
+    static let levelWarningThreshold: Float = 0.8  // Warning when levels exceed 80%
+    static let audioLevelAnimationDuration: Double = 0.1  // 100ms smooth animation
+    static let audioLevelSmoothingFactor: Float = 0.3  // 30% smoothing for visual stability
+
     // Colors
     struct Colors {
         static let inputLevel = Color.blue

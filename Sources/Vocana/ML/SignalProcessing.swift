@@ -169,7 +169,7 @@ final class STFT {
             guard endSample <= audio.count, 
                   windowedInput.count >= fftSize,
                   inputReal.count >= fftSize else {
-                Self.logger.error("Buffer size validation failed at frame \(frameIndex)")
+                Self.logger.error("Buffer size validation failed")
                 continue
             }
             
@@ -271,12 +271,12 @@ final class STFT {
             var realCopySucceeded = false
             frameReal.withUnsafeBufferPointer { realPtr in
                 guard let realBase = realPtr.baseAddress, safeBinsToUse <= realPtr.count else {
-                    Self.logger.error("Frame real pointer invalid at frame \(frameIndex)")
+                    Self.logger.error("Frame real pointer invalid")
                     return
                 }
                 fullReal.withUnsafeMutableBufferPointer { fullRealPtr in
                     guard let fullRealBase = fullRealPtr.baseAddress, safeBinsToUse <= fullRealPtr.count else {
-                        Self.logger.error("Full real pointer invalid at frame \(frameIndex)")
+                        Self.logger.error("Full real pointer invalid")
                         return
                     }
                     vDSP_mmov(realBase, fullRealBase, vDSP_Length(safeBinsToUse), 1, 1, 1)
@@ -288,12 +288,12 @@ final class STFT {
             var imagCopySucceeded = false
             frameImag.withUnsafeBufferPointer { imagPtr in
                 guard let imagBase = imagPtr.baseAddress, safeBinsToUse <= imagPtr.count else {
-                    Self.logger.error("Frame imag pointer invalid at frame \(frameIndex)")
+                    Self.logger.error("Frame imag pointer invalid")
                     return
                 }
                 fullImag.withUnsafeMutableBufferPointer { fullImagPtr in
                     guard let fullImagBase = fullImagPtr.baseAddress, safeBinsToUse <= fullImagPtr.count else {
-                        Self.logger.error("Full imag pointer invalid at frame \(frameIndex)")
+                        Self.logger.error("Full imag pointer invalid")
                         return
                     }
                     vDSP_mmov(imagBase, fullImagBase, vDSP_Length(safeBinsToUse), 1, 1, 1)
@@ -304,7 +304,7 @@ final class STFT {
             
             // Fix HIGH: Validate frame sizes match before mirroring
             guard frameReal.count == frameImag.count else {
-                Self.logger.error("Frame \(frameIndex) real/imag size mismatch: \(frameReal.count) vs \(frameImag.count)")
+                Self.logger.error("Frame real/imag size mismatch")
                 continue
             }
             

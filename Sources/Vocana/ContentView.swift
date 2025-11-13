@@ -3,6 +3,14 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var settings = AppSettings()
     @StateObject private var audioEngine = AudioEngine()
+
+    private func openSettingsWindow() {
+        #if os(macOS)
+        let settingsWindow = SettingsWindow(audioEngine: audioEngine, settings: settings)
+        settingsWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        #endif
+    }
     
     var body: some View {
         VStack(spacing: 20) {
@@ -19,7 +27,7 @@ struct ContentView: View {
             Divider()
             
             SettingsButtonView {
-                // TODO: Open settings window
+                openSettingsWindow()
             }
             
             Spacer()

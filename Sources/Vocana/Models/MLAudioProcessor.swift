@@ -1,11 +1,32 @@
 import Foundation
 import os.log
 
+/// Protocol for ML audio processing
+@MainActor
+public protocol MLAudioProcessorProtocol: AnyObject {
+    var isMLProcessingActive: Bool { get }
+    var processingLatencyMs: Double { get }
+    var memoryPressureLevel: MemoryPressureLevel { get }
+
+    var recordFailure: () -> Void { get set }
+    var recordLatency: (Double) -> Void { get set }
+    var recordSuccess: () -> Void { get set }
+    var onMLProcessingReady: () -> Void { get set }
+
+    func initializeML() async
+    func initializeMLProcessing()
+    func stopMLProcessing()
+    func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]?
+    func suspendMLProcessing(reason: String)
+    func attemptMemoryPressureRecovery()
+    func isMemoryPressureSuspended() -> Bool
+}
+
 /// Manages ML model inference and audio processing
 /// Responsibility: DeepFilterNet initialization, inference, memory pressure handling
 /// Isolated from audio capture, buffering, and level calculations
 @MainActor
-class MLAudioProcessor {
+class MLAudioProcessor: MLAudioProcessorProtocol {
     private static let logger = Logger(subsystem: "Vocana", category: "MLAudioProcessor")
     
     private var denoiser: DeepFilterNet?
@@ -18,19 +39,25 @@ class MLAudioProcessor {
      // Fix CRITICAL: Dedicated queue for ML inference to prevent blocking audio thread
      private let mlInferenceQueue = DispatchQueue(label: "com.vocana.mlinference", qos: .userInteractive)
     
-     // Telemetry and callbacks
-     // Thread Safety: All callbacks are automatically dispatched to MainActor
-     // Do not access MLAudioProcessor state directly from callbacks to avoid race conditions
-      var telemetry: AudioEngine.ProductionTelemetry = .init()
-      var recordLatency: (Double) -> Void = { _ in }
-      var recordFailure: () -> Void = {}
-      var recordMemoryPressure: () -> Void = {}
-      var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
-    
+      // Telemetry and callbacks
+      // Thread Safety: All callbacks are automatically dispatched to MainActor
+      // Do not access MLAudioProcessor state directly from callbacks to avoid race conditions
+       var telemetry: AudioEngine.ProductionTelemetry = .init()
+       var recordLatency: (Double) -> Void = { _ in }
+       var recordFailure: () -> Void = {}
+       var recordSuccess: () -> Void = {}
+       var recordMemoryPressure: () -> Void = {}
+       var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
+
     // Public state
     var isMLProcessingActive = false
     var processingLatencyMs: Double = 0
+    var memoryPressureLevel: MemoryPressureLevel = .normal
     
+    func initializeML() async {
+        // Default implementation - ML initialization is handled in initializeMLProcessing
+    }
+
     /// Initialize ML processing with DeepFilterNet
     /// Handles async model loading with proper cancellation support
     func initializeMLProcessing() {

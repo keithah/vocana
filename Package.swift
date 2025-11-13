@@ -16,7 +16,11 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Vocana",
-            dependencies: []
+            dependencies: [],
+            linkerSettings: [
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalPerformanceShaders")
+            ]
         ),
 
         .target(

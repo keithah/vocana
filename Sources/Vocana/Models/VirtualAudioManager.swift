@@ -107,11 +107,9 @@ enum VocanaNoiseCancellationState: UInt32 {
     // MARK: - Device Management
 
     func createVirtualDevices() -> Bool {
-        // TODO: Implement when HAL plugin entitlements are obtained
-        // For now, create stub devices for UI testing
-        inputDevice = VocanaAudioDevice(deviceID: 0x12345678, isInputDevice: true, originalDeviceID: 0)
-        outputDevice = VocanaAudioDevice(deviceID: 0x87654321, isInputDevice: false, originalDeviceID: 0)
-        return true
+        // HAL plugin handles actual device creation - this is just UI state management
+        // Return false until HAL plugin successfully creates devices
+        return false
     }
 
     func destroyVirtualDevices() {

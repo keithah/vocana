@@ -8,6 +8,12 @@ import OSLog
 /// This provides a Swift-friendly interface to ONNX Runtime while maintaining
 /// compatibility with the mock implementation during development.
 ///
+/// ## Runtime Modes
+/// - **automatic**: Uses native ONNX Runtime if available, otherwise mock
+/// - **native**: Uses ONNX Runtime C API (requires native library)
+/// - **mock**: Uses Swift implementation for testing/development
+/// - **gpu**: Placeholder for Metal GPU acceleration (currently falls back to mock)
+///
 /// Usage:
 /// ```swift
 /// let runtime = try ONNXRuntimeWrapper()
@@ -82,7 +88,8 @@ class ONNXRuntimeWrapper {
     /// - Threading: Sessions are not thread-safe; create separate sessions per thread
     /// - Memory: Sessions hold model weights in memory; dispose when no longer needed
     ///
-    /// - Note: Automatic mode prefers native ONNX Runtime, falls back to mock implementation
+    /// - Note: Automatic mode prefers native ONNX Runtime, falls back to mock implementation.
+///         GPU mode is a placeholder that currently falls back to mock until Metal acceleration is implemented.
     func createSession(modelPath: String, options: SessionOptions = SessionOptions()) throws -> InferenceSession {
         switch mode {
         case .gpu:
@@ -538,10 +545,6 @@ struct Conv1DLayer: NeuralLayer {
         let outputLength = ((inputLength - kernelSize) / stride) + 1
         guard outputLength > 0 else {
             throw ONNXError.invalidInput("Calculated output length is non-positive")
-        }
-
-        guard outputLength > 0 else {
-            throw ONNXError.invalidInput("Output length would be zero or negative")
         }
 
         // Validate total output size
@@ -1045,14 +1048,21 @@ class NativeInferenceSession: InferenceSession {
         let T = e3.shape[2]
         let F: Int64 = 481  // Full spectrum size
 
-        // Combine all encoder outputs for ERB decoder input
-        var combinedInput = e3.data
-        if let e0 = inputs["e0"] { combinedInput += e0.data }
-        if let e1 = inputs["e1"] { combinedInput += e1.data }
-        if let e2 = inputs["e2"] { combinedInput += e2.data }
-        if let emb = inputs["emb"] { combinedInput += emb.data }
-        if let c0 = inputs["c0"] { combinedInput += c0.data }
-        if let lsnr = inputs["lsnr"] { combinedInput += lsnr.data }
+        // Combine all encoder outputs for ERB decoder input (optimized concatenation)
+        var combinedArrays: [[Float]] = [e3.data]
+        if let e0 = inputs["e0"] { combinedArrays.append(e0.data) }
+        if let e1 = inputs["e1"] { combinedArrays.append(e1.data) }
+        if let e2 = inputs["e2"] { combinedArrays.append(e2.data) }
+        if let emb = inputs["emb"] { combinedArrays.append(emb.data) }
+        if let c0 = inputs["c0"] { combinedArrays.append(c0.data) }
+        if let lsnr = inputs["lsnr"] { combinedArrays.append(lsnr.data) }
+
+        let totalSize = combinedArrays.reduce(0) { $0 + $1.count }
+        var combinedInput = [Float]()
+        combinedInput.reserveCapacity(totalSize)
+        for array in combinedArrays {
+            combinedInput.append(contentsOf: array)
+        }
 
         // Process through ERB decoder layers
         let decConv1 = try (layers["erb_dec_conv1"] as! ConvTranspose1DLayer).forward(combinedInput, hiddenStates: &hiddenStates)
@@ -1078,14 +1088,21 @@ class NativeInferenceSession: InferenceSession {
         let dfBins: Int64 = Int64(AppConstants.dfBands)
         let dfOrder: Int64 = Int64(AppConstants.dfOrder)
 
-        // Combine all encoder outputs for DF decoder input
-        var combinedInput = e3.data
-        if let e0 = inputs["e0"] { combinedInput += e0.data }
-        if let e1 = inputs["e1"] { combinedInput += e1.data }
-        if let e2 = inputs["e2"] { combinedInput += e2.data }
-        if let emb = inputs["emb"] { combinedInput += emb.data }
-        if let c0 = inputs["c0"] { combinedInput += c0.data }
-        if let lsnr = inputs["lsnr"] { combinedInput += lsnr.data }
+        // Combine all encoder outputs for DF decoder input (optimized concatenation)
+        var combinedArrays: [[Float]] = [e3.data]
+        if let e0 = inputs["e0"] { combinedArrays.append(e0.data) }
+        if let e1 = inputs["e1"] { combinedArrays.append(e1.data) }
+        if let e2 = inputs["e2"] { combinedArrays.append(e2.data) }
+        if let emb = inputs["emb"] { combinedArrays.append(emb.data) }
+        if let c0 = inputs["c0"] { combinedArrays.append(c0.data) }
+        if let lsnr = inputs["lsnr"] { combinedArrays.append(lsnr.data) }
+
+        let totalSize = combinedArrays.reduce(0) { $0 + $1.count }
+        var combinedInput = [Float]()
+        combinedInput.reserveCapacity(totalSize)
+        for array in combinedArrays {
+            combinedInput.append(contentsOf: array)
+        }
 
         // Process through DF decoder layers
         let dfConv1 = try (layers["df_conv1"] as! Conv1DLayer).forward(combinedInput, hiddenStates: &hiddenStates)

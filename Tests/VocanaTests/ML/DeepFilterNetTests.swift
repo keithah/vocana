@@ -2,7 +2,10 @@ import XCTest
 @testable import Vocana
 
 final class DeepFilterNetTests: XCTestCase {
-    
+
+    // Test configuration constants
+    private let maxLatencyMs: Double = 50.0  // Maximum acceptable latency for real-time processing
+
     // MARK: - ONNX Model Tests
     
     func testONNXModelLoading() throws {
@@ -100,8 +103,14 @@ final class DeepFilterNetTests: XCTestCase {
         let imag = Array(repeating: 0.0 as Float, count: timeSteps * freqBins)
         let spectrum = (real: real, imag: imag)
         
-        // Create test coefficients (96 bins, 5 taps)
+        // Create test coefficients (96 bins, 5 taps) with overflow protection
+        guard timeSteps > 0 && timeSteps <= 1000 else {
+            throw NSError(domain: "TestError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid timeSteps: \(timeSteps)"])
+        }
         let numCoefs = timeSteps * 96 * 5
+        guard numCoefs <= 1_000_000 else { // Reasonable upper bound
+            throw NSError(domain: "TestError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Coefficient count too large: \(numCoefs)"])
+        }
         let coefficients = Array(repeating: 0.2 as Float, count: numCoefs)
         
         // Apply filtering
@@ -199,7 +208,7 @@ final class DeepFilterNetTests: XCTestCase {
         // Target: <15ms for real-time
         // Note: With mock ONNX, this should be very fast
         // With real ONNX Runtime, aim for <15ms
-        XCTAssertLessThan(avgLatency, 50.0, "Latency too high for real-time processing")
+        XCTAssertLessThan(avgLatency, maxLatencyMs, "Latency too high for real-time processing")
     }
     
     func testDeepFilterNetReset() throws {
@@ -440,19 +449,40 @@ final class DeepFilterNetTests: XCTestCase {
 
         // Test FP16 quantization
         let testWeights: [Float] = [-2.5, -1.0, 0.0, 1.0, 2.5, 1000.0, -1000.0]
-        let fp16Weights = Vocana.ModelQuantization.quantizeToFP16(testWeights)
-        XCTAssertEqual(fp16Weights.count, testWeights.count, "FP16 quantization should preserve weight count")
 
-        let dequantizedFP16 = Vocana.ModelQuantization.dequantizeFromFP16(fp16Weights)
-        XCTAssertEqual(dequantizedFP16.count, testWeights.count, "FP16 dequantization should preserve weight count")
+        let fp16Result = Vocana.ModelQuantization.quantizeToFP16(testWeights)
+        switch fp16Result {
+        case .success(let fp16Weights):
+            XCTAssertEqual(fp16Weights.count, testWeights.count, "FP16 quantization should preserve weight count")
+
+            let dequantizedFP16Result = Vocana.ModelQuantization.dequantizeFromFP16(fp16Weights)
+            switch dequantizedFP16Result {
+            case .success(let dequantizedFP16):
+                XCTAssertEqual(dequantizedFP16.count, testWeights.count, "FP16 dequantization should preserve weight count")
+            case .failure(let error):
+                XCTFail("FP16 dequantization failed: \(error.localizedDescription)")
+            }
+        case .failure(let error):
+            XCTFail("FP16 quantization failed: \(error.localizedDescription)")
+        }
 
         // Test INT8 quantization
-        let (int8Weights, int8Params) = Vocana.ModelQuantization.quantizeToINT8(testWeights)
-        XCTAssertEqual(int8Weights.count, testWeights.count, "INT8 quantization should preserve weight count")
-        XCTAssertGreaterThan(int8Params.scale, 0, "INT8 scale should be positive")
+        let int8Result = Vocana.ModelQuantization.quantizeToINT8(testWeights)
+        switch int8Result {
+        case .success(let (int8Weights, int8Params)):
+            XCTAssertEqual(int8Weights.count, testWeights.count, "INT8 quantization should preserve weight count")
+            XCTAssertGreaterThan(int8Params.scale, 0, "INT8 scale should be positive")
 
-        let dequantizedINT8 = Vocana.ModelQuantization.dequantizeFromINT8(int8Weights, params: int8Params)
-        XCTAssertEqual(dequantizedINT8.count, testWeights.count, "INT8 dequantization should preserve weight count")
+            let dequantizedINT8Result = Vocana.ModelQuantization.dequantizeFromINT8(int8Weights, params: int8Params)
+            switch dequantizedINT8Result {
+            case .success(let dequantizedINT8):
+                XCTAssertEqual(dequantizedINT8.count, testWeights.count, "INT8 dequantization should preserve weight count")
+            case .failure(let error):
+                XCTFail("INT8 dequantization failed: \(error.localizedDescription)")
+            }
+        case .failure(let error):
+            XCTFail("INT8 quantization failed: \(error.localizedDescription)")
+        }
 
         // Test dynamic quantization analysis
         let activationParams = Vocana.ModelQuantization.analyzeActivationRange(testWeights)
@@ -463,6 +493,97 @@ final class DeepFilterNetTests: XCTestCase {
         Vocana.QuantizationAwareTraining.addQuantizationNoise(&noisyWeights, type: Vocana.ModelQuantization.QuantizationType.int8)
         XCTAssertEqual(noisyWeights.count, testWeights.count, "QAT should preserve weight count")
 
+        // Test edge cases
+        testEdgeCases()
+
+        // Test quantization accuracy
+        testQuantizationAccuracy()
+
         print("✅ Model quantization tests passed")
+    }
+
+    private func testEdgeCases() {
+        // Test empty array
+        let emptyResult = Vocana.ModelQuantization.quantizeToFP16([])
+        switch emptyResult {
+        case .failure(let error):
+            XCTAssertEqual(error, .emptyInput)
+        case .success:
+            XCTFail("Empty array should fail quantization")
+        }
+
+        // Test NaN values
+        let nanWeights: [Float] = [1.0, .nan, 2.0]
+        let nanFP16Result = Vocana.ModelQuantization.quantizeToFP16(nanWeights)
+        switch nanFP16Result {
+        case .failure(let error):
+            XCTAssertEqual(error, .invalidInput("Weights contain NaN or infinite values"))
+        case .success:
+            XCTFail("NaN values should fail quantization")
+        }
+
+        // Test infinite values
+        let infWeights: [Float] = [1.0, .infinity, 2.0]
+        let infFP16Result = Vocana.ModelQuantization.quantizeToFP16(infWeights)
+        switch infFP16Result {
+        case .failure(let error):
+            XCTAssertEqual(error, .invalidInput("Weights contain NaN or infinite values"))
+        case .success:
+            XCTFail("Infinite values should fail quantization")
+        }
+
+        // Test INT8 with extreme values
+        let extremeWeights: [Float] = [1e10, -1e10, 0.0]
+        let extremeResult = Vocana.ModelQuantization.quantizeToINT8(extremeWeights)
+        switch extremeResult {
+        case .success:
+            // Should succeed but log warnings
+            break
+        case .failure:
+            XCTFail("Extreme values should still quantize (with warnings)")
+        }
+    }
+
+    private func testQuantizationAccuracy() {
+        // Test round-trip accuracy for FP16
+        let originalWeights: [Float] = [-3.14159, -1.5, -0.5, 0.0, 0.5, 1.5, 3.14159]
+        let fp16Result = Vocana.ModelQuantization.quantizeToFP16(originalWeights)
+        switch fp16Result {
+        case .success(let quantized):
+            let dequantizedResult = Vocana.ModelQuantization.dequantizeFromFP16(quantized)
+            switch dequantizedResult {
+            case .success(let dequantized):
+                // Check that values are close (within FP16 precision)
+                for i in 0..<originalWeights.count {
+                    let diff = abs(originalWeights[i] - dequantized[i])
+                    XCTAssertLessThan(diff, 0.01, "FP16 round-trip accuracy too low at index \(i)")
+                }
+            case .failure(let error):
+                XCTFail("FP16 dequantization failed: \(error.localizedDescription)")
+            }
+        case .failure(let error):
+            XCTFail("FP16 quantization failed: \(error.localizedDescription)")
+        }
+
+        // Test INT8 accuracy
+        let int8Weights: [Float] = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0]
+        let int8Result = Vocana.ModelQuantization.quantizeToINT8(int8Weights)
+        switch int8Result {
+        case .success(let (quantized, params)):
+            let dequantizedResult = Vocana.ModelQuantization.dequantizeFromINT8(quantized, params: params)
+            switch dequantizedResult {
+            case .success(let dequantized):
+                // Check that values are reasonably close (INT8 has ~1-2% quantization error)
+                for i in 0..<int8Weights.count {
+                    let diff = abs(int8Weights[i] - dequantized[i])
+                    let relativeError = diff / max(abs(int8Weights[i]), 1e-6)
+                    XCTAssertLessThan(relativeError, 0.05, "INT8 relative error too high at index \(i): \(relativeError)")
+                }
+            case .failure(let error):
+                XCTFail("INT8 dequantization failed: \(error.localizedDescription)")
+            }
+        case .failure(let error):
+            XCTFail("INT8 quantization failed: \(error.localizedDescription)")
+        }
     }
 }

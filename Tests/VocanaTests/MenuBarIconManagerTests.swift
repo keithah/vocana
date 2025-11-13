@@ -118,21 +118,33 @@ final class MenuBarIconManagerTests: XCTestCase {
     
     func testThrottlingDelay() {
         let expectation = XCTestExpectation(description: "Throttling delay verification")
+        var stateChangeCount = 0
         let startTime = Date()
-        
+
         // Subscribe to state changes
         iconManager.$currentState
+            .dropFirst() // Skip initial value
             .sink { _ in
+                stateChangeCount += 1
                 let elapsed = Date().timeIntervalSince(startTime)
-                XCTAssertGreaterThanOrEqual(elapsed, 0.1 - 0.01, 
-                                      "Should respect throttling delay")
-                expectation.fulfill()
+
+                if stateChangeCount == 1 {
+                    // First change should happen quickly (within 0.01s)
+                    XCTAssertLessThan(elapsed, 0.01, "First state change should be immediate")
+                } else if stateChangeCount == 2 {
+                    // Second change should be throttled (after ~0.1s)
+                    XCTAssertGreaterThanOrEqual(elapsed, 0.09, "Second state change should be throttled")
+                    expectation.fulfill()
+                }
             }
             .store(in: &cancellables)
-        
-        // Trigger state change
-        iconManager.updateState(isEnabled: true, isUsingRealAudio: true)
-        
+
+        // Trigger multiple rapid state changes
+        iconManager.updateState(isEnabled: true, isUsingRealAudio: false) // ready
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            self.iconManager.updateState(isEnabled: true, isUsingRealAudio: true) // active (should be throttled)
+        }
+
         wait(for: [expectation], timeout: 0.2)
     }
     
@@ -150,8 +162,8 @@ final class MenuBarIconManagerTests: XCTestCase {
         let secondLabel = button.accessibilityLabel()
         let secondValue = button.accessibilityValue()
         
-        // Should be idempotent
-        XCTAssertEqual(firstImage, secondImage, "Image should be same after repeated application")
+        // Should be idempotent - check properties instead of object identity
+        XCTAssertEqual(firstImage?.size, secondImage?.size, "Image size should be same after repeated application")
         XCTAssertEqual(firstLabel, secondLabel, "Label should be same after repeated application")
         XCTAssertEqual(firstValue as? String, secondValue as? String, "Value should be same after repeated application")
     }
@@ -161,9 +173,16 @@ final class MenuBarIconManagerTests: XCTestCase {
         // Note: targetButton is private, so we can't directly set it to nil
         // This test verifies the manager handles state updates gracefully
         iconManager.updateState(isEnabled: true, isUsingRealAudio: true)
-        
-        // State changes should still work even without button
-        XCTAssertEqual(iconManager.currentState, .active)
+
+        // Wait for throttled state update
+        let expectation = XCTestExpectation(description: "State update")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            // State changes should still work even without button
+            XCTAssertEqual(self.iconManager.currentState, .active)
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 1.0)
     }
     
     func testStateTransitionSequence() {
@@ -214,13 +233,21 @@ final class MenuBarIconManagerTests: XCTestCase {
     func testButtonApplication() {
         // Create a mock button for testing
         let button = NSStatusBarButton()
-        
+
         iconManager.updateState(isEnabled: true, isUsingRealAudio: true)
-        iconManager.applyToButton(button)
-        
-        XCTAssertNotNil(button.image, "Button should have an image")
-        XCTAssertEqual(button.accessibilityLabel(), "Vocana - Active noise cancellation")
-        XCTAssertEqual(button.accessibilityValue() as? String, "Active")
+
+        // Wait for throttled state update
+        let expectation = XCTestExpectation(description: "State update")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { // Wait longer than throttle interval
+            self.iconManager.applyToButton(button)
+
+            XCTAssertNotNil(button.image, "Button should have an image")
+            XCTAssertEqual(button.accessibilityLabel(), "Vocana - Active noise cancellation")
+            XCTAssertEqual(button.accessibilityValue() as? String, "Active")
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 1.0)
     }
     
     // MARK: - Performance Tests

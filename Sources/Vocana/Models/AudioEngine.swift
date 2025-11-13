@@ -211,6 +211,9 @@ class AudioEngine: ObservableObject {
 
         // Setup callbacks after initialization
         setupComponentCallbacks()
+
+        // Setup memory pressure monitoring
+        setupMemoryPressureMonitoring()
     }
 
     /// Test initializer with dependency injection
@@ -223,6 +226,9 @@ class AudioEngine: ObservableObject {
 
         // Setup callbacks after initialization
         setupComponentCallbacks()
+
+        // Setup memory pressure monitoring
+        setupMemoryPressureMonitoring()
     }
     
     // MARK: - Private State
@@ -527,12 +533,12 @@ class AudioEngine: ObservableObject {
     /// - Returns: Stereo audio samples (duplicated mono channel)
     private func convertToStereo(_ monoSamples: [Float]) -> [Float] {
         // For HAL plugin: duplicate mono channel to create stereo output
-        var stereoSamples = [Float]()
-        stereoSamples.reserveCapacity(monoSamples.count * 2)
+        // Pre-allocate array to avoid multiple reallocations during append operations
+        var stereoSamples = [Float](repeating: 0, count: monoSamples.count * 2)
 
-        for sample in monoSamples {
-            stereoSamples.append(sample) // Left channel
-            stereoSamples.append(sample) // Right channel
+        for (index, sample) in monoSamples.enumerated() {
+            stereoSamples[index * 2] = sample     // Left channel
+            stereoSamples[index * 2 + 1] = sample // Right channel
         }
 
         return stereoSamples

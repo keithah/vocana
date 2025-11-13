@@ -71,8 +71,11 @@ class MetalNeuralProcessor {
 
     private func setupMPS() throws {
         // Initialize MPS matrix multiplication for efficient linear operations
+        guard let device = device else {
+            throw MetalError.notInitialized
+        }
         mpsMatrixMultiplication = MPSMatrixMultiplication(
-            device: device!,
+            device: device,
             transposeLeft: false,
             transposeRight: false,
             resultRows: 1,
@@ -84,11 +87,14 @@ class MetalNeuralProcessor {
     }
 
     private func createComputePipeline(functionName: String) throws -> MTLComputePipelineState {
+        guard let device = device else {
+            throw MetalError.notInitialized
+        }
         guard let function = library?.makeFunction(name: functionName) else {
             throw MetalError.functionNotFound(functionName)
         }
 
-        return try device!.makeComputePipelineState(function: function)
+        return try device.makeComputePipelineState(function: function)
     }
 
     // MARK: - Buffer Pool Management
@@ -321,17 +327,17 @@ class MetalNeuralProcessor {
 
         mps.encode(commandBuffer: commandBuffer, leftMatrix: weightsMatrix, rightMatrix: inputMatrix, resultMatrix: resultMatrix)
 
-        // Add bias to the result
-        let resultPtr = resultMatrix.data.contents().bindMemory(to: Float.self, capacity: outputSize)
-        for i in 0..<outputSize {
-            resultPtr[i] += bias[i]
-        }
-
         // Add completion handler
         commandBuffer.addCompletedHandler { [weak self] commandBuffer in
             guard let self = self else { return }
 
             if commandBuffer.status == .completed {
+                // Add bias to the result after MPS operation completes
+                let resultPtr = resultMatrix.data.contents().bindMemory(to: Float.self, capacity: outputSize)
+                for i in 0..<outputSize {
+                    resultPtr[i] += bias[i]
+                }
+
                 // Extract results
                 let result = Array(UnsafeBufferPointer(start: resultPtr, count: outputSize))
 

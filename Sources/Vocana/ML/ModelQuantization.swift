@@ -98,6 +98,43 @@ enum QuantizationError: Error, LocalizedError, Equatable {
 struct ModelQuantization {
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "quantization")
 
+    // Configuration constants
+    private static let maxQuantizationCacheSize = 100
+    private static let maxActivationSampleSize = 1000
+
+    // Quantization constants
+    private static let fp16MinValue: Float = -65504.0
+    private static let fp16MaxValue: Float = 65504.0
+    private static let int8ScaleDenominator: Float = 254.0  // 2^8 - 2 for symmetric quantization
+    private static let int8Percentile: Float = 0.99
+    private static let int8PercentileScale: Float = 127.0
+
+    // Quantization-aware training noise factors
+    static let fp16NoiseFactor: Float = 0.1
+    static let int8NoiseFactor: Float = 0.05
+    static let dynamicNoiseFactor: Float = 0.1
+
+    // Simple seeded random number generator for reproducible sampling
+    private struct SeededGenerator {
+        private var state: UInt64
+
+        init(seed: UInt64) {
+            state = seed
+        }
+
+        mutating func next() -> UInt64 {
+            // Linear congruential generator
+            state = 6364136223846793005 &* state &+ 1
+            return state
+        }
+
+        mutating func random(in range: Range<Int>) -> Int {
+            let randomValue = next()
+            let rangeSize = range.upperBound - range.lowerBound
+            return range.lowerBound + Int(randomValue % UInt64(rangeSize))
+        }
+    }
+
     // Cache for quantization parameters to avoid recalculation
     private static var quantizationCache: [String: QuantizationParams] = [:]
     private static let cacheQueue = DispatchQueue(label: "com.vocana.quantization.cache")
@@ -126,7 +163,7 @@ struct ModelQuantization {
         let minVal: Float
         let maxVal: Float
 
-        static let fp16 = QuantizationParams(scale: 1.0, zeroPoint: 0, minVal: -65504.0, maxVal: 65504.0)
+        static let fp16 = QuantizationParams(scale: 1.0, zeroPoint: 0, minVal: fp16MinValue, maxVal: fp16MaxValue)
         static let noQuantization = QuantizationParams(scale: 1.0, zeroPoint: 0, minVal: -.infinity, maxVal: .infinity)
     }
 
@@ -166,7 +203,7 @@ struct ModelQuantization {
         // Convert to FP16 using proper half-precision representation
         let quantized = weights.map { weight in
             // Clamp to FP16 range and convert to half precision
-            let clamped = clamp(weight, min: -65504.0, max: 65504.0)
+            let clamped = clamp(weight, min: fp16MinValue, max: fp16MaxValue)
             let fp16 = Float16(clamped)
             return Float(fp16) // Convert back to Float for storage, but with FP16 precision
         }
@@ -264,7 +301,7 @@ struct ModelQuantization {
 
         // For INT8 symmetric quantization: map to -127...127 range
         // Scale calculation: range / (2^8 - 1) to use full range
-        let scale = range > 0 ? range / 254.0 : 1.0
+        let scale = range > 0 ? range / int8ScaleDenominator : 1.0
         let zeroPoint = 0  // Symmetric around zero
 
         // Quantize weights
@@ -280,7 +317,7 @@ struct ModelQuantization {
         cacheQueue.async {
             quantizationCache[cacheKey] = params
             // Limit cache size by removing oldest entries
-            if quantizationCache.count > 100 {
+            if quantizationCache.count > maxQuantizationCacheSize {
                 // Remove a few random entries to reduce cache size
                 let keysToRemove = Array(quantizationCache.keys.prefix(10))
                 for key in keysToRemove {
@@ -334,6 +371,7 @@ struct ModelQuantization {
     /// on the 99th percentile to be robust against outliers.
     ///
     /// - Parameter activations: Array of activation values to analyze
+    /// - Parameter seed: Optional seed for reproducible random sampling (primarily for testing)
     /// - Returns: QuantizationParams containing scale, zero-point, and range information
     ///
     /// - Performance: O(k log k) where k is sample size (up to 1000), much faster than O(n log n)
@@ -342,7 +380,7 @@ struct ModelQuantization {
     ///
     /// - Note: Returns noQuantization parameters if activations contain invalid values
     ///         or if analysis fails. For large arrays (>1000 elements), uses random sampling.
-    static func analyzeActivationRange(_ activations: [Float]) -> QuantizationParams {
+    static func analyzeActivationRange(_ activations: [Float], seed: UInt64? = nil) -> QuantizationParams {
         // Input validation
         guard activations.count > 0 else {
             logger.warning("Attempted to analyze empty activations array")
@@ -366,25 +404,35 @@ struct ModelQuantization {
 
         // Use approximate 99th percentile for more robust quantization
         // Instead of sorting entire array, use sampling for better performance
-        let sampleSize = min(1000, activations.count) // Sample up to 1000 values
+        let sampleSize = min(maxActivationSampleSize, activations.count) // Sample up to maxActivationSampleSize values
         var samples = [Float]()
 
         if activations.count <= sampleSize {
             samples = activations
         } else {
             // Random sampling for large arrays
-            for _ in 0..<sampleSize {
-                let randomIndex = Int.random(in: 0..<activations.count)
-                samples.append(activations[randomIndex])
+            if let seed = seed {
+                // Use seeded generator for reproducible results (primarily for testing)
+                var generator = SeededGenerator(seed: seed)
+                for _ in 0..<sampleSize {
+                    let randomIndex = generator.random(in: 0..<activations.count)
+                    samples.append(activations[randomIndex])
+                }
+            } else {
+                // Use system random for production use
+                for _ in 0..<sampleSize {
+                    let randomIndex = Int.random(in: 0..<activations.count)
+                    samples.append(activations[randomIndex])
+                }
             }
         }
 
         // Sort the sample and get approximate 99th percentile
         samples.sort()
-        let percentile99Index = Int(Float(samples.count) * 0.99)
+        let percentile99Index = Int(Float(samples.count) * int8Percentile)
         let percentile99 = samples[min(percentile99Index, samples.count - 1)]
 
-        let scale = range > 0 ? percentile99 / 127.0 : 1.0
+        let scale = range > 0 ? percentile99 / int8PercentileScale : 1.0
         let zeroPoint = 0  // Symmetric quantization for activations
 
         return QuantizationParams(scale: scale, zeroPoint: zeroPoint, minVal: minVal, maxVal: maxVal)
@@ -447,10 +495,11 @@ struct ModelQuantization {
         switch type {
         case .fp16:
             // Quantize weights and biases to FP16
+            // Note: In this placeholder implementation, quantized weights are computed but not stored
             switch quantizeToFP16(layer.weights.flatMap { $0 }) {
-            case .success(let quantizedWeightsFlat):
+            case .success(_):
                 switch quantizeToFP16(layer.biases) {
-                case .success(let quantizedBiases):
+                case .success(_):
                     let params = QuantizationParams(scale: 1.0, zeroPoint: 0, minVal: -65504.0, maxVal: 65504.0)
                     return QuantizedLayer(originalLayer: layer, type: type, params: params)
                 case .failure(let error):
@@ -466,7 +515,7 @@ struct ModelQuantization {
             // Flatten all weights and biases for quantization
             let allWeights = layer.weights.flatMap { $0 } + layer.biases
             switch quantizeToINT8(allWeights) {
-            case .success(let (quantizedData, params)):
+            case .success((_, let params)):
                 return QuantizedLayer(originalLayer: layer, type: type, params: params)
             case .failure(let error):
                 logger.error("Failed to quantize Conv1D layer: \(error.localizedDescription)")
@@ -488,9 +537,9 @@ struct ModelQuantization {
         case .fp16:
             // Quantize weights and biases to FP16
             switch quantizeToFP16(layer.weights.flatMap { $0 }) {
-            case .success(let quantizedWeightsFlat):
+            case .success(_):
                 switch quantizeToFP16(layer.biases) {
-                case .success(let quantizedBiases):
+                case .success(_):
                     let params = QuantizationParams(scale: 1.0, zeroPoint: 0, minVal: -65504.0, maxVal: 65504.0)
                     return QuantizedLayer(originalLayer: layer, type: type, params: params)
                 case .failure(let error):
@@ -506,7 +555,7 @@ struct ModelQuantization {
             // Flatten all weights and biases for quantization
             let allWeights = layer.weights.flatMap { $0 } + layer.biases
             switch quantizeToINT8(allWeights) {
-            case .success(let (quantizedData, params)):
+            case .success((_, let params)):
                 return QuantizedLayer(originalLayer: layer, type: type, params: params)
             case .failure(let error):
                 logger.error("Failed to quantize Linear layer: \(error.localizedDescription)")
@@ -527,9 +576,9 @@ struct ModelQuantization {
         case .fp16:
             // Quantize weights and biases to FP16
             switch quantizeToFP16(layer.weights.flatMap { $0 }) {
-            case .success(let quantizedWeightsFlat):
+            case .success(_):
                 switch quantizeToFP16(layer.biases) {
-                case .success(let quantizedBiases):
+                case .success(_):
                     let params = QuantizationParams(scale: 1.0, zeroPoint: 0, minVal: -65504.0, maxVal: 65504.0)
                     return QuantizedLayer(originalLayer: layer, type: type, params: params)
                 case .failure(let error):
@@ -545,7 +594,7 @@ struct ModelQuantization {
             // Flatten all weights and biases for quantization
             let allWeights = layer.weights.flatMap { $0 } + layer.biases
             switch quantizeToINT8(allWeights) {
-            case .success(let (quantizedData, params)):
+            case .success((_, let params)):
                 return QuantizedLayer(originalLayer: layer, type: type, params: params)
             case .failure(let error):
                 logger.error("Failed to quantize GRU layer: \(error.localizedDescription)")
@@ -628,6 +677,11 @@ struct QuantizedLayer {
 struct QuantizationAwareTraining {
     private static let logger = Logger(subsystem: "com.vocana.ml", category: "qat")
 
+    // Noise factors for quantization-aware training
+    private static let fp16NoiseFactor: Float = 0.1
+    private static let int8NoiseFactor: Float = 0.05
+    private static let dynamicNoiseFactor: Float = 0.1
+
     /// Simulate quantization noise during training to improve robustness
     ///
     /// This function adds quantization noise to weights during training, simulating
@@ -651,7 +705,7 @@ struct QuantizationAwareTraining {
             // Add FP16 quantization noise
             for i in 0..<weights.count {
                 let fp16Val = Float(Float16(weights[i]))
-                weights[i] = fp16Val + (weights[i] - fp16Val) * 0.1  // Add some noise
+                weights[i] = fp16Val + (weights[i] - fp16Val) * QuantizationAwareTraining.fp16NoiseFactor  // Add some noise
             }
 
         case .int8:
@@ -661,7 +715,7 @@ struct QuantizationAwareTraining {
                 switch ModelQuantization.dequantizeFromINT8(quantized, params: params) {
                 case .success(let dequantized):
                     for i in 0..<weights.count {
-                        weights[i] = dequantized[i] + (weights[i] - dequantized[i]) * 0.05  // Add noise
+                        weights[i] = dequantized[i] + (weights[i] - dequantized[i]) * QuantizationAwareTraining.int8NoiseFactor  // Add noise
                     }
                 case .failure(let error):
                     logger.error("Failed to dequantize for noise addition: \(error.localizedDescription)")
@@ -677,7 +731,7 @@ struct QuantizationAwareTraining {
 
             for i in 0..<weights.count {
                 let quantized = round(weights[i] / scale) * scale
-                weights[i] = quantized + (weights[i] - quantized) * 0.1
+                weights[i] = quantized + (weights[i] - quantized) * QuantizationAwareTraining.dynamicNoiseFactor
             }
 
         case .noQuantization:

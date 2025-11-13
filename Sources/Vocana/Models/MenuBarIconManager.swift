@@ -150,7 +150,7 @@ class MenuBarIconManager: ObservableObject {
         button.image = image
         
         // Update accessibility
-        button.setAccessibilityLabel("Vocana - \(currentState.accessibilityDescription)")
+        button.setAccessibilityLabel(currentState.accessibilityDescription)
         button.setAccessibilityValue(currentState.accessibilityValue)
         
         Self.logger.debug("Applied icon state \(self.currentState) to menu bar button")

@@ -236,7 +236,60 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
     func isMemoryPressureSuspended() -> Bool {
         return mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
     }
-    
+
+    /// Process audio buffer asynchronously for XPC integration
+    /// - Parameters:
+    ///   - buffer: Audio samples to process
+    ///   - sampleRate: Sample rate of the audio
+    /// - Returns: Processed audio samples
+    /// - Throws: Error if processing fails
+    func processAudioBuffer(_ buffer: [Float], sampleRate: Float) async throws -> [Float] {
+        // Check if ML processing is available
+        guard isMLProcessingActive else {
+            throw NSError(domain: "Vocana.MLAudioProcessor", code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "ML processing not initialized"])
+        }
+
+        // Get denoiser reference
+        guard let denoiser = self.denoiser else {
+            throw NSError(domain: "Vocana.MLAudioProcessor", code: -2,
+                         userInfo: [NSLocalizedDescriptionKey: "DeepFilterNet not available"])
+        }
+
+        // Check memory pressure
+        guard !isMemoryPressureSuspended() else {
+            throw NSError(domain: "Vocana.MLAudioProcessor", code: -3,
+                         userInfo: [NSLocalizedDescriptionKey: "ML processing suspended due to memory pressure"])
+        }
+
+        // Process audio on background thread
+        return try await withCheckedThrowingContinuation { continuation in
+            mlInferenceQueue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(throwing: NSError(domain: "Vocana.MLAudioProcessor", code: -4,
+                                                         userInfo: [NSLocalizedDescriptionKey: "Processor deallocated"]))
+                    return
+                }
+
+                do {
+                    let startTime = CFAbsoluteTimeGetCurrent()
+                    let result = try denoiser.process(audio: buffer)
+                    let endTime = CFAbsoluteTimeGetCurrent()
+                    let latencyMs = (endTime - startTime) * 1000.0
+
+                    // Record latency on main actor
+                    Task { @MainActor in
+                        self.recordLatency(latencyMs)
+                    }
+
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     // MARK: - Private Helpers
     
     private nonisolated func findModelsDirectory() -> String {

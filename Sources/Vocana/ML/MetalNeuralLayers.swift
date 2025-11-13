@@ -29,6 +29,11 @@ class MetalNeuralProcessor {
     // MPS components for optimized operations
     private var mpsMatrixMultiplication: MPSMatrixMultiplication?
 
+    // Buffer pool for memory management
+    private var bufferPool: [Int: [MTLBuffer]] = [:] // Size -> [Buffers]
+    private let bufferPoolMaxSize = 10 // Maximum buffers per size
+    private let bufferPoolQueue = DispatchQueue(label: "com.vocana.metal.bufferpool")
+
     init?() {
         guard let device = MTLCreateSystemDefaultDevice() else {
             logger.warning("Metal device not available, GPU acceleration disabled")
@@ -86,37 +91,112 @@ class MetalNeuralProcessor {
         return try device!.makeComputePipelineState(function: function)
     }
 
+    // MARK: - Buffer Pool Management
+
+    private func getBuffer(size: Int) -> MTLBuffer? {
+        return bufferPoolQueue.sync {
+            if var buffers = bufferPool[size], !buffers.isEmpty {
+                let buffer = buffers.removeLast()
+                bufferPool[size] = buffers
+                return buffer
+            }
+            return nil
+        }
+    }
+
+    private func returnBuffer(_ buffer: MTLBuffer) {
+        bufferPoolQueue.async {
+            let size = buffer.length
+            var buffers = self.bufferPool[size] ?? []
+            if buffers.count < self.bufferPoolMaxSize {
+                buffers.append(buffer)
+                self.bufferPool[size] = buffers
+            }
+            // If pool is full, buffer will be deallocated automatically
+        }
+    }
+
+    private func createReusableBuffer(length: Int) -> MTLBuffer? {
+        // Try to get from pool first
+        if let pooledBuffer = getBuffer(size: length) {
+            return pooledBuffer
+        }
+
+        // Create new buffer if none available in pool
+        return device?.makeBuffer(length: length)
+    }
+
+    deinit {
+        // Clear buffer pool on deinit
+        bufferPoolQueue.sync {
+            self.bufferPool.removeAll()
+        }
+        logger.info("MetalNeuralProcessor deinitialized, buffer pool cleared")
+    }
+
     // MARK: - GPU-Accelerated Operations
 
+    /// Perform 1D convolution using Metal GPU acceleration
+    ///
+    /// This function executes a 1D convolution operation on the GPU using Metal compute shaders,
+    /// providing significant performance improvements over CPU-based implementations.
+    /// The operation includes bias addition and uses asynchronous execution with completion handlers.
+    ///
+    /// - Parameter input: Input tensor as flattened Float32 array
+    /// - Parameter weights: Convolution weights as flattened Float32 array
+    /// - Parameter bias: Bias terms for each output channel
+    /// - Parameter inputChannels: Number of input channels
+    /// - Parameter outputChannels: Number of output channels
+    /// - Parameter kernelSize: Size of the convolution kernel
+    /// - Parameter stride: Stride for the convolution operation
+    /// - Parameter completion: Completion handler called with convolution result or error
+    ///
+    /// - Performance: GPU-accelerated, significantly faster than CPU for large tensors
+    /// - Memory: Uses buffer pooling for efficient memory management
+    /// - Threading: Asynchronous execution, results delivered via completion handler
+    ///
+    /// - Note: Input tensor should be flattened with shape [inputChannels, inputLength]
+    ///         Weights should be flattened with shape [outputChannels, inputChannels, kernelSize]
     func conv1D(input: [Float],
                 weights: [Float],
                 bias: [Float],
                 inputChannels: Int,
                 outputChannels: Int,
                 kernelSize: Int,
-                stride: Int) throws -> [Float] {
-
+                stride: Int,
+                completion: @escaping (Result<[Float], MetalError>) -> Void) {
         guard let pipeline = conv1DPipeline,
-              let commandQueue = commandQueue,
-              let device = device else {
-            throw MetalError.notInitialized
+              let commandQueue = commandQueue else {
+            completion(.failure(.notInitialized))
+            return
         }
 
         let inputLength = input.count / inputChannels
         let outputLength = (inputLength - kernelSize) / stride + 1
         let outputSize = outputLength * outputChannels
 
-        // Create Metal buffers
-        guard let inputBuffer = device.makeBuffer(bytes: input, length: input.count * MemoryLayout<Float>.size),
-              let weightsBuffer = device.makeBuffer(bytes: weights, length: weights.count * MemoryLayout<Float>.size),
-              let biasBuffer = device.makeBuffer(bytes: bias, length: bias.count * MemoryLayout<Float>.size),
-              let outputBuffer = device.makeBuffer(length: outputSize * MemoryLayout<Float>.size) else {
-            throw MetalError.commandBufferCreationFailed
+        // Create Metal buffers using pool
+        guard let inputBuffer = createReusableBuffer(length: input.count * MemoryLayout<Float>.size),
+              let weightsBuffer = createReusableBuffer(length: weights.count * MemoryLayout<Float>.size),
+              let biasBuffer = createReusableBuffer(length: bias.count * MemoryLayout<Float>.size),
+              let outputBuffer = createReusableBuffer(length: outputSize * MemoryLayout<Float>.size) else {
+            completion(.failure(.commandBufferCreationFailed))
+            return
         }
+
+        // Copy data to buffers
+        memcpy(inputBuffer.contents(), input, input.count * MemoryLayout<Float>.size)
+        memcpy(weightsBuffer.contents(), weights, weights.count * MemoryLayout<Float>.size)
+        memcpy(biasBuffer.contents(), bias, bias.count * MemoryLayout<Float>.size)
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let encoder = commandBuffer.makeComputeCommandEncoder() else {
-            throw MetalError.commandBufferCreationFailed
+            returnBuffer(inputBuffer)
+            returnBuffer(weightsBuffer)
+            returnBuffer(biasBuffer)
+            returnBuffer(outputBuffer)
+            completion(.failure(.commandBufferCreationFailed))
+            return
         }
 
         // Configure compute pipeline
@@ -143,81 +223,195 @@ class MetalNeuralProcessor {
         encoder.dispatchThreadgroups(numGroups, threadsPerThreadgroup: threadsPerGroup)
 
         encoder.endEncoding()
-        commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
 
-        // Extract results
-        let outputPtr = outputBuffer.contents().bindMemory(to: Float.self, capacity: outputSize)
-        return Array(UnsafeBufferPointer(start: outputPtr, count: outputSize))
+        // Add completion handler
+        commandBuffer.addCompletedHandler { [weak self] commandBuffer in
+            guard let self = self else { return }
+
+            if commandBuffer.status == .completed {
+                // Extract results
+                let outputPtr = outputBuffer.contents().bindMemory(to: Float.self, capacity: outputSize)
+                let result = Array(UnsafeBufferPointer(start: outputPtr, count: outputSize))
+
+                // Return buffers to pool for reuse
+                self.returnBuffer(inputBuffer)
+                self.returnBuffer(weightsBuffer)
+                self.returnBuffer(biasBuffer)
+                self.returnBuffer(outputBuffer)
+
+                completion(.success(result))
+            } else {
+                // Return buffers even on failure
+                self.returnBuffer(inputBuffer)
+                self.returnBuffer(weightsBuffer)
+                self.returnBuffer(biasBuffer)
+                self.returnBuffer(outputBuffer)
+
+                let error = MetalError.commandBufferCreationFailed
+                completion(.failure(error))
+            }
+        }
+
+        commandBuffer.commit()
     }
 
-    func linear(input: [Float], weights: [[Float]], bias: [Float]) throws -> [Float] {
+    /// Perform linear transformation (fully connected layer) using Metal GPU acceleration
+    ///
+    /// This function executes a linear transformation (matrix multiplication + bias addition)
+    /// using Metal Performance Shaders (MPS) for optimized GPU acceleration.
+    /// The operation performs: output = input × weights + bias
+    ///
+    /// - Parameter input: Input tensor as Float32 array
+    /// - Parameter weights: Weight matrix as 2D array [outputSize, inputSize]
+    /// - Parameter bias: Bias vector for each output neuron
+    /// - Parameter completion: Completion handler called with transformation result or error
+    ///
+    /// - Performance: GPU-accelerated using MPS, highly optimized for matrix operations
+    /// - Memory: Uses buffer pooling and MPS matrices for efficient memory management
+    /// - Threading: Asynchronous execution, results delivered via completion handler
+    ///
+    /// - Note: Includes bias addition as part of the linear operation for completeness.
+    ///         MPS provides highly optimized matrix multiplication kernels.
+    func linear(input: [Float], weights: [[Float]], bias: [Float], completion: @escaping (Result<[Float], MetalError>) -> Void) {
         // Use MPS for optimized matrix multiplication
         guard let mps = mpsMatrixMultiplication else {
-            throw MetalError.mpsNotAvailable
+            completion(.failure(.mpsNotAvailable))
+            return
         }
 
         let inputSize = input.count
         let outputSize = bias.count
 
-        // Create MPS matrices
+        // Create MPS matrices using buffer pool
+        guard let inputBuffer = createReusableBuffer(length: inputSize * MemoryLayout<Float>.size),
+              let weightsBuffer = createReusableBuffer(length: weights.flatMap { $0 }.count * MemoryLayout<Float>.size),
+              let resultBuffer = createReusableBuffer(length: outputSize * MemoryLayout<Float>.size) else {
+            completion(.failure(.commandBufferCreationFailed))
+            return
+        }
+
+        // Copy data to buffers
+        memcpy(inputBuffer.contents(), input, inputSize * MemoryLayout<Float>.size)
+        let weightsFlat = weights.flatMap { $0 }
+        memcpy(weightsBuffer.contents(), weightsFlat, weightsFlat.count * MemoryLayout<Float>.size)
+
         let inputMatrix = MPSMatrix(
-            buffer: device!.makeBuffer(bytes: input, length: inputSize * MemoryLayout<Float>.size)!,
+            buffer: inputBuffer,
             descriptor: MPSMatrixDescriptor(rows: 1, columns: inputSize, rowBytes: inputSize * MemoryLayout<Float>.size, dataType: .float32)
         )
 
-        // Flatten weights for MPS
-        let weightsFlat = weights.flatMap { $0 }
         let weightsMatrix = MPSMatrix(
-            buffer: device!.makeBuffer(bytes: weightsFlat, length: weightsFlat.count * MemoryLayout<Float>.size)!,
+            buffer: weightsBuffer,
             descriptor: MPSMatrixDescriptor(rows: outputSize, columns: inputSize, rowBytes: inputSize * MemoryLayout<Float>.size, dataType: .float32)
         )
 
         let resultMatrix = MPSMatrix(
-            buffer: device!.makeBuffer(length: outputSize * MemoryLayout<Float>.size)!,
+            buffer: resultBuffer,
             descriptor: MPSMatrixDescriptor(rows: 1, columns: outputSize, rowBytes: outputSize * MemoryLayout<Float>.size, dataType: .float32)
         )
 
         // Perform matrix multiplication
         guard let commandBuffer = commandQueue?.makeCommandBuffer() else {
-            throw MetalError.commandBufferCreationFailed
+            returnBuffer(inputBuffer)
+            returnBuffer(weightsBuffer)
+            returnBuffer(resultBuffer)
+            completion(.failure(.commandBufferCreationFailed))
+            return
         }
 
         mps.encode(commandBuffer: commandBuffer, leftMatrix: weightsMatrix, rightMatrix: inputMatrix, resultMatrix: resultMatrix)
 
-        // TODO: Add bias addition
-        // For now, bias is not added - this is a simplified implementation
+        // Add bias to the result
+        let resultPtr = resultMatrix.data.contents().bindMemory(to: Float.self, capacity: outputSize)
+        for i in 0..<outputSize {
+            resultPtr[i] += bias[i]
+        }
+
+        // Add completion handler
+        commandBuffer.addCompletedHandler { [weak self] commandBuffer in
+            guard let self = self else { return }
+
+            if commandBuffer.status == .completed {
+                // Extract results
+                let result = Array(UnsafeBufferPointer(start: resultPtr, count: outputSize))
+
+                // Return buffers to pool for reuse
+                self.returnBuffer(inputBuffer)
+                self.returnBuffer(weightsBuffer)
+                self.returnBuffer(resultBuffer)
+
+                completion(.success(result))
+            } else {
+                // Return buffers even on failure
+                self.returnBuffer(inputBuffer)
+                self.returnBuffer(weightsBuffer)
+                self.returnBuffer(resultBuffer)
+
+                let error = MetalError.commandBufferCreationFailed
+                completion(.failure(error))
+            }
+        }
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
-
-        // Extract results
-        let resultPtr = resultMatrix.data.contents().bindMemory(to: Float.self, capacity: outputSize)
-        return Array(UnsafeBufferPointer(start: resultPtr, count: outputSize))
     }
 
+    /// Apply ReLU activation function using GPU acceleration
+    ///
+    /// Computes the Rectified Linear Unit activation: max(0, x) for each element.
+    /// Uses Metal compute shaders for efficient parallel processing on GPU.
+    ///
+    /// - Parameter input: Input tensor as Float32 array
+    /// - Returns: Output tensor with ReLU applied element-wise
+    /// - Throws: MetalError if GPU operation fails
+    ///
+    /// - Performance: GPU-accelerated parallel processing
+    /// - Memory: Minimal additional memory usage with buffer pooling
     func relu(input: [Float]) throws -> [Float] {
         return try applyActivation(input: input, pipeline: reluPipeline!)
     }
 
+    /// Apply sigmoid activation function using GPU acceleration
+    ///
+    /// Computes the sigmoid activation: 1 / (1 + exp(-x)) for each element.
+    /// Uses Metal compute shaders for efficient parallel processing on GPU.
+    ///
+    /// - Parameter input: Input tensor as Float32 array
+    /// - Returns: Output tensor with sigmoid applied element-wise
+    /// - Throws: MetalError if GPU operation fails
+    ///
+    /// - Performance: GPU-accelerated parallel processing
+    /// - Memory: Minimal additional memory usage with buffer pooling
     func sigmoid(input: [Float]) throws -> [Float] {
         return try applyActivation(input: input, pipeline: sigmoidPipeline!)
     }
 
+    /// Apply tanh activation function using GPU acceleration
+    ///
+    /// Computes the hyperbolic tangent activation: tanh(x) for each element.
+    /// Uses Metal compute shaders for efficient parallel processing on GPU.
+    ///
+    /// - Parameter input: Input tensor as Float32 array
+    /// - Returns: Output tensor with tanh applied element-wise
+    /// - Throws: MetalError if GPU operation fails
+    ///
+    /// - Performance: GPU-accelerated parallel processing
+    /// - Memory: Minimal additional memory usage with buffer pooling
     func tanh(input: [Float]) throws -> [Float] {
         return try applyActivation(input: input, pipeline: tanhPipeline!)
     }
 
     private func applyActivation(input: [Float], pipeline: MTLComputePipelineState) throws -> [Float] {
-        guard let commandQueue = commandQueue,
-              let device = device else {
+        guard let commandQueue = commandQueue else {
             throw MetalError.notInitialized
         }
 
-        guard let inputBuffer = device.makeBuffer(bytes: input, length: input.count * MemoryLayout<Float>.size),
-              let outputBuffer = device.makeBuffer(length: input.count * MemoryLayout<Float>.size) else {
+        guard let inputBuffer = createReusableBuffer(length: input.count * MemoryLayout<Float>.size),
+              let outputBuffer = createReusableBuffer(length: input.count * MemoryLayout<Float>.size) else {
             throw MetalError.commandBufferCreationFailed
         }
+
+        // Copy data to input buffer
+        memcpy(inputBuffer.contents(), input, input.count * MemoryLayout<Float>.size)
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let encoder = commandBuffer.makeComputeCommandEncoder() else {
@@ -237,7 +431,13 @@ class MetalNeuralProcessor {
         commandBuffer.waitUntilCompleted()
 
         let outputPtr = outputBuffer.contents().bindMemory(to: Float.self, capacity: input.count)
-        return Array(UnsafeBufferPointer(start: outputPtr, count: input.count))
+        let result = Array(UnsafeBufferPointer(start: outputPtr, count: input.count))
+
+        // Return buffers to pool for reuse
+        returnBuffer(inputBuffer)
+        returnBuffer(outputBuffer)
+
+        return result
     }
 }
 
@@ -303,8 +503,11 @@ class MetalConv1DLayer: NeuralLayer {
 
     func forward(_ input: [Float], hiddenStates: inout [String: [Float]]) throws -> [Float] {
         if let metal = metalProcessor {
-            // Use GPU acceleration
-            return try metal.conv1D(
+            // Use GPU acceleration with semaphore to maintain synchronous interface
+            let semaphore = DispatchSemaphore(value: 0)
+            var result: Result<[Float], MetalError>?
+
+            metal.conv1D(
                 input: input,
                 weights: weights,
                 bias: bias,
@@ -312,7 +515,24 @@ class MetalConv1DLayer: NeuralLayer {
                 outputChannels: outputChannels,
                 kernelSize: kernelSize,
                 stride: stride
-            )
+            ) { gpuResult in
+                result = gpuResult
+                semaphore.signal()
+            }
+
+            // Wait for GPU completion (with timeout)
+            if semaphore.wait(timeout: .now() + 5.0) == .timedOut {
+                throw MetalError.commandBufferCreationFailed
+            }
+
+            switch result {
+            case .success(let output):
+                return output
+            case .failure(let error):
+                throw error
+            case .none:
+                throw MetalError.commandBufferCreationFailed
+            }
         } else {
             // Fallback to CPU implementation
             return try Conv1DLayer(
@@ -343,8 +563,28 @@ class MetalLinearLayer: NeuralLayer {
 
     func forward(_ input: [Float], hiddenStates: inout [String: [Float]]) throws -> [Float] {
         if let metal = metalProcessor {
-            // Use GPU acceleration
-            return try metal.linear(input: input, weights: weights, bias: bias)
+            // Use GPU acceleration with semaphore to maintain synchronous interface
+            let semaphore = DispatchSemaphore(value: 0)
+            var result: Result<[Float], MetalError>?
+
+            metal.linear(input: input, weights: weights, bias: bias) { gpuResult in
+                result = gpuResult
+                semaphore.signal()
+            }
+
+            // Wait for GPU completion (with timeout)
+            if semaphore.wait(timeout: .now() + 5.0) == .timedOut {
+                throw MetalError.commandBufferCreationFailed
+            }
+
+            switch result {
+            case .success(let output):
+                return output
+            case .failure(let error):
+                throw error
+            case .none:
+                throw MetalError.commandBufferCreationFailed
+            }
         } else {
             // Fallback to CPU implementation
             return try LinearLayer(inputSize: input.count, outputSize: bias.count).forward(input, hiddenStates: &hiddenStates)

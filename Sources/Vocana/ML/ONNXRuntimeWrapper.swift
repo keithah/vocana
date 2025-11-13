@@ -302,16 +302,23 @@ class MockInferenceSession: InferenceSession {
         let T = erbFeat.shape[2]  // Time dimension
         
         // Use safe count calculation to prevent integer overflow
-        // TODO: Replace unsafe TensorData initializers with safe ones (try TensorData(shape:data:))
-        // Currently using unsafe initializers in mock code where validation is guaranteed
+        // Use safe TensorData initializers for proper validation
+        let e0Count = try safeIntCount([1, 1, T, 96])
+        let e1Count = try safeIntCount([1, 32, T, 48])
+        let e2Count = try safeIntCount([1, 64, T, 24])
+        let e3Count = try safeIntCount([1, 128, T, 12])
+        let embCount = try safeIntCount([1, 256, T, 6])
+        let c0Count = try safeIntCount([1, T, 256])
+        let lsnrCount = try safeIntCount([1, T, 1])
+
         return [
-            "e0": TensorData(unsafeShape: [1, 1, T, 96], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 1, T, 96]))),
-            "e1": TensorData(unsafeShape: [1, 32, T, 48], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 32, T, 48]))),
-            "e2": TensorData(unsafeShape: [1, 64, T, 24], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 64, T, 24]))),
-            "e3": TensorData(unsafeShape: [1, 128, T, 12], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 128, T, 12]))),
-            "emb": TensorData(unsafeShape: [1, 256, T, 6], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 256, T, 6]))),
-            "c0": TensorData(unsafeShape: [1, T, 256], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, T, 256]))),
-            "lsnr": TensorData(unsafeShape: [1, T, 1], data: Array(repeating: AppConstants.defaultLSNRValue, count: try safeIntCount([1, T, 1])))
+            "e0": try TensorData(shape: [1, 1, T, 96], data: Array(repeating: AppConstants.defaultTensorValue, count: e0Count)),
+            "e1": try TensorData(shape: [1, 32, T, 48], data: Array(repeating: AppConstants.defaultTensorValue, count: e1Count)),
+            "e2": try TensorData(shape: [1, 64, T, 24], data: Array(repeating: AppConstants.defaultTensorValue, count: e2Count)),
+            "e3": try TensorData(shape: [1, 128, T, 12], data: Array(repeating: AppConstants.defaultTensorValue, count: e3Count)),
+            "emb": try TensorData(shape: [1, 256, T, 6], data: Array(repeating: AppConstants.defaultTensorValue, count: embCount)),
+            "c0": try TensorData(shape: [1, T, 256], data: Array(repeating: AppConstants.defaultTensorValue, count: c0Count)),
+            "lsnr": try TensorData(shape: [1, T, 1], data: Array(repeating: AppConstants.defaultLSNRValue, count: lsnrCount))
         ]
     }
     

@@ -302,6 +302,8 @@ class MockInferenceSession: InferenceSession {
         let T = erbFeat.shape[2]  // Time dimension
         
         // Use safe count calculation to prevent integer overflow
+        // TODO: Replace unsafe TensorData initializers with safe ones (try TensorData(shape:data:))
+        // Currently using unsafe initializers in mock code where validation is guaranteed
         return [
             "e0": TensorData(unsafeShape: [1, 1, T, 96], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 1, T, 96]))),
             "e1": TensorData(unsafeShape: [1, 32, T, 48], data: Array(repeating: AppConstants.defaultTensorValue, count: try safeIntCount([1, 32, T, 48]))),

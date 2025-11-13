@@ -373,7 +373,10 @@ class MetalNeuralProcessor {
     /// - Performance: GPU-accelerated parallel processing
     /// - Memory: Minimal additional memory usage with buffer pooling
     func relu(input: [Float]) throws -> [Float] {
-        return try applyActivation(input: input, pipeline: reluPipeline!)
+        guard let pipeline = reluPipeline else {
+            throw MetalError.notInitialized
+        }
+        return try applyActivation(input: input, pipeline: pipeline)
     }
 
     /// Apply sigmoid activation function using GPU acceleration
@@ -388,7 +391,10 @@ class MetalNeuralProcessor {
     /// - Performance: GPU-accelerated parallel processing
     /// - Memory: Minimal additional memory usage with buffer pooling
     func sigmoid(input: [Float]) throws -> [Float] {
-        return try applyActivation(input: input, pipeline: sigmoidPipeline!)
+        guard let pipeline = sigmoidPipeline else {
+            throw MetalError.notInitialized
+        }
+        return try applyActivation(input: input, pipeline: pipeline)
     }
 
     /// Apply tanh activation function using GPU acceleration
@@ -403,7 +409,10 @@ class MetalNeuralProcessor {
     /// - Performance: GPU-accelerated parallel processing
     /// - Memory: Minimal additional memory usage with buffer pooling
     func tanh(input: [Float]) throws -> [Float] {
-        return try applyActivation(input: input, pipeline: tanhPipeline!)
+        guard let pipeline = tanhPipeline else {
+            throw MetalError.notInitialized
+        }
+        return try applyActivation(input: input, pipeline: pipeline)
     }
 
     private func applyActivation(input: [Float], pipeline: MTLComputePipelineState) throws -> [Float] {

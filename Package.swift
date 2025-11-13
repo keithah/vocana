@@ -38,7 +38,8 @@ let package = Package(
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("CoreFoundation"),
-                .linkedFramework("Accelerate")
+                .linkedFramework("Accelerate"),
+                .linkedFramework("CoreServices")  // For XPC
             ]
         ),
         .testTarget(

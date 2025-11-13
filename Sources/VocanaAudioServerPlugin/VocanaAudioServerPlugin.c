@@ -21,6 +21,7 @@
 #include <Accelerate/Accelerate.h>
 #include <Availability.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <xpc/xpc.h>
 #include "VocanaAudioServerPlugin.h"
 
 //==================================================================================================
@@ -83,10 +84,91 @@ typedef struct VocanaAudioServerPlugin {
     Float64 sampleRate;
     UInt64 anchorHostTime;
 
+    // XPC connection for audio processing
+    xpc_connection_t xpcConnection;
+    Boolean xpcConnected;
+
 } VocanaAudioServerPlugin;
 
 // Global plugin instance
 static VocanaAudioServerPlugin *gPlugin = NULL;
+
+//==================================================================================================
+// MARK: - XPC Connection Management
+//==================================================================================================
+
+static void VocanaAudioServerPlugin_ConnectToXPCService(VocanaAudioServerPlugin *plugin) {
+    if (!plugin) return;
+
+    // Create XPC connection to Vocana app
+    plugin->xpcConnection = xpc_connection_create_mach_service("com.vocana.AudioProcessingXPCService", NULL, 0);
+
+    if (!plugin->xpcConnection) {
+        ErrorMsg("Failed to create XPC connection");
+        return;
+    }
+
+    // Set up event handler
+    xpc_connection_set_event_handler(plugin->xpcConnection, ^(xpc_object_t event) {
+        xpc_type_t type = xpc_get_type(event);
+
+        if (type == XPC_TYPE_ERROR) {
+            if (event == XPC_ERROR_CONNECTION_INVALID) {
+                ErrorMsg("XPC connection invalid");
+                plugin->xpcConnected = false;
+            } else {
+                ErrorMsg("XPC connection error");
+                plugin->xpcConnected = false;
+            }
+        } else if (type == XPC_TYPE_DICTIONARY) {
+            // Handle responses from XPC service
+            DebugMsg("Received XPC response");
+        }
+    });
+
+    // Resume connection
+    xpc_connection_resume(plugin->xpcConnection);
+    plugin->xpcConnected = true;
+
+    DebugMsg("Connected to XPC service");
+}
+
+static void VocanaAudioServerPlugin_ProcessAudioThroughXPC(VocanaAudioServerPlugin *plugin, void *audioBuffer, size_t bufferSize, UInt32 frameCount) {
+    if (!plugin || !plugin->xpcConnected || !plugin->xpcConnection || !audioBuffer) {
+        return;
+    }
+
+    // Create XPC message
+    xpc_object_t message = xpc_dictionary_create(NULL, NULL, 0);
+
+    // Add audio data as raw bytes
+    xpc_dictionary_set_data(message, "audioData", audioBuffer, bufferSize);
+    xpc_dictionary_set_double(message, "sampleRate", plugin->sampleRate);
+    xpc_dictionary_set_int64(message, "channelCount", kNumber_Of_Channels);
+
+    // Send message and wait for reply (synchronous for real-time audio)
+    xpc_object_t reply = xpc_connection_send_message_with_reply_sync(plugin->xpcConnection, message);
+
+    if (xpc_get_type(reply) == XPC_TYPE_DICTIONARY) {
+        // Get processed audio data
+        const void *processedData;
+        size_t processedSize;
+        processedData = xpc_dictionary_get_data(reply, "processedAudioData", &processedSize);
+
+        if (processedData && processedSize == bufferSize) {
+            // Copy processed audio back to buffer
+            memcpy(audioBuffer, processedData, bufferSize);
+            DebugMsg("Processed %u frames through XPC", frameCount);
+        } else {
+            ErrorMsg("Invalid processed audio data from XPC");
+        }
+    } else {
+        ErrorMsg("Failed to get reply from XPC service");
+    }
+
+    if (message) xpc_release(message);
+    if (reply) xpc_release(reply);
+}
 
 //==================================================================================================
 // MARK: - Utility Functions
@@ -127,6 +209,13 @@ static OSStatus VocanaAudioServerPlugin_CreatePlugin(AudioServerPlugInDriverRef 
     plugin->clientCount = 0;
     plugin->bufferSize = 1024; // Default buffer size
 
+    // Initialize XPC connection
+    plugin->xpcConnection = NULL;
+    plugin->xpcConnected = false;
+
+    // Connect to XPC service
+    VocanaAudioServerPlugin_ConnectToXPCService(plugin);
+
     gPlugin = plugin;
     *outDriver = plugin;
 
@@ -146,6 +235,13 @@ static void VocanaAudioServerPlugin_DestroyPlugin(VocanaAudioServerPlugin *plugi
     if (plugin->outputBuffer) {
         free(plugin->outputBuffer);
         plugin->outputBuffer = NULL;
+    }
+
+    // Clean up XPC connection
+    if (plugin->xpcConnection) {
+        xpc_connection_cancel(plugin->xpcConnection);
+        plugin->xpcConnection = NULL;
+        plugin->xpcConnected = false;
     }
 
     pthread_mutex_destroy(&plugin->mutex);
@@ -731,7 +827,7 @@ static OSStatus VocanaAudioServerPlugin_DoIOOperation(AudioServerPlugInDriverRef
             break;
 
         case kAudioServerPlugInIOOperationWriteMix:
-            // For output stream, consume the data (could send to Swift processing)
+            // For output stream, process the audio data through XPC
             if (inStreamObjectID == kObjectID_Stream_Output && ioMainBuffer) {
                 // Validate buffer size
                 size_t bufferSize = inIOBufferFrameSize * kBytes_Per_Frame;
@@ -739,9 +835,14 @@ static OSStatus VocanaAudioServerPlugin_DoIOOperation(AudioServerPlugInDriverRef
                     ErrorMsg("Output buffer size overflow: %zu > %u", bufferSize, plugin->bufferSize);
                     return kAudioHardwareBadObjectError;
                 }
-                // Data is available for processing - in a real implementation,
-                // this would be sent to the Swift audio processing pipeline
-                DebugMsg("Received %u frames of output audio data", inIOBufferFrameSize);
+
+                // Process audio through XPC if connected
+                if (plugin->xpcConnected && plugin->xpcConnection) {
+                    VocanaAudioServerPlugin_ProcessAudioThroughXPC(plugin, ioMainBuffer, bufferSize, inIOBufferFrameSize);
+                } else {
+                    // Fallback: pass through unprocessed
+                    DebugMsg("XPC not connected, passing through unprocessed audio");
+                }
             }
             break;
 

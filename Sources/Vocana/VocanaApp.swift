@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 @preconcurrency import AVFoundation
+import OSLog
 
 enum VocanaError: Int, Error {
     case statusBarButtonFailure = 1
@@ -50,12 +51,18 @@ struct VocanaApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var popover: NSPopover?
+    var xpcService: AudioProcessingXPCService?
+
+    private let logger = Logger(subsystem: "com.vocana", category: "AppDelegate")
     
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             try setupMenuBar()
-            
+
+            // Start XPC service for HAL plugin communication
+            startXPCService()
+
             // Hide main window since we're a menu bar app
             if let window = NSApplication.shared.windows.first {
                 window.close()
@@ -74,23 +81,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
     
+    private func startXPCService() {
+        // Create audio processor for XPC service
+        let audioProcessor = MLAudioProcessor()
+
+        // Create and start XPC service
+        xpcService = AudioProcessingXPCService(audioProcessor: audioProcessor)
+        xpcService?.start()
+
+        logger.info("XPC service started for HAL plugin communication")
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Stop XPC service
+        xpcService?.stop()
+        xpcService = nil
+
         // Ensure proper resource cleanup before app termination
         Task { @MainActor in
             // Close popover and clean up UI resources
             popover?.close()
             popover = nil
-            
+
             // Remove status bar item
             if let statusItem = statusItem {
                 NSStatusBar.system.removeStatusItem(statusItem)
                 self.statusItem = nil
             }
-            
+
             // Note: ContentView and AudioEngine will be cleaned up via deinit
             // when popover is deallocated, ensuring proper audio session cleanup
         }
-        
+
         return .terminateNow
     }
     

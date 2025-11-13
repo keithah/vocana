@@ -81,6 +81,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
     
+    @MainActor
     private func startXPCService() {
         // Create audio processor for XPC service
         let audioProcessor = MLAudioProcessor()

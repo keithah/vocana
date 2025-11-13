@@ -205,11 +205,24 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
         Self.logger.info("Attempting ML processing recovery after memory pressure")
     }
     
-    /// Check if ML is suspended due to memory pressure
-    /// - Returns: true if suspended, false otherwise
-    func isMemoryPressureSuspended() -> Bool {
-        return mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
-    }
+     /// Check if ML is suspended due to memory pressure
+     /// - Returns: true if suspended, false otherwise
+     func isMemoryPressureSuspended() -> Bool {
+         return mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
+     }
+
+     /// Process audio buffer asynchronously for XPC service
+     /// - Parameters:
+     ///   - buffer: Audio buffer as array of floats
+     ///   - sampleRate: Sample rate of the audio
+     /// - Returns: Processed audio buffer
+     func processAudioBuffer(_ buffer: [Float], sampleRate: Float) async throws -> [Float] {
+         // Use default sensitivity of 1.0
+         guard let processed = processAudioWithML(chunk: buffer, sensitivity: 1.0) else {
+             throw NSError(domain: "MLAudioProcessor", code: -1, userInfo: [NSLocalizedDescriptionKey: "ML processing failed"])
+         }
+         return processed
+     }
     
     // MARK: - Private Helpers
     

@@ -632,21 +632,30 @@ struct QuantizedLayer {
 
     /// Perform forward pass through the quantized layer
     ///
-    /// This function executes the forward pass through the original neural layer
-    /// with optional quantization-aware noise injection during training.
-    /// In a full implementation, this would perform actual quantized computations
-    /// to maintain reduced precision benefits during inference.
+    /// ⚠️ **PLACEHOLDER IMPLEMENTATION**: This method currently delegates to the original
+    /// neural layer and does NOT perform actual quantized computations. The quantization
+    /// parameters are stored for future use but not applied during inference.
+    ///
+    /// Current behavior:
+    /// - Delegates to original layer with full FP32 precision
+    /// - Optionally adds quantization noise during training for robustness
+    /// - Stores quantization parameters but doesn't use them for computation
+    ///
+    /// Future implementation will:
+    /// - Perform actual INT8/FP16 computations using stored parameters
+    /// - Provide memory savings and performance benefits during inference
     ///
     /// - Parameter input: Input tensor as Float32 array
     /// - Parameter hiddenStates: Dictionary of hidden states for recurrent layers
     /// - Returns: Output tensor as Float32 array
     /// - Throws: NeuralLayer forward pass errors
     ///
-    /// - Performance: Same as original layer plus optional noise injection overhead
-    /// - Accuracy: May include quantization noise for training robustness
+    /// - Performance: Same as original layer (no quantization benefits yet)
+    /// - Accuracy: Full FP32 precision (no quantization applied)
+    /// - Status: Placeholder - quantization parameters stored but not used
     ///
-    /// - Note: Currently delegates to original layer. Future implementations should
-    ///         perform actual quantized operations for inference performance gains.
+    /// - Note: This is a known limitation. Actual quantized inference will be
+    ///         implemented in a future release for memory and performance benefits.
     func forward(_ input: [Float], hiddenStates: inout [String: [Float]]) throws -> [Float] {
         // For now, delegate to original layer with quantization applied
         // In a full implementation, this would perform actual quantized computations

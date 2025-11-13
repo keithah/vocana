@@ -142,3 +142,10 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+
+# Audio Plugin Binaries
+*.o
+*.dext
+*.pkg
+VocanaAudioPlugin.zip
+VocanaAudioServerPlugin.o

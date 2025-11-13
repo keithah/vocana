@@ -399,9 +399,9 @@ final class DeepFilterNet: @unchecked Sendable {
         // Flatten all frames for tensor input
         let normalized = normalized2D.flatMap { $0 }
 
-        // Fix MEDIUM: Pre-compute expected shape
+        // Fix MEDIUM: Pre-compute expected shape with overflow protection
         let numFrames = spectrum2D.real.count
-        let expectedCount = numFrames * erbBands
+        let expectedCount = try safeMultiply(numFrames, erbBands)
         guard normalized.count == expectedCount else {
             throw DeepFilterError.processingFailed("ERB feature count mismatch: got \(normalized.count), expected \(expectedCount)")
         }
@@ -430,7 +430,8 @@ final class DeepFilterNet: @unchecked Sendable {
 
         var data: [Float] = []
         let numFrames = normalized.count
-        data.reserveCapacity(numFrames * 2 * dfBands)  // 2 channels (real/imag) per frame
+        let capacity = try safeMultiply(try safeMultiply(numFrames, 2), dfBands)  // 2 channels (real/imag) per frame
+        data.reserveCapacity(capacity)
 
         for frame in normalized {
             guard frame.count >= 2 else {

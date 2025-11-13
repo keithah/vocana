@@ -12,7 +12,12 @@ import OSLog
 /// - **automatic**: Uses native ONNX Runtime if available, otherwise mock
 /// - **native**: Uses ONNX Runtime C API (requires native library)
 /// - **mock**: Uses Swift implementation for testing/development
-/// - **gpu**: Placeholder for Metal GPU acceleration (currently falls back to mock)
+/// - **gpu**: ⚠️ PLACEHOLDER - Falls back to mock (GPU acceleration not yet implemented)
+///
+/// ## ⚠️ Feature Status
+/// - **Metal GPU Acceleration**: Currently a placeholder implementation
+/// - **Expected in**: Future release with full GPU-accelerated neural network operations
+/// - **Current Behavior**: GPU mode creates MetalInferenceSession but delegates to MockInferenceSession
 ///
 /// Usage:
 /// ```swift
@@ -758,7 +763,7 @@ class GRULayer: NeuralLayer {
     }
 
     func resetHiddenState() {
-        stateQueue.async {
+        stateQueue.sync {
             self.hiddenState = [Float](repeating: 0.0, count: self.hiddenSize)
         }
     }

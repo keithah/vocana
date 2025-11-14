@@ -4328,24 +4328,30 @@ static OSStatus	VocanaVirtualDevice_StartIO(AudioServerPlugInDriverRef inDriver,
     if (inDeviceObjectID == kObjectID_Device) { atomic_fetch_add(&gDevice_IOIsRunning, 1); }
     if (inDeviceObjectID == kObjectID_Device2) { atomic_fetch_add(&gDevice2_IOIsRunning, 1); }
     
-     // allocate ring buffer with error checking
+     // allocate ring buffer with error checking and thread safety
      if ((atomic_load(&gDevice_IOIsRunning) || atomic_load(&gDevice2_IOIsRunning)) && gRingBuffer == NULL)
     {
-        gDevice_NumberTimeStamps = 0;
-        gDevice_AnchorSampleTime = 0;
-        gDevice_AnchorHostTime = mach_absolute_time();
-        gDevice_PreviousTicks = 0;
-        
-        gRingBuffer = calloc(kRing_Buffer_Frame_Size * kNumber_Of_Channels, sizeof(Float32));
+        pthread_mutex_lock(&gRingBufferMutex);
+        // Double-check pattern to prevent race conditions
         if (gRingBuffer == NULL) {
-            DebugMsg("VocanaVirtualDevice: Failed to allocate ring buffer");
-            theAnswer = kAudioHardwareUnspecifiedError;
-            goto Done;
+            gDevice_NumberTimeStamps = 0;
+            gDevice_AnchorSampleTime = 0;
+            gDevice_AnchorHostTime = mach_absolute_time();
+            gDevice_PreviousTicks = 0;
+            
+            gRingBuffer = calloc(kRing_Buffer_Frame_Size * kNumber_Of_Channels, sizeof(Float32));
+            if (gRingBuffer == NULL) {
+                DebugMsg("VocanaVirtualDevice: Failed to allocate ring buffer");
+                pthread_mutex_unlock(&gRingBufferMutex);
+                theAnswer = kAudioHardwareUnspecifiedError;
+                goto Done;
+            }
+            
+            // Initialize ring buffer position
+            atomic_store(&gRingBufferWritePos, 0);
+            atomic_store(&isBufferClearAtomic, true);
         }
-        
-        // Initialize ring buffer position
-        atomic_store(&gRingBufferWritePos, 0);
-        atomic_store(&isBufferClearAtomic, true);
+        pthread_mutex_unlock(&gRingBufferMutex);
     }
     
     
@@ -4376,11 +4382,15 @@ static OSStatus	VocanaVirtualDevice_StopIO(AudioServerPlugInDriverRef inDriver, 
     if (inDeviceObjectID == kObjectID_Device) { atomic_fetch_sub(&gDevice_IOIsRunning, 1); }
     if (inDeviceObjectID == kObjectID_Device2) { atomic_fetch_sub(&gDevice2_IOIsRunning, 1); }
     
-    // free the ring buffer
+    // free the ring buffer with thread safety
     if (!atomic_load(&gDevice_IOIsRunning) && !atomic_load(&gDevice2_IOIsRunning) && gRingBuffer != NULL)
     {
-        free(gRingBuffer);
-        gRingBuffer = NULL;
+        pthread_mutex_lock(&gRingBufferMutex);
+        if (gRingBuffer != NULL) {
+            free(gRingBuffer);
+            gRingBuffer = NULL;
+        }
+        pthread_mutex_unlock(&gRingBufferMutex);
     }
 	
 Done:
@@ -4558,11 +4568,15 @@ static OSStatus	VocanaVirtualDevice_DoIOOperation(AudioServerPlugInDriverRef inD
             // Clear the ioMainBuffer
             vDSP_vclr(ioMainBuffer, 1, inIOBufferFrameSize * kNumber_Of_Channels);
             
-            // Clear the ring buffer.
+            // Clear the ring buffer with thread safety.
             bool isBufferClear = atomic_load(&isBufferClearAtomic);
             if (!isBufferClear)
             {
-                vDSP_vclr(gRingBuffer, 1, kRing_Buffer_Frame_Size * kNumber_Of_Channels);
+                pthread_mutex_lock(&gRingBufferMutex);
+                if (gRingBuffer != NULL) {
+                    vDSP_vclr(gRingBuffer, 1, kRing_Buffer_Frame_Size * kNumber_Of_Channels);
+                }
+                pthread_mutex_unlock(&gRingBufferMutex);
                 atomic_store(&isBufferClearAtomic, true);
             }
         }
@@ -4576,12 +4590,15 @@ static OSStatus	VocanaVirtualDevice_DoIOOperation(AudioServerPlugInDriverRef inD
                 return kAudioHardwareIllegalOperationError;
             }
             
-            // Copy the buffers with null checks
+            // Copy the buffers with null checks and thread safety
+            pthread_mutex_lock(&gRingBufferMutex);
             if (gRingBuffer != NULL) {
                 memcpy(ioMainBuffer, gRingBuffer + ringBufferFrameLocationStart * kNumber_Of_Channels, firstPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
                 memcpy((Float32*)ioMainBuffer + firstPartFrameSize * kNumber_Of_Channels, gRingBuffer, secondPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
+                pthread_mutex_unlock(&gRingBufferMutex);
             } else {
                 // Ring buffer not allocated, clear output buffer
+                pthread_mutex_unlock(&gRingBufferMutex);
                 vDSP_vclr(ioMainBuffer, 1, inIOBufferFrameSize * kNumber_Of_Channels);
             }
             
@@ -4621,10 +4638,14 @@ static OSStatus	VocanaVirtualDevice_DoIOOperation(AudioServerPlugInDriverRef inD
         }
         
         
-        // Copy the buffers with null checks
+        // Copy the buffers with null checks and thread safety
+        pthread_mutex_lock(&gRingBufferMutex);
         if (gRingBuffer != NULL) {
             memcpy(gRingBuffer + ringBufferFrameLocationStart * kNumber_Of_Channels, ioMainBuffer, firstPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
             memcpy(gRingBuffer, (Float32*)ioMainBuffer + firstPartFrameSize * kNumber_Of_Channels, secondPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
+            pthread_mutex_unlock(&gRingBufferMutex);
+        } else {
+            pthread_mutex_unlock(&gRingBufferMutex);
         }
         
         // Save the last output time.

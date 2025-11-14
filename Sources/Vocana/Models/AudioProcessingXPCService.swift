@@ -133,7 +133,7 @@ class AudioProcessingXPCService: NSObject {
                 }
 
                 // Process through ML pipeline
-                let processedBuffer = try await self.audioProcessor.processAudioBuffer(floatBuffer, sampleRate: Float(sampleRate))
+                let processedBuffer = try await self.audioProcessor.processAudioBuffer(floatBuffer, sampleRate: Float(sampleRate), sensitivity: 1.0)
 
                 // Validate processed buffer
                 guard processedBuffer.count == floatBuffer.count else {

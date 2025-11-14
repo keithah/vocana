@@ -335,8 +335,11 @@ class MockInferenceSession: InferenceSession {
         let T = e3.shape[2]
         let F: Int64 = 481  // Full spectrum
         
+        let expectedMaskCount = Int(T * F)
+        let finalMask = Array(repeating: Float(1.0), count: expectedMaskCount) // Default pass-through mask
+        
         return [
-            "m": TensorData(unsafeShape: [1, 1, T, F], data: Array(repeating: 0.8, count: try safeIntCount([1, 1, T, F])))
+            "m": TensorData(unsafeShape: [1, 1, T, F], data: finalMask)
         ]
     }
     

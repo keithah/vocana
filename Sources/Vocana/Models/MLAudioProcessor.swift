@@ -215,11 +215,37 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
      /// - Parameters:
      ///   - buffer: Audio buffer as array of floats
      ///   - sampleRate: Sample rate of the audio
-     /// - Returns: Processed audio buffer
-     func processAudioBuffer(_ buffer: [Float], sampleRate: Float) async throws -> [Float] {
-         // Use default sensitivity of 1.0
-         guard let processed = processAudioWithML(chunk: buffer, sensitivity: 1.0) else {
-             throw NSError(domain: "MLAudioProcessor", code: -1, userInfo: [NSLocalizedDescriptionKey: "ML processing failed"])
+     ///   - sensitivity: Processing sensitivity multiplier (0-1)
+     ///   - Returns: Processed audio buffer
+     func processAudioBuffer(_ buffer: [Float], sampleRate: Float, sensitivity: Double) async throws -> [Float] {
+         // Validate sensitivity parameter
+         let clampedSensitivity = max(0.0, min(1.0, sensitivity))
+         
+         guard let processed = processAudioWithML(chunk: buffer, sensitivity: clampedSensitivity) else {
+             // Provide enhanced error context with specific failure reasons
+             let failureReason: String
+             let errorCode: Int
+             
+             if mlStateQueue.sync(execute: { mlProcessingSuspendedDueToMemory }) {
+                 failureReason = "ML processing suspended due to memory pressure. Try closing other applications."
+                 errorCode = 1001
+             } else if !isMLProcessingActive {
+                 failureReason = "ML processing not active. Ensure initializeMLProcessing() completed successfully."
+                 errorCode = 1002
+             } else {
+                 failureReason = "ML processing failed during inference. Model may be corrupted or overloaded."
+                 errorCode = 1003
+             }
+             
+             let errorInfo: [String: Any] = [
+                 NSLocalizedDescriptionKey: failureReason,
+                 "Sensitivity": clampedSensitivity,
+                 "BufferSize": buffer.count,
+                 "SampleRate": sampleRate,
+                 "MLActive": isMLProcessingActive
+             ]
+             
+             throw NSError(domain: "Vocana.MLAudioProcessor", code: errorCode, userInfo: errorInfo)
          }
          return processed
      }

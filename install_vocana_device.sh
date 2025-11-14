@@ -82,6 +82,18 @@ fi
 echo "⏳ Waiting for system to recognize the new device..."
 sleep 3
 
+# Verify Core Audio daemon is running
+if ! pgrep -x coreaudiod > /dev/null; then
+    echo "⚠️  Core Audio daemon not running, attempting to start..."
+    launchctl start system/com.apple.audio.coreaudiod
+    sleep 2
+    if ! pgrep -x coreaudiod > /dev/null; then
+        echo "❌ Failed to start Core Audio daemon"
+        exit 1
+    fi
+    echo "✅ Core Audio daemon started successfully"
+fi
+
 # Test if the device is available
 echo "🔍 Checking for VocanaVirtualDevice..."
 

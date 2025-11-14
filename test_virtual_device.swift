@@ -9,14 +9,14 @@ func testAudioDeviceDiscovery() {
     print("=== Vocana Virtual Audio Device Test ===")
     
     var deviceListSize: UInt32 = 0
-    var propAddress = AudioObjectPropertyAddress(
+    var devicesPropertyAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDevices,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
     )
     var result = AudioObjectGetPropertyDataSize(
         AudioObjectID(kAudioObjectSystemObject),
-        &propAddress,
+        &devicesPropertyAddress,
         0,
         nil,
         &deviceListSize
@@ -32,7 +32,7 @@ func testAudioDeviceDiscovery() {
     
     result = AudioObjectGetPropertyData(
         AudioObjectID(kAudioObjectSystemObject),
-        &propAddress,
+        &devicesPropertyAddress,
         0,
         nil,
         &deviceListSize,
@@ -51,7 +51,7 @@ func testAudioDeviceDiscovery() {
     for (index, deviceID) in deviceIDs.enumerated() {
         var deviceName: CFString = "" as CFString
         var nameSize = UInt32(MemoryLayout<CFString>.size)
-        var propAddress = AudioObjectPropertyAddress(
+        var deviceNamePropertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioObjectPropertyName,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
@@ -59,7 +59,7 @@ func testAudioDeviceDiscovery() {
         
         result = AudioObjectGetPropertyData(
             deviceID,
-            &propAddress,
+            &deviceNamePropertyAddress,
             0,
             nil,
             &nameSize,
@@ -94,7 +94,7 @@ func getDeviceInfo(_ deviceID: AudioDeviceID) {
     // Check if it's an input device
     var inputStreams: UInt32 = 0
     var streamSize = UInt32(MemoryLayout<UInt32>.size)
-    var propAddress = AudioObjectPropertyAddress(
+    var streamConfigPropertyAddress = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyStreamConfiguration,
         mScope: kAudioObjectPropertyScopeInput,
         mElement: kAudioObjectPropertyElementMain
@@ -102,7 +102,7 @@ func getDeviceInfo(_ deviceID: AudioDeviceID) {
     
     let result = AudioObjectGetPropertyData(
         deviceID,
-        &propAddress,
+        &streamConfigPropertyAddress,
         0,
         nil,
         &streamSize,

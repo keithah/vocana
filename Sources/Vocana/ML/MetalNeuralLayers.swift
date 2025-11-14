@@ -773,6 +773,8 @@ class MetalNeuralProcessor {
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let encoder = commandBuffer.makeComputeCommandEncoder() else {
+            returnBuffer(inputBuffer)
+            returnBuffer(outputBuffer)
             throw MetalError.commandBufferCreationFailed
         }
 
@@ -787,6 +789,12 @@ class MetalNeuralProcessor {
         encoder.endEncoding()
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
+        
+        guard commandBuffer.status == .completed else {
+            returnBuffer(inputBuffer)
+            returnBuffer(outputBuffer)
+            throw MetalError.commandBufferCreationFailed
+        }
 
         let outputPtr = outputBuffer.contents().bindMemory(to: Float.self, capacity: input.count)
         let result = Array(UnsafeBufferPointer(start: outputPtr, count: input.count))
@@ -947,10 +955,22 @@ class MetalLinearLayer: NeuralLayer {
     private let bias: [Float]
 
     init(inputSize: Int, outputSize: Int, weightInit: WeightInit = .kaimingUniform) {
+        // Validate input parameters
+        guard inputSize > 0, outputSize > 0 else {
+            fatalError("MetalLinearLayer: inputSize and outputSize must be positive")
+        }
+        
         // Initialize weights as 2D array for MPS compatibility
         self.weights = (0..<outputSize).map { _ in
             weightInit.initialize(fanIn: inputSize, fanOut: outputSize, count: inputSize)
         }
+        
+        // Validate weights structure
+        guard weights.count == outputSize,
+              weights.allSatisfy({ $0.count == inputSize }) else {
+            fatalError("MetalLinearLayer: Weights initialization failed - invalid dimensions")
+        }
+        
         self.bias = WeightInit.constant(0.0).initialize(fanIn: 1, fanOut: outputSize, count: outputSize)
 
         // Try to initialize Metal processor

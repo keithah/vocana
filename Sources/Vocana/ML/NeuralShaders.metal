@@ -464,9 +464,11 @@ kernel void generate_erb_filterbank(
     float freq = float(freq_bin) * constants.sampleRate / float(constants.fftSize);
 
     // ERB filter shape (simplified triangular filter)
+    // Guard against division by zero for single band case
+    float numBandsSafe = max(1.0, float(constants.numBands - 1));
     float erb_center = freq_to_erb(constants.minFreq) +
                       float(band) * (freq_to_erb(constants.maxFreq) - freq_to_erb(constants.minFreq)) /
-                      float(constants.numBands - 1);
+                      numBandsSafe;
 
     float center_freq = erb_to_freq(erb_center);
     float erb_width = 1.0f; // Simplified ERB width

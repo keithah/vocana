@@ -189,11 +189,15 @@ enum VocanaNoiseCancellationState: UInt32 {
                         if uid.contains("VocanaVirtualDevice2ch_UID") {
                             // First device is input, second device (_2_UID) is output
                             if uid.contains("_2_UID") {
-                                outputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: false, originalDeviceID: deviceID)
+                                DispatchQueue.main.async {
+                                    self.outputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: false, originalDeviceID: deviceID)
+                                }
                                 foundOutputDevice = true
                                 logger.info("Discovered Vocana output device: \(uid)")
                             } else {
-                                inputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: true, originalDeviceID: deviceID)
+                                DispatchQueue.main.async {
+                                    self.inputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: true, originalDeviceID: deviceID)
+                                }
                                 foundInputDevice = true
                                 logger.info("Discovered Vocana input device: \(uid)")
                             }
@@ -221,8 +225,10 @@ enum VocanaNoiseCancellationState: UInt32 {
     }
 
     func destroyVirtualDevices() {
-        inputDevice = nil
-        outputDevice = nil
+        DispatchQueue.main.async {
+            self.inputDevice = nil
+            self.outputDevice = nil
+        }
         logger.info("Virtual audio devices destroyed")
     }
 
@@ -233,13 +239,17 @@ enum VocanaNoiseCancellationState: UInt32 {
     // MARK: - Control Interface
 
     func enableInputNoiseCancellation(_ enabled: Bool) {
-        isInputNoiseCancellationEnabled = enabled
+        DispatchQueue.main.async {
+            self.isInputNoiseCancellationEnabled = enabled
+        }
         inputDevice?.setNoiseCancellationState(enabled ? .on : .off)
         logger.info("Input noise cancellation \(enabled ? "enabled" : "disabled")")
     }
 
     func enableOutputNoiseCancellation(_ enabled: Bool) {
-        isOutputNoiseCancellationEnabled = enabled
+        DispatchQueue.main.async {
+            self.isOutputNoiseCancellationEnabled = enabled
+        }
         outputDevice?.setNoiseCancellationState(enabled ? .on : .off)
         logger.info("Output noise cancellation \(enabled ? "enabled" : "disabled")")
     }

@@ -2,7 +2,7 @@ import Foundation
 import Combine
 
 @MainActor
-class AppSettings: ObservableObject {
+class AppSettings: ObservableObject, AppSettingsProtocol {
     // MARK: - Constants
     
     private enum Keys {

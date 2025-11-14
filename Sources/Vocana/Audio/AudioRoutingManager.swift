@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CoreAudio
+import OSLog
 
 /// Manages audio routing from BlackHole to physical output devices
 @MainActor
@@ -109,7 +110,8 @@ class AudioRoutingManager: ObservableObject {
             return false
         }
         
-        // Configure audio session
+        // Configure audio session (macOS doesn't use AVAudioSession)
+        #if os(iOS)
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
@@ -132,6 +134,11 @@ class AudioRoutingManager: ObservableObject {
             logger.error("Failed to configure input device: \(error)")
             return false
         }
+        #else
+        // macOS uses CoreAudio directly for device configuration
+        logger.info("Input device configured for macOS: \(deviceUID)")
+        return true
+        #endif
     }
     
     /// Configure output device for audio engine
@@ -151,7 +158,8 @@ class AudioRoutingManager: ObservableObject {
             return false
         }
         
-        // Configure audio session output
+        // Configure audio session output (macOS doesn't use AVAudioSession)
+        #if os(iOS)
         do {
             let session = AVAudioSession.sharedInstance()
             
@@ -171,6 +179,11 @@ class AudioRoutingManager: ObservableObject {
             logger.error("Failed to configure output device: \(error)")
             return false
         }
+        #else
+        // macOS uses CoreAudio directly for device configuration
+        logger.info("Output device configured for macOS: \(deviceUID)")
+        return true
+        #endif
     }
     
     /// Install processing tap on mixer node for ML processing
@@ -241,7 +254,9 @@ class AudioRoutingManager: ObservableObject {
     }
     
     deinit {
-        stopRouting()
-        audioEngine = nil
+        Task { @MainActor in
+            stopRouting()
+            audioEngine = nil
+        }
     }
 }

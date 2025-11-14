@@ -50,6 +50,30 @@ struct AudioLevels {
     static let zero = AudioLevels(input: 0.0, output: 0.0)
 }
 
+/// ML Audio Processor Errors
+public enum MLAudioProcessorError: LocalizedError {
+    case modelNotLoaded
+    case initializationFailed(String)
+    case processingFailed(String)
+    case memoryPressure
+    case modelNotFound(String)
+    
+    public var errorDescription: String? {
+        switch self {
+        case .modelNotLoaded:
+            return "ML model not loaded"
+        case .initializationFailed(let reason):
+            return "ML initialization failed: \(reason)"
+        case .processingFailed(let reason):
+            return "ML processing failed: \(reason)"
+        case .memoryPressure:
+            return "ML processing suspended due to memory pressure"
+        case .modelNotFound(let model):
+            return "ML model not found: \(model)"
+        }
+    }
+}
+
 /// Protocol for ML audio processing
 public protocol MLAudioProcessorProtocol: AnyObject {
     var isMLProcessingActive: Bool { get }
@@ -87,7 +111,7 @@ public protocol MLAudioProcessorProtocol: AnyObject {
 /// Threading: All operations are MainActor-isolated for UI safety.
 /// Heavy processing is dispatched to background queues to prevent UI blocking.
 @MainActor
-class AudioEngine: ObservableObject {
+class AudioEngine: ObservableObject, AudioEngineProtocol {
     nonisolated private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
     
     // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking

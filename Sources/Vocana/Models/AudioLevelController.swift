@@ -4,7 +4,8 @@ import os.log
 /// Manages audio input/output level calculations and decay
 /// Responsibility: Calculate RMS levels, apply decay, validate audio input
 /// Isolated from audio capture, buffering, and ML processing
-class AudioLevelController {
+@MainActor
+class AudioLevelController: @unchecked Sendable {
     private static let logger = Logger(subsystem: "Vocana", category: "AudioLevelController")
     
     // Fix HIGH-007: Dedicated queue for thread-safe currentLevels access

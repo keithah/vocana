@@ -71,9 +71,13 @@ class ContentViewModel: ObservableObject {
     
     func openSettingsWindow() {
         #if os(macOS)
-        let settingsWindow = SettingsWindow(audioEngine: audioEngine, settings: appSettings)
-        settingsWindow.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        // Cast to concrete types for SettingsWindow
+        if let concreteEngine = audioEngine as? AudioEngine,
+           let concreteSettings = appSettings as? AppSettings {
+            let settingsWindow = SettingsWindow(audioEngine: concreteEngine, settings: concreteSettings)
+            settingsWindow.makeKeyAndOrderFront(nil as NSWindow?)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         #endif
     }
     

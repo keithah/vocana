@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Centralized error handling for Vocana application
 /// Provides user-friendly error messages and proper error categorization
@@ -128,6 +129,7 @@ class ErrorHandler: ObservableObject {
         }
         
         // Map AVFoundation errors
+        #if os(iOS)
         if let avError = error as? AVAudioSession.ErrorCode {
             switch avError {
             case .cannotInterruptOthers, .cannotStartRecording, .cannotStartPlaying:
@@ -148,9 +150,10 @@ class ErrorHandler: ObservableObject {
                 return .audioSessionFailed(error.localizedDescription)
             }
         }
+        #endif
         
         // Map ML processing errors
-        if let mlError = error as? MLAudioProcessor.MLAudioProcessorError {
+        if let mlError = error as? MLAudioProcessorError {
             return .mlProcessingFailed(mlError.localizedDescription)
         }
         

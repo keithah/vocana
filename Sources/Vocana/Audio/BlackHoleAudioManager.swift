@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CoreAudio
+import OSLog
 
 /// Manages BlackHole virtual audio device detection and routing
 @MainActor
@@ -32,13 +33,14 @@ class BlackHoleAudioManager: ObservableObject {
         // Get all audio devices
         var deviceList: AudioObjectID = 0
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        var devicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
         var result = AudioObjectGetPropertyDataSize(
             AudioObjectID(kAudioObjectSystemObject),
-            &AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDevices,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            ),
+            &devicesAddress,
             0,
             nil,
             &size
@@ -54,11 +56,7 @@ class BlackHoleAudioManager: ObservableObject {
         
         result = AudioObjectGetPropertyData(
             AudioObjectID(kAudioObjectSystemObject),
-            &AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDevices,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            ),
+            &devicesAddress,
             0,
             nil,
             &size,
@@ -154,13 +152,14 @@ class BlackHoleAudioManager: ObservableObject {
         }
         
         var outputDeviceID = deviceID
+        var defaultOutputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
         var result = AudioObjectSetPropertyData(
             AudioObjectID(kAudioObjectSystemObject),
-            &AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            ),
+            &defaultOutputAddress,
             0,
             nil,
             UInt32(MemoryLayout<AudioDeviceID>.size),
@@ -184,13 +183,14 @@ class BlackHoleAudioManager: ObservableObject {
         }
         
         var inputDeviceID = deviceID
+        var defaultInputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
         var result = AudioObjectSetPropertyData(
             AudioObjectID(kAudioObjectSystemObject),
-            &AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            ),
+            &defaultInputAddress,
             0,
             nil,
             UInt32(MemoryLayout<AudioDeviceID>.size),
@@ -211,13 +211,14 @@ class BlackHoleAudioManager: ObservableObject {
         var deviceID: AudioDeviceID = 0
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         
+        var defaultOutputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
         let result = AudioObjectGetPropertyData(
             AudioObjectID(kAudioObjectSystemObject),
-            &AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            ),
+            &defaultOutputAddress,
             0,
             nil,
             &size,
@@ -233,13 +234,14 @@ class BlackHoleAudioManager: ObservableObject {
         var deviceID: AudioDeviceID = 0
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         
+        var defaultInputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
         let result = AudioObjectGetPropertyData(
             AudioObjectID(kAudioObjectSystemObject),
-            &AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            ),
+            &defaultInputAddress,
             0,
             nil,
             &size,

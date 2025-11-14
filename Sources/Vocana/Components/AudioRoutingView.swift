@@ -81,11 +81,11 @@ struct AudioRoutingView: View {
     }
     
     private func startRouting() {
-        virtualAudioManager.enableVirtualDevices(true)
+        virtualAudioManager.createVirtualDevices()
     }
     
     private func stopRouting() {
-        virtualAudioManager.enableVirtualDevices(false)
+        virtualAudioManager.destroyVirtualDevices()
     }
 }
 

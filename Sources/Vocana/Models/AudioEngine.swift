@@ -443,20 +443,22 @@ class AudioEngine: ObservableObject {
         let capturedSelf = self
 
         audioProcessingQueue.async { [weak capturedSelf] in
-            capturedSelf?.processAudioBufferInternal(
-                buffer: buffer,
-                enabled: capturedEnabled,
-                sensitivity: capturedSensitivity,
-                callback: capturedCallback,
-                bufferManager: capturedBufferManager,
-                levelController: capturedLevelController,
-                mlProcessor: capturedMLProcessor,
-                isMLProcessingActive: capturedIsMLProcessingActive
-            )
+            Task { @MainActor in
+                capturedSelf?.processAudioBufferInternal(
+                    buffer: buffer,
+                    enabled: capturedEnabled,
+                    sensitivity: capturedSensitivity,
+                    callback: capturedCallback,
+                    bufferManager: capturedBufferManager,
+                    levelController: capturedLevelController,
+                    mlProcessor: capturedMLProcessor,
+                    isMLProcessingActive: capturedIsMLProcessingActive
+                )
+            }
         }
     }
     
-    nonisolated     private func processAudioBufferInternal(
+    private func processAudioBufferInternal(
         buffer: AVAudioPCMBuffer,
         enabled: Bool,
         sensitivity: Double,
@@ -509,7 +511,7 @@ class AudioEngine: ObservableObject {
     ///   - mlProcessor: ML processor instance
     ///   - bufferManager: Buffer manager instance
     /// - Returns: Processed audio samples (stereo if available)
-    nonisolated private func processWithMLForOutput(samples: [Float], sensitivity: Double, mlProcessor: MLAudioProcessorProtocol, bufferManager: AudioBufferManager) -> [Float] {
+    private func processWithMLForOutput(samples: [Float], sensitivity: Double, mlProcessor: MLAudioProcessorProtocol, bufferManager: AudioBufferManager) -> [Float] {
         // Validate audio input - create a temporary level controller for validation
         let tempLevelController = AudioLevelController()
         guard tempLevelController.validateAudioInput(samples) else {
@@ -552,7 +554,7 @@ class AudioEngine: ObservableObject {
     /// Convert mono audio samples to stereo format for HAL plugin output
     /// - Parameter monoSamples: Mono audio samples
     /// - Returns: Stereo audio samples (duplicated mono channel)
-    nonisolated private func convertToStereo(_ monoSamples: [Float]) -> [Float] {
+    private func convertToStereo(_ monoSamples: [Float]) -> [Float] {
         // For HAL plugin: duplicate mono channel to create stereo output
         // Pre-allocate array to avoid multiple reallocations during append operations
         var stereoSamples = [Float](repeating: 0, count: monoSamples.count * 2)

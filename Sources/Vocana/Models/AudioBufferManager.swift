@@ -20,9 +20,26 @@ class AudioBufferManager {
     
     private var bufferState = BufferState()
     
-    // Telemetry tracking (passed in from AudioEngine)
+    /// Callback invoked when audio buffer overflows.
+    ///
+    /// - Important: This callback is invoked from `audioBufferQueue`, which runs at `.userInteractive` QoS.
+    ///   **Do NOT perform blocking operations** (e.g., file I/O, network requests, locks).
+    ///   **Do NOT directly update UI or call @MainActor methods** - use Task { @MainActor in ... } instead.
+    ///   Keep processing minimal - the audio processing thread is waiting.
+    ///
+    /// - Thread Safety: You MUST NOT hold locks or dispatch to other queues without .async.
+    ///   For UI updates, use: Task { @MainActor in self.updateUI() }
+    ///
+    /// - Performance: This callback is in the audio hot path. Avoid allocations, use weak self.
     var recordBufferOverflow: () -> Void = {}
+
+    /// Callback invoked when circuit breaker is triggered.
+    /// See recordBufferOverflow documentation for threading requirements.
     var recordCircuitBreakerTrigger: () -> Void = {}
+
+    /// Callback invoked when audio capture is suspended by circuit breaker.
+    /// Parameter: duration - TimeInterval for suspension (e.g., 0.15 seconds)
+    /// See recordBufferOverflow documentation for threading requirements.
     var recordCircuitBreakerSuspension: (TimeInterval) -> Void = { _ in }
     
     /// Thread-safe append samples to buffer and extract chunk if ready
@@ -36,6 +53,18 @@ class AudioBufferManager {
     ) -> [Float]? {
         return audioBufferQueue.sync {
             let maxBufferSize = AppConstants.maxAudioBufferSize
+            
+            // Fix HIGH-004: Validate input size before arithmetic operations
+            guard samples.count > 0 else {
+                return nil  // Empty sample buffer
+            }
+            
+            guard samples.count <= maxBufferSize else {
+                // Samples array itself exceeds max buffer size
+                Self.logger.warning("Sample array exceeds max buffer size: \(samples.count) > \(maxBufferSize)")
+                recordBufferOverflow()
+                return nil
+            }
             
             // Fix CRITICAL: Safe integer overflow checking for buffer size calculation
             let (projectedSize, overflowed) = bufferState.audioBuffer.count.addingReportingOverflow(samples.count)

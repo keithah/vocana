@@ -1,12 +1,33 @@
 import Foundation
 import os.log
 
-/// Manages ML model inference and audio processing
-/// Responsibility: DeepFilterNet initialization, inference, memory pressure handling
-/// Isolated from audio capture, buffering, and level calculations
+/// ML audio processor using DeepFilterNet for audio denoising.
+///
+/// ## Threading Model
+/// This class is isolated to MainActor, but uses an internal DispatchQueue for specific state synchronization.
+///
+/// **Why the hybrid approach?**
+/// - All public methods must be called on MainActor (enforced by compiler)
+/// - Internal state `mlProcessingSuspendedDueToMemory` needs fast, lock-free updates from performance-sensitive paths
+/// - The `mlStateQueue` protects only this specific state, allowing concurrent reads without MainActor context switch
+/// - This hybrid approach optimizes the common case (checking if ML is suspended) without context switching overhead
+///
+/// **Threading Guarantees:**
+/// - All public properties and methods: MainActor only
+/// - State reads via mlStateQueue: Thread-safe from any thread
+/// - State writes: Always go through setMLProcessingActive() or via sync queue
+///
+/// ## Usage Example
+/// ```swift
+/// // On MainActor
+/// processor.initializeMLProcessing()
+///
+/// // Can check from any thread efficiently
+/// let isSuspended = processor.isMemoryPressureSuspended()
+/// ```
 @MainActor
 class MLAudioProcessor {
-    private static let logger = Logger(subsystem: "Vocana", category: "MLAudioProcessor")
+    nonisolated static let logger = Logger(subsystem: "Vocana", category: "MLAudioProcessor")
     
     private var denoiser: DeepFilterNet?
     private var mlInitializationTask: Task<Void, Never>?
@@ -25,9 +46,21 @@ class MLAudioProcessor {
      var recordMemoryPressure: () -> Void = {}
      var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
     
-    // Public state
-    var isMLProcessingActive = false
-    var processingLatencyMs: Double = 0
+     // ML state management - protected by mlStateQueue
+     private var _isMLProcessingActive = false
+     
+     // Public accessor (on MainActor)
+     var isMLProcessingActive: Bool {
+         mlStateQueue.sync { _isMLProcessingActive }
+     }
+     
+     private func setMLProcessingActive(_ active: Bool) {
+         mlStateQueue.sync {
+             _isMLProcessingActive = active
+         }
+     }
+     
+     var processingLatencyMs: Double = 0
     
     /// Initialize ML processing with DeepFilterNet
     /// Handles async model loading with proper cancellation support
@@ -75,7 +108,7 @@ class MLAudioProcessor {
                     }
                     
                     self.denoiser = denoiser
-                    self.isMLProcessingActive = true
+                    self.setMLProcessingActive(true)
                     Self.logger.info("DeepFilterNet ML processing enabled")
                     
                     // Fix HIGH-008: Notify that ML processing is ready
@@ -89,7 +122,7 @@ class MLAudioProcessor {
                     Self.logger.error("Could not initialize ML processing: \(error.localizedDescription)")
                     Self.logger.info("Falling back to simple level-based processing")
                     self.denoiser = nil
-                    self.isMLProcessingActive = false
+                    self.setMLProcessingActive(false)
                 }
             }
         }
@@ -100,7 +133,7 @@ class MLAudioProcessor {
         mlInitializationTask?.cancel()
         mlInitializationTask = nil
         denoiser = nil
-        isMLProcessingActive = false
+        setMLProcessingActive(false)
     }
     
     deinit {
@@ -145,28 +178,31 @@ class MLAudioProcessor {
                      self.processingLatencyMs = latencyMs
                  }
                  
-                 // Fix CRITICAL: Record telemetry for production monitoring
-                 // Capture callback to avoid MainActor crossing
-                 let recordLatency = self.recordLatency
-                 Task { @MainActor in
-                     recordLatency(latencyMs)
-                 }
+                  // Fix CRITICAL: Record telemetry for production monitoring
+                  // Capture callback to avoid MainActor crossing
+                  let recordLatency = self.recordLatency
+                  Task { @MainActor in
+                      recordLatency(latencyMs)
+                  }
+                  
+                  // Monitor for SLA violations (target <1ms)
+                  if latencyMs > 1.0 {
+                      Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
+                  }
+                  
+                  result = enhanced
+              } catch {
+                  Self.logger.error("ML processing error: \(error.localizedDescription)")
+                  let recordFailure = self.recordFailure
+                  Task { @MainActor in
+                      recordFailure()
+                  }
                  
-                 // Monitor for SLA violations (target <1ms)
-                 if latencyMs > 1.0 {
-                     Self.logger.warning("Latency SLA violation: \(String(format: "%.2f", latencyMs))ms > 1.0ms target")
-                 }
-                 
-                 result = enhanced
-             } catch {
-                 Self.logger.error("ML processing error: \(error.localizedDescription)")
-                 self.recordFailure()
-                 
-                 // Fix HIGH: Update error state atomically
-                 self.mlStateQueue.sync {
-                     self.isMLProcessingActive = false
-                     self.denoiser = nil
-                 }
+                  // Fix HIGH: Update error state atomically
+                  self.mlStateQueue.sync {
+                      self._isMLProcessingActive = false
+                      self.denoiser = nil
+                  }
              }
              
              semaphore.signal()

@@ -150,23 +150,7 @@ class AudioSessionManager {
         }
     }
     
-    /// Suspend audio capture (circuit breaker)
-    /// - Parameter duration: How long to suspend for
-    func suspendAudioCapture(duration: TimeInterval) {
-        audioCaptureSuspensionTimer?.invalidate()
-        audioCaptureSuspensionTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.resumeAudioCapture()
-            }
-        }
-    }
-    
-    /// Resume audio capture after suspension
-    private func resumeAudioCapture() {
-        audioCaptureSuspensionTimer?.invalidate()
-        audioCaptureSuspensionTimer = nil
-        Self.logger.info("Resuming audio capture after circuit breaker suspension")
-    }
+
     
     /// Clean up resources
     func cleanup() {

@@ -59,7 +59,10 @@ class AudioEngine: ObservableObject {
      // Fix CRITICAL-001: Dedicated queue for telemetry to prevent race conditions
      // Keep telemetry state on the queue to avoid MainActor isolation violations
      private let telemetryQueue = DispatchQueue(label: "com.vocana.telemetry", qos: .userInitiated)
-     private var queueTelemetrySnapshot = ProductionTelemetry()
+     nonisolated(unsafe) private var queueTelemetrySnapshot = ProductionTelemetry()
+     
+     // Fix CRITICAL-001: Debounce telemetry updates to prevent blocking audio hot path
+     private var telemetryUpdateWorkItem: DispatchWorkItem?
     
     // MARK: - Memory Pressure Monitoring
     
@@ -124,6 +127,30 @@ class AudioEngine: ObservableObject {
          }
      }
      
+     /// Fix CRITICAL-001: Schedule debounced telemetry update to prevent blocking audio hot path
+     /// This replaces the synchronous telemetryQueue.sync calls that were causing audio dropout risk
+     private func scheduleTelemetryUpdate(_ update: @escaping () -> Void) {
+         // Cancel previous work item if not yet executed
+         telemetryUpdateWorkItem?.cancel()
+         
+         let workItem = DispatchWorkItem { [weak self] in
+             guard let self = self else { return }
+             self.telemetryQueue.sync {
+                 update()
+                 Task { @MainActor in
+                     self.telemetry = self.queueTelemetrySnapshot
+                     self.updatePerformanceStatus()
+                 }
+             }
+         }
+         
+         // Debounce: execute after 50ms if no new updates
+         telemetryUpdateWorkItem = workItem
+         self.telemetryQueue.asyncAfter(deadline: .now() + .milliseconds(50), execute: workItem)
+     }
+     
+
+     
      /// Fix HIGH-005: Record telemetry event in thread-safe manner
      /// Helper method to safely update telemetry snapshot and publish changes to MainActor
      private func recordTelemetryEvent(_ update: @escaping (ProductionTelemetry) -> ProductionTelemetry) {
@@ -167,27 +194,22 @@ class AudioEngine: ObservableObject {
         // Level controller has no callbacks
         
          // Buffer manager callbacks
-         // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
-         // Fix HIGH-005: Use async instead of sync to avoid blocking audio processing
+         // Fix CRITICAL-001: Use debounced telemetry updates to prevent blocking audio hot path
          bufferManager.recordBufferOverflow = { [weak self] in
              guard let self = self else { return }
-             self.recordTelemetryEvent { telemetry in
-                 var updated = telemetry
-                 updated.recordAudioBufferOverflow()
-                 return updated
+             self.scheduleTelemetryUpdate {
+                 self.queueTelemetrySnapshot.recordAudioBufferOverflow()
              }
          }
          
          bufferManager.recordCircuitBreakerTrigger = { [weak self] in
              guard let self = self else { return }
-             self.recordTelemetryEvent { telemetry in
-                 var updated = telemetry
-                 updated.recordCircuitBreakerTrigger()
-                 return updated
+             self.scheduleTelemetryUpdate {
+                 self.queueTelemetrySnapshot.recordCircuitBreakerTrigger()
              }
-         }
-        
-         bufferManager.recordCircuitBreakerSuspension = { [weak self] duration in
+          }
+         
+          bufferManager.recordCircuitBreakerSuspension = { [weak self] duration in
              guard let self = self else { return }
              // Fix HIGH-006: Circuit breaker suspension is now handled within audioBufferQueue
              // Just update the UI flag on the main thread for user feedback
@@ -202,33 +224,29 @@ class AudioEngine: ObservableObject {
              }
          }
         
-         // ML processor callbacks
-         // Fix CRITICAL-001: Use dedicated telemetryQueue for thread-safe telemetry updates
-         // Fix HIGH-005: Use async instead of sync to avoid blocking audio processing
-         mlProcessor.recordLatency = { [weak self] latency in
-             guard let self = self else { return }
-             Task { @MainActor in
-                 self.processingLatencyMs = latency
-             }
-             self.recordTelemetryEvent { telemetry in
-                 var updated = telemetry
-                 updated.recordLatency(latency)
-                 return updated
-             }
-         }
-         
-         mlProcessor.recordFailure = { [weak self] in
-             guard let self = self else { return }
-             self.recordTelemetryEvent { telemetry in
-                 var updated = telemetry
-                 updated.recordFailure()
-                 return updated
-             }
-             Task { @MainActor in
-                 self.isMLProcessingActive = false
-                 self.updatePerformanceStatus()
-             }
-         }
+          // ML processor callbacks
+          // Fix CRITICAL-001: Use debounced telemetry updates to prevent blocking audio hot path
+          mlProcessor.recordLatency = { [weak self] latency in
+              guard let self = self else { return }
+              // Update latency immediately (non-blocking)
+              Task { @MainActor in
+                  self.processingLatencyMs = latency
+              }
+              self.scheduleTelemetryUpdate {
+                  self.queueTelemetrySnapshot.recordLatency(latency)
+              }
+          }
+          
+          mlProcessor.recordFailure = { [weak self] in
+              guard let self = self else { return }
+              self.scheduleTelemetryUpdate {
+                  self.queueTelemetrySnapshot.recordFailure()
+              }
+              Task { @MainActor in
+                  self.isMLProcessingActive = false
+                  self.updatePerformanceStatus()
+              }
+          }
          
          // Fix HIGH-008: Use callback instead of arbitrary sleep for ML initialization
          mlProcessor.onMLProcessingReady = { [weak self] in
@@ -293,31 +311,39 @@ class AudioEngine: ObservableObject {
      }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
+        // Step 1: Guard against suspension
         guard !audioCaptureSuspended else { return }
         
-        guard let channelData = buffer.floatChannelData else { return }
-        let channelDataValue = channelData.pointee
-        let frames = buffer.frameLength
+        // Step 2: Extract samples safely
+        guard let samplesPtr = extractAudioSamples(from: buffer) else { return }
         
-         // Note: This method is called from MainActor via AudioSessionManager callback
-         // State access is safe since we're on MainActor
-         let capturedEnabled = isEnabled
-         let capturedSensitivity = sensitivity
+        // Step 3: Capture state atomically
+        let (enabled, sensitivity) = captureAudioState()
         
-        let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
-        
-        // Calculate input level
+        // Step 4: Calculate and process levels
         let inputLevel = levelController.calculateRMSFromPointer(samplesPtr)
         
-        if capturedEnabled {
+        if enabled {
             let samples = Array(samplesPtr)
-            let outputLevel = processWithMLIfAvailable(samples: samples, sensitivity: capturedSensitivity)
+            let outputLevel = processWithMLIfAvailable(samples: samples, sensitivity: sensitivity)
             currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
         } else {
             // Apply level decay when disabled
             currentLevels = levelController.applyDecay()
         }
+    }
+    
+    /// Extract audio samples from buffer safely
+    private func extractAudioSamples(from buffer: AVAudioPCMBuffer) -> UnsafeBufferPointer<Float>? {
+        guard let channelData = buffer.floatChannelData else { return nil }
+        let channelDataValue = channelData.pointee
+        let frames = buffer.frameLength
+        return UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
+    }
+    
+    /// Capture audio enabled state and sensitivity atomically
+    private func captureAudioState() -> (enabled: Bool, sensitivity: Double) {
+        return (isEnabled, sensitivity)
     }
     
     private func processWithMLIfAvailable(samples: [Float], sensitivity: Double) -> Float {

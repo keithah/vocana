@@ -1,22 +1,35 @@
+#!/bin/bash
+
+echo "🔧 Creating Simple Working HAL Plugin"
+echo "==================================="
+
+# Create a very simple HAL plugin that just creates a basic device
+cat > Sources/VocanaAudioServerPlugin/VocanaAudioServerPlugin.c << 'EOF'
 /*
-    Minimal Vocana HAL Plugin - Working Version
+    Simple Vocana HAL Plugin - Minimal Working Version
 */
 
 #include <CoreAudio/AudioServerPlugIn.h>
-#include <CoreFoundation/CoreFoundation.h>
+#include <CoreAudio/AudioHardwareDeprecated.h>
 #include <pthread.h>
 #include <sys/syslog.h>
-#include <mach/mach_time.h>
+#include <CoreFoundation/CoreFoundation.h>
 
 #define DebugMsg(...) syslog(LOG_NOTICE, "VocanaHAL: " __VA_ARGS__)
 #define ErrorMsg(...) syslog(LOG_ERR, "VocanaHAL ERROR: " __VA_ARGS__)
 
 #define kObjectID_PlugIn 1
 #define kObjectID_Device 2
+#define kObjectID_Stream_Input 3
+#define kObjectID_Stream_Output 4
 
 typedef struct {
     AudioServerPlugInHostRef hostRef;
     pthread_mutex_t mutex;
+    Boolean deviceCreated;
+    AudioObjectID deviceObjectID;
+    AudioObjectID inputStreamObjectID;
+    AudioObjectID outputStreamObjectID;
     Float64 sampleRate;
 } VocanaPlugin;
 
@@ -26,7 +39,6 @@ void* VocanaAudioServerPluginFactory(CFAllocatorRef allocator, CFUUIDRef typeUUI
     DebugMsg("Factory called");
     
     if (!CFEqual(typeUUID, kAudioServerPlugInTypeUUID)) {
-        DebugMsg("Wrong UUID type");
         return NULL;
     }
     
@@ -38,6 +50,10 @@ void* VocanaAudioServerPluginFactory(CFAllocatorRef allocator, CFUUIDRef typeUUI
     
     pthread_mutex_init(&plugin->mutex, NULL);
     plugin->sampleRate = 48000.0;
+    plugin->deviceObjectID = kObjectID_Device;
+    plugin->inputStreamObjectID = kObjectID_Stream_Input;
+    plugin->outputStreamObjectID = kObjectID_Stream_Output;
+    plugin->deviceCreated = true;
     
     gPlugin = plugin;
     DebugMsg("Plugin created successfully");
@@ -74,12 +90,12 @@ static OSStatus VocanaAudioServerPlugin_Initialize(AudioServerPlugInDriverRef in
     return kAudioHardwareNoError;
 }
 
-static OSStatus VocanaAudioServerPlugin_CreateDevice(AudioServerPlugInDriverRef inDriver, CFDictionaryRef inDescription, const AudioServerPlugInClientInfo* inClientInfo, AudioObjectID* outDeviceObjectID) {
+static OSStatus VocanaAudioServerPlugin_CreateDevice(AudioServerPlugInDriverRef inDriver, CFDictionaryRef inDescription, AudioObjectID* outDeviceObjectID) {
     VocanaPlugin *plugin = (VocanaPlugin*)inDriver;
     if (!plugin || !outDeviceObjectID) return kAudioHardwareBadObjectError;
     
     pthread_mutex_lock(&plugin->mutex);
-    *outDeviceObjectID = kObjectID_Device;
+    *outDeviceObjectID = plugin->deviceObjectID;
     pthread_mutex_unlock(&plugin->mutex);
     
     DebugMsg("Device created with ID: %u", *outDeviceObjectID);
@@ -116,16 +132,33 @@ static Boolean VocanaAudioServerPlugin_HasProperty(AudioServerPlugInDriverRef in
         case kObjectID_Device:
             switch (inAddress->mSelector) {
                 case kAudioDevicePropertyDeviceUID:
+                case kAudioDevicePropertyDeviceManufacturer:
+                case kAudioDevicePropertyDeviceName:
                 case kAudioDevicePropertyDeviceIsAlive:
                 case kAudioDevicePropertyDeviceIsRunning:
                 case kAudioDevicePropertyLatency:
                 case kAudioDevicePropertySafetyOffset:
                 case kAudioDevicePropertyNominalSampleRate:
+                case kAudioDevicePropertyStreamFormat:
+                case kAudioDevicePropertyStreams:
                 case kAudioObjectPropertyOwnedObjects:
                     return true;
                 default:
                     return false;
             }
+            
+        case kObjectID_Stream_Input:
+        case kObjectID_Stream_Output:
+            switch (inAddress->mSelector) {
+                case kAudioStreamPropertyTerminalType:
+                case kAudioStreamPropertyStartingChannel:
+                case kAudioStreamPropertyLatency:
+                case kAudioStreamPropertyFormat:
+                    return true;
+                default:
+                    return false;
+            }
+            
         default:
             return false;
     }
@@ -150,6 +183,8 @@ static OSStatus VocanaAudioServerPlugin_GetPropertyDataSize(AudioServerPlugInDri
         case kObjectID_Device:
             switch (inAddress->mSelector) {
                 case kAudioDevicePropertyDeviceUID:
+                case kAudioDevicePropertyDeviceManufacturer:
+                case kAudioDevicePropertyDeviceName:
                     *outDataSize = sizeof(CFStringRef);
                     break;
                 case kAudioDevicePropertyDeviceIsAlive:
@@ -161,13 +196,34 @@ static OSStatus VocanaAudioServerPlugin_GetPropertyDataSize(AudioServerPlugInDri
                 case kAudioDevicePropertyNominalSampleRate:
                     *outDataSize = sizeof(Float64);
                     break;
+                case kAudioDevicePropertyStreamFormat:
+                    *outDataSize = sizeof(AudioStreamBasicDescription);
+                    break;
+                case kAudioDevicePropertyStreams:
                 case kAudioObjectPropertyOwnedObjects:
-                    *outDataSize = 0;
+                    *outDataSize = 2 * sizeof(AudioObjectID);
                     break;
                 default:
                     return kAudioHardwareUnknownPropertyError;
             }
             break;
+            
+        case kObjectID_Stream_Input:
+        case kObjectID_Stream_Output:
+            switch (inAddress->mSelector) {
+                case kAudioStreamPropertyTerminalType:
+                case kAudioStreamPropertyStartingChannel:
+                case kAudioStreamPropertyLatency:
+                    *outDataSize = sizeof(UInt32);
+                    break;
+                case kAudioStreamPropertyFormat:
+                    *outDataSize = sizeof(AudioStreamBasicDescription);
+                    break;
+                default:
+                    return kAudioHardwareUnknownPropertyError;
+            }
+            break;
+            
         default:
             return kAudioHardwareBadObjectError;
     }
@@ -195,6 +251,18 @@ static OSStatus VocanaAudioServerPlugin_GetPropertyData(AudioServerPlugInDriverR
                     *outDataSize = sizeof(CFStringRef);
                     break;
                 }
+                case kAudioDevicePropertyDeviceManufacturer: {
+                    CFStringRef manufacturer = CFSTR("Vocana Inc.");
+                    *(CFStringRef*)outData = manufacturer;
+                    *outDataSize = sizeof(CFStringRef);
+                    break;
+                }
+                case kAudioDevicePropertyDeviceName: {
+                    CFStringRef name = CFSTR("Vocana Virtual Audio Device");
+                    *(CFStringRef*)outData = name;
+                    *outDataSize = sizeof(CFStringRef);
+                    break;
+                }
                 case kAudioDevicePropertyDeviceIsAlive:
                 case kAudioDevicePropertyDeviceIsRunning:
                     *(UInt32*)outData = 1;
@@ -209,14 +277,73 @@ static OSStatus VocanaAudioServerPlugin_GetPropertyData(AudioServerPlugInDriverR
                     *(Float64*)outData = plugin->sampleRate;
                     *outDataSize = sizeof(Float64);
                     break;
-                case kAudioObjectPropertyOwnedObjects:
-                    *outDataSize = 0;
+                case kAudioDevicePropertyStreamFormat: {
+                    AudioStreamBasicDescription format = {0};
+                    format.mSampleRate = plugin->sampleRate;
+                    format.mFormatID = kAudioFormatLinearPCM;
+                    format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+                    format.mBytesPerPacket = 8;
+                    format.mFramesPerPacket = 1;
+                    format.mBytesPerFrame = 8;
+                    format.mChannelsPerFrame = 2;
+                    format.mBitsPerChannel = 32;
+                    *(AudioStreamBasicDescription*)outData = format;
+                    *outDataSize = sizeof(AudioStreamBasicDescription);
                     break;
+                }
+                case kAudioDevicePropertyStreams: {
+                    AudioObjectID streams[2] = { plugin->inputStreamObjectID, plugin->outputStreamObjectID };
+                    memcpy(outData, streams, 2 * sizeof(AudioObjectID));
+                    *outDataSize = 2 * sizeof(AudioObjectID);
+                    break;
+                }
+                case kAudioObjectPropertyOwnedObjects: {
+                    AudioObjectID objects[2] = { plugin->inputStreamObjectID, plugin->outputStreamObjectID };
+                    memcpy(outData, objects, 2 * sizeof(AudioObjectID));
+                    *outDataSize = 2 * sizeof(AudioObjectID);
+                    break;
+                }
                 default:
                     result = kAudioHardwareUnknownPropertyError;
                     break;
             }
             break;
+            
+        case kObjectID_Stream_Input:
+        case kObjectID_Stream_Output:
+            switch (inAddress->mSelector) {
+                case kAudioStreamPropertyTerminalType:
+                    *(UInt32*)outData = (inObjectID == kObjectID_Stream_Input) ? kAudioStreamTerminalTypeMicrophone : kAudioStreamTerminalTypeSpeaker;
+                    *outDataSize = sizeof(UInt32);
+                    break;
+                case kAudioStreamPropertyStartingChannel:
+                    *(UInt32*)outData = 1;
+                    *outDataSize = sizeof(UInt32);
+                    break;
+                case kAudioStreamPropertyLatency:
+                    *(UInt32*)outData = 0;
+                    *outDataSize = sizeof(UInt32);
+                    break;
+                case kAudioStreamPropertyFormat: {
+                    AudioStreamBasicDescription format = {0};
+                    format.mSampleRate = plugin->sampleRate;
+                    format.mFormatID = kAudioFormatLinearPCM;
+                    format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+                    format.mBytesPerPacket = 8;
+                    format.mFramesPerPacket = 1;
+                    format.mBytesPerFrame = 8;
+                    format.mChannelsPerFrame = 2;
+                    format.mBitsPerChannel = 32;
+                    *(AudioStreamBasicDescription*)outData = format;
+                    *outDataSize = sizeof(AudioStreamBasicDescription);
+                    break;
+                }
+                default:
+                    result = kAudioHardwareUnknownPropertyError;
+                    break;
+            }
+            break;
+            
         default:
             result = kAudioHardwareBadObjectError;
             break;
@@ -260,11 +387,11 @@ static OSStatus VocanaAudioServerPlugin_BeginIOOperation(AudioServerPlugInDriver
     return kAudioHardwareNoError;
 }
 
-static OSStatus VocanaAudioServerPlugin_DoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, AudioObjectID inStreamObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo, void* ioBufferList, void* outBufferList) {
+static OSStatus VocanaAudioServerPlugin_DoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, AudioObjectID inStreamObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo, void* ioBufferList) {
     return kAudioHardwareNoError;
 }
 
-static OSStatus VocanaAudioServerPlugin_EndIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo) {
+static OSStatus VocanaAudioServerPlugin_EndIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, AudioObjectID inStreamObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo, void* ioBufferList) {
     return kAudioHardwareNoError;
 }
 
@@ -308,3 +435,27 @@ static void VocanaAudioServerPlugin_Unload() {
     }
     DebugMsg("VocanaAudioServerPlugin unloaded");
 }
+EOF
+
+echo "🔨 Building simple HAL plugin..."
+
+clang -bundle -o ".build/release/VocanaAudioServerPlugin.bundle" \
+    Sources/VocanaAudioServerPlugin/VocanaAudioServerPlugin.c \
+    -I Sources/VocanaAudioServerPlugin/include \
+    -framework CoreAudio \
+    -framework CoreFoundation \
+    -arch arm64 \
+    -arch x86_64 \
+    -DRELEASE
+
+if [ $? -eq 0 ]; then
+    echo "✅ Simple HAL plugin built successfully"
+    echo ""
+    echo "📦 Installation commands:"
+    echo "========================"
+    echo "sudo cp '.build/release/VocanaAudioServerPlugin.bundle' '/Library/Audio/Plug-Ins/HAL/VocanaAudioServerPlugin.driver/Contents/MacOS/VocanaAudioServerPlugin'"
+    echo "sudo killall coreaudiod"
+    echo "system_profiler SPAudioDataType | grep -i vocana"
+else
+    echo "❌ Build failed"
+fi

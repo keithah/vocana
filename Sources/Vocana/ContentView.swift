@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var settings = AppSettings()
     @StateObject private var audioEngine = AudioEngine()
+    @State private var showingAudioRouting = false
 
     private func openSettingsWindow() {
         #if os(macOS)
@@ -25,6 +26,29 @@ struct ContentView: View {
             SensitivityControlView(sensitivity: $settings.sensitivity)
             
             Divider()
+            
+            // Audio Routing Button
+            VStack(spacing: 8) {
+                Button(action: {
+                    showingAudioRouting = true
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("Audio Routing")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                    }
+                    .padding()
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                Text("Configure virtual audio routing")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
             
             SettingsButtonView {
                 openSettingsWindow()
@@ -81,6 +105,10 @@ struct ContentView: View {
         }
         .padding()
         .frame(width: AppConstants.popoverWidth, height: AppConstants.popoverHeight)
+        .sheet(isPresented: $showingAudioRouting) {
+            AudioRoutingView()
+                .frame(width: 500, height: 600)
+        }
         .onAppear {
             audioEngine.startSimulation(isEnabled: settings.isEnabled, sensitivity: settings.sensitivity)
         }

@@ -89,17 +89,21 @@ class AudioProcessingXPCService: NSObject {
             return
         }
 
+        // CRITICAL: Copy XPC data immediately - the pointer is only valid for the lifetime of this message
+        let originalAudioData = Data(bytes: audioPtr!, count: bufferSize)
+
         // Process audio
         Task {
             do {
                 // Convert data to float array
-                guard let audioPtr = audioPtr else {
-                    logger.error("Audio data is nil")
-                    return
+                guard bufferSize % MemoryLayout<Float>.size == 0 else {
+                    logger.error("Invalid buffer size: not aligned to Float boundary")
+                    throw NSError(domain: "Vocana.XPCService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Buffer size not aligned to Float"])
                 }
 
-                let floatBuffer = audioPtr.withMemoryRebound(to: Float.self, capacity: bufferSize / MemoryLayout<Float>.size) { floatPtr in
-                    Array(UnsafeBufferPointer(start: floatPtr, count: bufferSize / MemoryLayout<Float>.size))
+                let floatBuffer = originalAudioData.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
+                    Array(UnsafeBufferPointer(start: ptr.bindMemory(to: Float.self).baseAddress!,
+                                             count: bufferSize / MemoryLayout<Float>.size))
                 }
 
                 // Process through ML pipeline
@@ -116,7 +120,11 @@ class AudioProcessingXPCService: NSObject {
                     return
                 }
                 processedData.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
-                    xpc_dictionary_set_data(reply, "processedAudioData", ptr.baseAddress!, processedData.count)
+                    guard let baseAddress = ptr.baseAddress else {
+                        logger.error("Processed data buffer is empty")
+                        return
+                    }
+                    xpc_dictionary_set_data(reply, "processedAudioData", baseAddress, processedData.count)
                 }
                 xpc_connection_send_message(connection, reply)
 
@@ -129,7 +137,13 @@ class AudioProcessingXPCService: NSObject {
                     logger.error("Failed to create XPC reply")
                     return
                 }
-                xpc_dictionary_set_data(reply, "processedAudioData", audioPtr!, bufferSize)
+                originalAudioData.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
+                    guard let baseAddress = ptr.baseAddress else {
+                        logger.error("Original data buffer is empty")
+                        return
+                    }
+                    xpc_dictionary_set_data(reply, "processedAudioData", baseAddress, originalAudioData.count)
+                }
                 xpc_connection_send_message(connection, reply)
             }
         }

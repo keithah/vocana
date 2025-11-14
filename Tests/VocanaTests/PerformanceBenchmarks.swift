@@ -79,7 +79,7 @@ class PerformanceBenchmarks: XCTestCase {
 
             print(String(format: "FFT Size %4d: CPU %.3fms, GPU %.3fms, Speedup %.1fx",
                          fftSize, cpuTime * 1000, gpuTime * 1000,
-                         cpuTime > 0 ? gpuTime / cpuTime : 0))
+                         gpuTime > 0 ? cpuTime / gpuTime : 0))
         }
     }
 
@@ -108,7 +108,7 @@ class PerformanceBenchmarks: XCTestCase {
 
                 print(String(format: "STFT %3dx%3d: CPU %.3fms, GPU %.3fms, Speedup %.1fx",
                              windowSize, hopSize, cpuTime * 1000, gpuTime * 1000,
-                             cpuTime > 0 ? gpuTime / cpuTime : 0))
+                             gpuTime > 0 ? cpuTime / gpuTime : 0))
             }
         }
     }
@@ -134,7 +134,7 @@ class PerformanceBenchmarks: XCTestCase {
 
             print(String(format: "ERB %2d bands: CPU %.3fms, GPU %.3fms, Speedup %.1fx",
                          numBands, cpuTime * 1000, gpuTime * 1000,
-                         cpuTime > 0 ? gpuTime / cpuTime : 0))
+                         gpuTime > 0 ? cpuTime / gpuTime : 0))
         }
     }
 
@@ -179,7 +179,7 @@ class PerformanceBenchmarks: XCTestCase {
 
                 print(String(format: "Linear %3dx%3d: CPU %.3fms, GPU %.3fms, Speedup %.1fx",
                              inputSize, outputSize, cpuTime * 1000, gpuTime * 1000,
-                             cpuTime > 0 ? gpuTime / cpuTime : 0))
+                             gpuTime > 0 ? cpuTime / gpuTime : 0))
             }
         }
     }
@@ -218,7 +218,7 @@ class PerformanceBenchmarks: XCTestCase {
 
                 print(String(format: "Conv1D %4dx%2d: CPU %.3fms, GPU %.3fms, Speedup %.1fx",
                              inputLength, kernelSize, cpuTime * 1000, gpuTime * 1000,
-                             cpuTime > 0 ? gpuTime / cpuTime : 0))
+                             gpuTime > 0 ? cpuTime / gpuTime : 0))
             }
         }
     }
@@ -285,7 +285,7 @@ class PerformanceBenchmarks: XCTestCase {
 
         print(String(format: "Quantized Inference: Original %.3fms, Quantized %.3fms, Speedup %.1fx",
                      originalTime * 1000, quantizedTime * 1000,
-                     originalTime > 0 ? quantizedTime / originalTime : 0))
+                     quantizedTime > 0 ? originalTime / quantizedTime : 0))
     }
 
     // MARK: - Memory Usage Benchmarks
@@ -377,7 +377,7 @@ class PerformanceBenchmarks: XCTestCase {
 
         print(String(format: "End-to-End Pipeline: CPU %.3fms, GPU %.3fms, Speedup %.1fx",
                      cpuTime * 1000, gpuTime * 1000,
-                     cpuTime > 0 ? gpuTime / cpuTime : 0))
+                     gpuTime > 0 ? cpuTime / gpuTime : 0))
     }
 
     // MARK: - Helper Methods

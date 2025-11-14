@@ -173,11 +173,9 @@ class AudioSessionManager {
                        memcpy(destChannels[channel], sourceChannels[channel], bytesToCopy)
                     }
                     
-                   // Fix CRITICAL: Use synchronous MainActor dispatch to prevent buffer lifecycle issues
-                   // Audio tap callback runs on high-priority audio thread, buffer must be processed immediately
-                   DispatchQueue.main.async { [weak self] in
-                       self?.onAudioBufferReceived?(copiedBuffer)
-                   }
+                   // Fix CRITICAL: Call callback directly on audio thread to prevent blocking
+                   // Buffer processing will handle thread safety internally
+                   self.onAudioBufferReceived?(copiedBuffer)
                }
             isTapInstalled = true
             

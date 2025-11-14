@@ -4,7 +4,6 @@ import os.log
 /// Manages ML model inference and audio processing
 /// Responsibility: DeepFilterNet initialization, inference, memory pressure handling
 /// Isolated from audio capture, buffering, and level calculations
-@MainActor
 class MLAudioProcessor: MLAudioProcessorProtocol {
     private static let logger = Logger(subsystem: "Vocana", category: "MLAudioProcessor")
     
@@ -130,12 +129,12 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
         mlInitializationTask?.cancel()
     }
     
-     /// Process audio chunk with DeepFilterNet if available
-     /// - Parameters:
-     ///   - chunk: Audio samples to process
-     ///   - sensitivity: Sensitivity multiplier (0-1)
-     /// - Returns: Processed audio samples
-     func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
+      /// Process audio chunk with DeepFilterNet if available
+      /// - Parameters:
+      ///   - chunk: Audio samples to process
+      ///   - sensitivity: Sensitivity multiplier (0-1)
+      /// - Returns: Processed audio samples
+      nonisolated func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
          // Fix CRITICAL: Perform all state checks atomically within single sync block to prevent TOCTOU race
          let capturedDenoiser = mlStateQueue.sync { () -> DeepFilterNet? in
              guard !mlProcessingSuspendedDueToMemory else {
@@ -207,7 +206,7 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
     
      /// Check if ML is suspended due to memory pressure
      /// - Returns: true if suspended, false otherwise
-     func isMemoryPressureSuspended() -> Bool {
+     nonisolated func isMemoryPressureSuspended() -> Bool {
          return mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
      }
 

@@ -19,29 +19,16 @@ let package = Package(
             dependencies: [],
             linkerSettings: [
                 .linkedFramework("Metal"),
-                .linkedFramework("MetalPerformanceShaders")
-            ]
-        ),
-
-        .target(
-            name: "VocanaAudioServerPlugin",
-            dependencies: [],
-
-            sources: [
-                "VocanaAudioServerPlugin.c"
-            ],
-            cSettings: [
-                .headerSearchPath("include"),
-                .define("DEBUG", .when(configuration: .debug))
-            ],
-            linkerSettings: [
+                .linkedFramework("MetalPerformanceShaders"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
-                .linkedFramework("CoreFoundation"),
-                .linkedFramework("Accelerate"),
-                .linkedFramework("CoreServices")  // For XPC
+                .linkedFramework("CoreFoundation")
             ]
         ),
+
+
+
+        
         .testTarget(
             name: "VocanaTests",
             dependencies: ["Vocana"]

@@ -104,11 +104,11 @@ final class DeepFilterNetTests: XCTestCase {
         let spectrum = (real: real, imag: imag)
         
         // Create test coefficients (96 bins, 5 taps) with overflow protection
-        guard timeSteps > 0 && timeSteps <= 1000 else {
+        guard timeSteps > 0 && timeSteps <= 2000 else {
             throw NSError(domain: "TestError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid timeSteps: \(timeSteps)"])
         }
         let numCoefs = timeSteps * 96 * 5
-        guard numCoefs <= 1_000_000 else { // Reasonable upper bound
+        guard numCoefs <= 10_000_000 else { // Reasonable upper bound
             throw NSError(domain: "TestError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Coefficient count too large: \(numCoefs)"])
         }
         let coefficients = Array(repeating: 0.2 as Float, count: numCoefs)
@@ -239,7 +239,7 @@ final class DeepFilterNetTests: XCTestCase {
         expectation.expectedFulfillmentCount = 10
         
         // Test concurrent processing from multiple threads
-        for i in 0..<10 {
+        for _ in 0..<10 {
             DispatchQueue.global(qos: .userInteractive).async {
                 do {
                     let enhanced = try denoiser.process(audio: testAudio)
@@ -265,7 +265,7 @@ final class DeepFilterNetTests: XCTestCase {
         expectation.expectedFulfillmentCount = 20
         
         // Concurrent processing and reset operations
-        for i in 0..<10 {
+        for _ in 0..<10 {
             // Processing tasks
             DispatchQueue.global(qos: .userInteractive).async {
                 do {

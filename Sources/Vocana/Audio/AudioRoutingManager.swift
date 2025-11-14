@@ -1,0 +1,247 @@
+import Foundation
+import AVFoundation
+import CoreAudio
+
+/// Manages audio routing from BlackHole to physical output devices
+@MainActor
+class AudioRoutingManager: ObservableObject {
+    private let logger = Logger(subsystem: "Vocana", category: "AudioRouting")
+    
+    @Published var isRoutingActive = false
+    @Published var routingLatencyMs: Double = 0
+    @Published var droppedFrames: UInt64 = 0
+    
+    private var audioEngine: AVAudioEngine?
+    private var blackHoleInputNode: AVAudioInputNode?
+    private var physicalOutputNode: AVAudioOutputNode?
+    private var mixerNode: AVAudioMixerNode?
+    
+    // Audio format for processing
+    private let processingFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
+    
+    init() {
+        setupAudioEngine()
+    }
+    
+    /// Setup AVAudioEngine for routing BlackHole → Vocana Processing → Physical Output
+    private func setupAudioEngine() {
+        audioEngine = AVAudioEngine()
+        guard let engine = audioEngine else { return }
+        
+        blackHoleInputNode = engine.inputNode
+        physicalOutputNode = engine.outputNode
+        mixerNode = AVAudioMixerNode()
+        
+        // Add mixer to engine
+        engine.attach(mixerNode!)
+        
+        // Connect BlackHole input to mixer
+        engine.connect(blackHoleInputNode!, to: mixerNode!, format: processingFormat)
+        
+        // Connect mixer to physical output
+        engine.connect(mixerNode!, to: physicalOutputNode!, format: processingFormat)
+        
+        logger.info("Audio routing engine setup complete")
+    }
+    
+    /// Start audio routing from BlackHole to physical output
+    func startRouting(blackHoleDeviceID: AudioDeviceID, physicalOutputDeviceID: AudioDeviceID) -> Bool {
+        guard let engine = audioEngine,
+              let mixer = mixerNode else {
+            logger.error("Audio engine not properly initialized")
+            return false
+        }
+        
+        // Configure BlackHole as input device
+        let blackHoleInputConfigured = configureInputDevice(deviceID: blackHoleDeviceID)
+        if !blackHoleInputConfigured {
+            logger.error("Failed to configure BlackHole as input device")
+            return false
+        }
+        
+        // Configure physical output device
+        let physicalOutputConfigured = configureOutputDevice(deviceID: physicalOutputDeviceID)
+        if !physicalOutputConfigured {
+            logger.error("Failed to configure physical output device")
+            return false
+        }
+        
+        // Install tap on mixer to process audio with Vocana ML
+        installProcessingTap(on: mixer)
+        
+        // Start the engine
+        do {
+            try engine.start()
+            isRoutingActive = true
+            logger.info("Audio routing started successfully")
+            return true
+        } catch {
+            logger.error("Failed to start audio engine: \(error)")
+            return false
+        }
+    }
+    
+    /// Stop audio routing
+    func stopRouting() {
+        guard let engine = audioEngine else { return }
+        
+        engine.stop()
+        isRoutingActive = false
+        logger.info("Audio routing stopped")
+    }
+    
+    /// Configure input device for audio engine
+    private func configureInputDevice(deviceID: AudioDeviceID) -> Bool {
+        guard let engine = audioEngine else { return false }
+        
+        // Get device UID
+        var deviceUID: CFString = "" as CFString
+        var uidSize = UInt32(MemoryLayout<CFString>.size)
+        var uidAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        let result = AudioObjectGetPropertyData(deviceID, &uidAddress, 0, nil, &uidSize, &deviceUID)
+        guard result == noErr else {
+            logger.error("Failed to get input device UID: \(result)")
+            return false
+        }
+        
+        // Configure audio session
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+            try session.setActive(true)
+            
+            // Set preferred input
+            if let inputs = session.availableInputs {
+                for input in inputs {
+                    if input.uid == (deviceUID as String) {
+                        try session.setPreferredInput(input)
+                        logger.info("BlackHole configured as input device")
+                        return true
+                    }
+                }
+            }
+            
+            logger.warning("BlackHole not found in available inputs, using default")
+            return true
+        } catch {
+            logger.error("Failed to configure input device: \(error)")
+            return false
+        }
+    }
+    
+    /// Configure output device for audio engine
+    private func configureOutputDevice(deviceID: AudioDeviceID) -> Bool {
+        // Get device UID
+        var deviceUID: CFString = "" as CFString
+        var uidSize = UInt32(MemoryLayout<CFString>.size)
+        var uidAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        let result = AudioObjectGetPropertyData(deviceID, &uidAddress, 0, nil, &uidSize, &deviceUID)
+        guard result == noErr else {
+            logger.error("Failed to get output device UID: \(result)")
+            return false
+        }
+        
+        // Configure audio session output
+        do {
+            let session = AVAudioSession.sharedInstance()
+            
+            // Find matching output route
+            if let outputs = session.currentRoute.outputs {
+                for output in outputs {
+                    if output.uid == (deviceUID as String) {
+                        logger.info("Physical output device configured: \(deviceUID)")
+                        return true
+                    }
+                }
+            }
+            
+            logger.warning("Using default output route")
+            return true
+        } catch {
+            logger.error("Failed to configure output device: \(error)")
+            return false
+        }
+    }
+    
+    /// Install processing tap on mixer node for ML processing
+    private func installProcessingTap(on mixer: AVAudioMixerNode) {
+        let format = processingFormat
+        
+        mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, time in
+            guard let self = self else { return }
+            
+            Task { @MainActor in
+                self.processAudioBuffer(buffer, at: time)
+            }
+        }
+        
+        logger.info("Audio processing tap installed on mixer")
+    }
+    
+    /// Process audio buffer through Vocana ML pipeline
+    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, at time: AVAudioTime) {
+        guard let channelData = buffer.floatChannelData else { return }
+        
+        let startTime = CFAbsoluteTimeGetCurrent()
+        
+        // Convert to float array for ML processing
+        let frames = Int(buffer.frameLength)
+        let samples = Array(UnsafeBufferPointer(start: channelData[0], count: frames))
+        
+        // Process with ML (this would integrate with existing AudioEngine)
+        // For now, just pass through with level measurement
+        let processedSamples = processWithML(samples: samples)
+        
+        // Calculate latency
+        let processingTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+        routingLatencyMs = (routingLatencyMs * 0.9) + (processingTime * 0.1)
+        
+        // Update buffer with processed audio
+        if let outputChannelData = buffer.floatChannelData {
+            for (index, sample) in processedSamples.enumerated() {
+                if index < frames {
+                    outputChannelData[0][index] = sample // Left channel
+                    outputChannelData[1][index] = sample // Right channel
+                }
+            }
+        }
+    }
+    
+    /// Process audio samples with ML (placeholder for integration with AudioEngine)
+    private func processWithML(samples: [Float]) -> [Float] {
+        // This would integrate with the existing MLAudioProcessor
+        // For now, apply basic noise gate
+        let threshold: Float = 0.01
+        let ratio: Float = 0.1
+        
+        return samples.map { sample in
+            let absSample = abs(sample)
+            if absSample < threshold {
+                return sample * ratio
+            }
+            return sample
+        }
+    }
+    
+    /// Get available physical output devices
+    func getPhysicalOutputDevices() -> [BlackHoleAudioManager.AudioDeviceInfo] {
+        // This would delegate to BlackHoleAudioManager
+        // For now, return empty array
+        return []
+    }
+    
+    deinit {
+        stopRouting()
+        audioEngine = nil
+    }
+}

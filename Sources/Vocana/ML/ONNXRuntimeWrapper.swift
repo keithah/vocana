@@ -889,7 +889,7 @@ class MetalInferenceSession: InferenceSession {
     }
 
     private func runEncoder(inputs: [String: TensorData]) throws -> [String: TensorData] {
-        guard let erbFeat = inputs["erb_feat"] else {
+        guard inputs["erb_feat"] != nil else {
             throw ONNXError.invalidInput("Missing erb_feat")
         }
 
@@ -1004,9 +1004,9 @@ class NativeInferenceSession: InferenceSession {
     }
 
     private func runEncoder(inputs: [String: TensorData]) throws -> [String: TensorData] {
-        // Temporary fallback: reuse mock encoder until full native output shaping is implemented
-        let mock = try MockInferenceSession(modelPath: modelPath, options: options)
-        return try mock.run(inputs: inputs)
+        // Use real Metal inference session for encoder
+        let session = try MetalInferenceSession(modelPath: modelPath, options: options)
+        return try session.run(inputs: inputs)
     }
 
     private func runERBDecoder(inputs: [String: TensorData]) throws -> [String: TensorData] {

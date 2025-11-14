@@ -8,6 +8,9 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// Maximum FFT size supported by GPU kernels
+constant int MAX_FFT_SIZE = 4096;
+
 // MARK: - Convolution Operations
 
 struct Conv1DConstants {
@@ -258,7 +261,7 @@ kernel void fft_forward(
     if (gid >= uint(N)) return;
 
     // Convert real input to complex (imaginary part = 0)
-    Complex x[4096]; // Maximum FFT size
+    Complex x[MAX_FFT_SIZE]; // Maximum FFT size
     for (int i = 0; i < N; ++i) {
         x[i] = Complex{input[i], 0.0f};
     }
@@ -310,7 +313,7 @@ kernel void fft_inverse(
     if (gid >= uint(N)) return;
 
     // Convert input to complex
-    Complex x[4096];
+    Complex x[MAX_FFT_SIZE];
     for (int i = 0; i < N; ++i) {
         x[i] = Complex{input_real[i], input_imag[i]};
     }
@@ -384,7 +387,7 @@ kernel void stft_analysis(
     const int fft_size = constants.fftSize;
 
     // Extract and window the frame
-    Complex frame[4096]; // Max FFT size
+    Complex frame[MAX_FFT_SIZE]; // Max FFT size
     for (int i = 0; i < fft_size; ++i) {
         float sample = (frame_start + i < constants.windowSize) ? input[frame_start + i] : 0.0f;
         float win_val = (i < constants.windowSize) ? window[i] : 1.0f;

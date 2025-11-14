@@ -75,14 +75,14 @@ class MetalNeuralProcessor {
     }
 
     private func createComputePipeline(functionName: String) throws -> MTLComputePipelineState {
-        guard let device = device else {
+        guard let mtlDevice = device else {
             throw MetalError.notInitialized
         }
         guard let function = library?.makeFunction(name: functionName) else {
             throw MetalError.functionNotFound(functionName)
         }
 
-        return try device.makeComputePipelineState(function: function)
+        return try mtlDevice.makeComputePipelineState(function: function)
     }
 
     // MARK: - Buffer Pool Management
@@ -144,7 +144,7 @@ class MetalNeuralProcessor {
     /// - Memory: Uses buffer pooling for efficient memory management
     /// - Accuracy: Radix-2 FFT with bit-reversal permutation
     func fft(input: [Float], inverse: Bool = false) throws -> (real: [Float], imag: [Float]) {
-        guard let device = device else {
+        guard device != nil else {
             throw MetalError.notInitialized
         }
 
@@ -152,7 +152,7 @@ class MetalNeuralProcessor {
         let log2fftSize = Int(log2(Float(fftSize)))
 
         guard fftSize > 0 && (1 << log2fftSize) == fftSize else {
-            throw MetalError.commandBufferCreationFailed // FFT size must be power of 2
+            throw MetalError.invalidInput // FFT size must be power of 2
         }
 
         guard let fftPipeline = try? createComputePipeline(functionName: inverse ? "fft_inverse" : "fft_forward"),
@@ -167,14 +167,21 @@ class MetalNeuralProcessor {
             throw MetalError.commandBufferCreationFailed
         }
 
-        // Copy input data
-        memcpy(inputBuffer.contents(), input, input.count * MemoryLayout<Float>.size)
-
-        guard let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeComputeCommandEncoder() else {
+        // Ensure buffers are returned even on early exit
+        defer {
             returnBuffer(inputBuffer)
             returnBuffer(outputRealBuffer)
             returnBuffer(outputImagBuffer)
+        }
+
+        // Copy input data safely
+        input.withUnsafeBytes { inputPtr in
+            guard let inputBase = inputPtr.baseAddress else { return }
+            memcpy(inputBuffer.contents(), inputBase, input.count * MemoryLayout<Float>.size)
+        }
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeComputeCommandEncoder() else {
             throw MetalError.commandBufferCreationFailed
         }
 
@@ -210,16 +217,8 @@ class MetalNeuralProcessor {
             let realResult = Array(UnsafeBufferPointer(start: realPtr, count: fftSize))
             let imagResult = Array(UnsafeBufferPointer(start: imagPtr, count: fftSize))
 
-            // Return buffers to pool
-            returnBuffer(inputBuffer)
-            returnBuffer(outputRealBuffer)
-            returnBuffer(outputImagBuffer)
-
             return (realResult, imagResult)
         } else {
-            returnBuffer(inputBuffer)
-            returnBuffer(outputRealBuffer)
-            returnBuffer(outputImagBuffer)
             throw MetalError.commandBufferCreationFailed
         }
     }
@@ -240,7 +239,7 @@ class MetalNeuralProcessor {
     /// - Memory: Efficient buffer management for large audio signals
     /// - Quality: Hann windowing with overlap-add reconstruction
     func stft(input: [Float], windowSize: Int, hopSize: Int, inverse: Bool = false) throws -> (real: [Float], imag: [Float]) {
-        guard let device = device else {
+        guard device != nil else {
             throw MetalError.notInitialized
         }
 
@@ -359,7 +358,7 @@ class MetalNeuralProcessor {
     /// - Accuracy: Perceptually motivated frequency analysis
     /// - Memory: Efficient filterbank generation and application
     func erbFilter(spectrum: (real: [Float], imag: [Float]), numBands: Int, sampleRate: Float) throws -> (real: [Float], imag: [Float]) {
-        guard let device = device else {
+        guard device != nil else {
             throw MetalError.notInitialized
         }
 
@@ -602,7 +601,7 @@ class MetalNeuralProcessor {
     /// - Note: Includes bias addition as part of the linear operation for completeness.
     ///         MPS provides highly optimized matrix multiplication kernels.
     func linear(input: [Float], weights: [[Float]], bias: [Float], completion: @escaping (Result<[Float], MetalError>) -> Void) {
-        guard let device = device else {
+        guard let mtlDevice = device else {
             completion(.failure(.notInitialized))
             return
         }
@@ -611,7 +610,7 @@ class MetalNeuralProcessor {
         let outputSize = bias.count
 
         let mps = MPSMatrixMultiplication(
-            device: device,
+            device: mtlDevice,
             transposeLeft: false,
             transposeRight: false,
             resultRows: outputSize,
@@ -838,6 +837,7 @@ enum MetalError: Error, LocalizedError {
     case functionNotFound(String)
     case commandBufferCreationFailed
     case mpsNotAvailable
+    case invalidInput
 
     var errorDescription: String? {
         switch self {
@@ -851,6 +851,8 @@ enum MetalError: Error, LocalizedError {
             return "Failed to create Metal command buffer"
         case .mpsNotAvailable:
             return "Metal Performance Shaders not available"
+        case .invalidInput:
+            return "Invalid input parameters"
         }
     }
 }

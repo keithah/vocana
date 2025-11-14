@@ -268,8 +268,8 @@ static Boolean                      gBox_Acquired                       = kBox_A
 static pthread_mutex_t              gDevice_IOMutex                     = PTHREAD_MUTEX_INITIALIZER;
 static Float64                      gDevice_SampleRate                  = 48000.0;
 static Float64                      gDevice_RequestedSampleRate         = 0.0;
-static UInt64                       gDevice_IOIsRunning                 = 0;
-static UInt64                       gDevice2_IOIsRunning                = 0;
+static atomic_uint_fast64_t           gDevice_IOIsRunning                 = ATOMIC_VAR_INIT(0);
+static atomic_uint_fast64_t           gDevice2_IOIsRunning                = ATOMIC_VAR_INIT(0);
 static const UInt32                 kDevice_RingBufferSize              = 16384;
 static Float64                      gDevice_HostTicksPerFrame           = 0.0;
 static Float64                      gDevice_AdjustedTicksPerFrame       = 0.0;
@@ -2614,13 +2614,13 @@ static OSStatus	VocanaVirtualDevice_GetDevicePropertyData(AudioServerPlugInDrive
             //    This property returns whether or not IO is running for the device. Note that
             //    we need to take both the state lock to check this value for thread safety.
             FailWithAction(inDataSize < sizeof(UInt32), theAnswer = kAudioHardwareBadPropertySizeError, Done, "VocanaVirtualDevice_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceIsRunning for the device");
-            pthread_mutex_lock(&gPlugIn_StateMutex);
+            // Use atomic operations for real-time safety
             switch (inObjectID) {
                 case kObjectID_Device:
-                    *((UInt32*)outData) = ((gDevice_IOIsRunning > 0) > 0) ? 1 : 0;
+                    *((UInt32*)outData) = (atomic_load(&gDevice_IOIsRunning) > 0) ? 1 : 0;
                     break;
                 case kObjectID_Device2:
-                    *((UInt32*)outData) = ((gDevice2_IOIsRunning > 0) > 0) ? 1 : 0;
+                    *((UInt32*)outData) = (atomic_load(&gDevice2_IOIsRunning) > 0) ? 1 : 0;
                     break;
                 default:
                     *((UInt32*)outData) = 0;
@@ -4321,18 +4321,15 @@ static OSStatus	VocanaVirtualDevice_StartIO(AudioServerPlugInDriverRef inDriver,
 	//	check the arguments
 	FailWithAction(inDriver != gAudioServerPlugInDriverRef, theAnswer = kAudioHardwareBadObjectError, Done, "VocanaVirtualDevice_StartIO: bad driver reference");
 	FailWithAction(inDeviceObjectID != kObjectID_Device && inDeviceObjectID != kObjectID_Device2, theAnswer = kAudioHardwareBadObjectError, Done, "VocanaVirtualDevice_StartIO: bad device ID");
-    FailWithAction(inDeviceObjectID == kObjectID_Device && gDevice_IOIsRunning == UINT64_MAX, theAnswer = kAudioHardwareIllegalOperationError, Done, "VocanaVirtualDevice_StartIO: overflow error.");
-    FailWithAction(inDeviceObjectID == kObjectID_Device2 && gDevice2_IOIsRunning == UINT64_MAX, theAnswer = kAudioHardwareIllegalOperationError, Done, "VocanaVirtualDevice_StartIO: overflow error.");
-
-	//	we need to hold the state lock
-	pthread_mutex_lock(&gPlugIn_StateMutex);
-	
+    FailWithAction(inDeviceObjectID == kObjectID_Device && atomic_load(&gDevice_IOIsRunning) == UINT64_MAX, theAnswer = kAudioHardwareIllegalOperationError, Done, "VocanaVirtualDevice_StartIO: overflow error.");
+    FailWithAction(inDeviceObjectID == kObjectID_Device2 && atomic_load(&gDevice2_IOIsRunning) == UINT64_MAX, theAnswer = kAudioHardwareIllegalOperationError, Done, "VocanaVirtualDevice_StartIO: overflow error.");
+ 
+	//	Use atomic operations for real-time safety
+    if (inDeviceObjectID == kObjectID_Device) { atomic_fetch_add(&gDevice_IOIsRunning, 1); }
+    if (inDeviceObjectID == kObjectID_Device2) { atomic_fetch_add(&gDevice2_IOIsRunning, 1); }
     
-    if (inDeviceObjectID == kObjectID_Device) { gDevice_IOIsRunning += 1; }
-    if (inDeviceObjectID == kObjectID_Device2) { gDevice2_IOIsRunning += 1; }
-    
-    // allocate ring buffer with error checking
-    if ((gDevice_IOIsRunning || gDevice2_IOIsRunning) && gRingBuffer == NULL)
+     // allocate ring buffer with error checking
+     if ((atomic_load(&gDevice_IOIsRunning) || atomic_load(&gDevice2_IOIsRunning)) && gRingBuffer == NULL)
     {
         gDevice_NumberTimeStamps = 0;
         gDevice_AnchorSampleTime = 0;
@@ -4372,25 +4369,19 @@ static OSStatus	VocanaVirtualDevice_StopIO(AudioServerPlugInDriverRef inDriver, 
 	//	check the arguments
 	FailWithAction(inDriver != gAudioServerPlugInDriverRef, theAnswer = kAudioHardwareBadObjectError, Done, "VocanaVirtualDevice_StopIO: bad driver reference");
 	FailWithAction(inDeviceObjectID != kObjectID_Device && inDeviceObjectID != kObjectID_Device2, theAnswer = kAudioHardwareBadObjectError, Done, "VocanaVirtualDevice_StopIO: bad device ID");
-    FailWithAction(inDeviceObjectID == kObjectID_Device && gDevice_IOIsRunning == 0, theAnswer = kAudioHardwareIllegalOperationError, Done, "VocanaVirtualDevice_StartIO: underflow error.");
-    FailWithAction(inDeviceObjectID == kObjectID_Device2 && gDevice2_IOIsRunning == 0, theAnswer = kAudioHardwareIllegalOperationError, Done, "VocanaVirtualDevice_StartIO: underflow error.");
-
-	//	we need to hold the state lock
-	pthread_mutex_lock(&gPlugIn_StateMutex);
-	
-    
-    if (inDeviceObjectID == kObjectID_Device) { gDevice_IOIsRunning -= 1; }
-    if (inDeviceObjectID == kObjectID_Device2) { gDevice2_IOIsRunning -= 1; }
+    FailWithAction(inDeviceObjectID == kObjectID_Device && atomic_load(&gDevice_IOIsRunning) == 0, theAnswer = kAudioHardwareIllegalOperationError, Done, "VocanaVirtualDevice_StopIO: underflow error.");
+    FailWithAction(inDeviceObjectID == kObjectID_Device2 && atomic_load(&gDevice2_IOIsRunning) == 0, theAnswer = kAudioHardwareIllegalOperationError, Done, "VocanaVirtualDevice_StopIO: underflow error.");
+ 
+	//	Use atomic operations for real-time safety
+    if (inDeviceObjectID == kObjectID_Device) { atomic_fetch_sub(&gDevice_IOIsRunning, 1); }
+    if (inDeviceObjectID == kObjectID_Device2) { atomic_fetch_sub(&gDevice2_IOIsRunning, 1); }
     
     // free the ring buffer
-    if (!gDevice_IOIsRunning && !gDevice2_IOIsRunning && gRingBuffer != NULL)
+    if (!atomic_load(&gDevice_IOIsRunning) && !atomic_load(&gDevice2_IOIsRunning) && gRingBuffer != NULL)
     {
         free(gRingBuffer);
         gRingBuffer = NULL;
     }
-	
-	//	unlock the state lock
-	pthread_mutex_unlock(&gPlugIn_StateMutex);
 	
 Done:
 	return theAnswer;

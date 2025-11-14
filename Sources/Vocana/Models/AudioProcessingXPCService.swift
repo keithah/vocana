@@ -8,112 +8,193 @@
 import Foundation
 import OSLog
 
+// Import XPC framework
+import XPC
+
 /// XPC Service for audio processing
 /// Provides secure inter-process communication between HAL plugin and Swift ML processing
-class AudioProcessingXPCService: NSObject, NSXPCListenerDelegate {
+class AudioProcessingXPCService: NSObject {
     private let logger = Logger(subsystem: "com.vocana", category: "XPCService")
-    private let listener: NSXPCListener
     private let audioProcessor: MLAudioProcessor
+    private var xpcConnection: xpc_connection_t?
 
     init(audioProcessor: MLAudioProcessor) {
         self.audioProcessor = audioProcessor
-        self.listener = NSXPCListener(machServiceName: "com.vocana.AudioProcessingXPCService")
         super.init()
-
-        listener.delegate = self
+        setupXPCConnection()
     }
 
     func start() {
-        listener.resume()
         logger.info("AudioProcessingXPCService started")
     }
 
     func stop() {
-        listener.suspend()
+        if let connection = xpcConnection {
+            xpc_connection_cancel(connection)
+            xpcConnection = nil
+        }
         logger.info("AudioProcessingXPCService stopped")
     }
 
-    // MARK: - NSXPCListenerDelegate
+    private func setupXPCConnection() {
+        xpcConnection = xpc_connection_create_mach_service(
+            "com.vocana.AudioProcessingXPCService",
+            nil,
+            UInt64(XPC_CONNECTION_MACH_SERVICE_LISTENER)
+        )
 
-    func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
-        // Configure the connection
-        newConnection.exportedInterface = NSXPCInterface(with: AudioProcessingXPCProtocol.self)
-        newConnection.exportedObject = AudioProcessingXPCDelegate(audioProcessor: audioProcessor)
-
-        // Set up connection lifecycle
-        newConnection.invalidationHandler = {
-            self.logger.warning("XPC connection invalidated")
-        }
-
-        newConnection.interruptionHandler = {
-            self.logger.warning("XPC connection interrupted")
-        }
-
-        // Resume the connection
-        newConnection.resume()
-
-        logger.info("Accepted new XPC connection")
-        return true
-    }
-}
-
-/// XPC Protocol for audio processing
-@objc protocol AudioProcessingXPCProtocol {
-    func processAudioBuffer(_ buffer: Data, sampleRate: Double, channelCount: Int, reply: @escaping (Data) -> Void)
-    func setNoiseCancellationEnabled(_ enabled: Bool)
-    func getProcessingLatency() -> Double
-}
-
-/// XPC Delegate that handles audio processing requests
-class AudioProcessingXPCDelegate: NSObject, AudioProcessingXPCProtocol {
-    private let audioProcessor: MLAudioProcessor
-    private let logger = Logger(subsystem: "com.vocana", category: "XPCDelegate")
-    private var noiseCancellationEnabled = true
-
-    init(audioProcessor: MLAudioProcessor) {
-        self.audioProcessor = audioProcessor
-    }
-
-    func processAudioBuffer(_ buffer: Data, sampleRate: Double, channelCount: Int, reply: @escaping (Data) -> Void) {
-        guard noiseCancellationEnabled else {
-            // If noise cancellation is disabled, return original buffer
-            reply(buffer)
+        guard let connection = xpcConnection else {
+            logger.error("Failed to create XPC listener")
             return
         }
 
-        // Convert Data to float array
-        let floatBuffer = buffer.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> [Float] in
-            let floatPtr = ptr.bindMemory(to: Float.self)
-            return Array(floatPtr)
+        xpc_connection_set_event_handler(connection) { [weak self] event in
+            self?.handleXPCEvent(event)
         }
 
-        // Process audio through ML pipeline
-        Task {
+        xpc_connection_resume(connection)
+        logger.info("XPC listener started")
+    }
+
+    private func handleXPCEvent(_ event: xpc_object_t) {
+        let type = xpc_get_type(event)
+
+        if type == XPC_TYPE_CONNECTION {
+            // New connection
+            let newConnection = event
+            xpc_connection_set_event_handler(newConnection) { [weak self] message in
+                self?.handleXPCMessage(message, from: newConnection)
+            }
+            xpc_connection_resume(newConnection)
+            logger.info("Accepted new XPC connection")
+        } else if type == XPC_TYPE_ERROR {
+            logger.error("XPC connection error")
+        }
+    }
+
+    private func handleXPCMessage(_ message: xpc_object_t, from connection: xpc_connection_t) {
+        guard xpc_get_type(message) == XPC_TYPE_DICTIONARY else {
+            logger.warning("Received non-dictionary XPC message")
+            return
+        }
+
+        // Extract audio data from message with validation
+        var bufferSize: size_t = 0
+        let audioPtr = xpc_dictionary_get_data(message, "audioData", &bufferSize)
+        let sampleRate = xpc_dictionary_get_double(message, "sampleRate")
+        let channelCount = xpc_dictionary_get_int64(message, "channelCount")
+
+        // Validate message parameters
+        guard audioPtr != nil && bufferSize > 0 else {
+            logger.error("Invalid XPC message format - missing audio data")
+            return
+        }
+        
+        guard sampleRate > 0 && sampleRate <= 192000 else {
+            logger.error("Invalid sample rate: \(sampleRate)")
+            return
+        }
+        
+        guard channelCount > 0 && channelCount <= 8 else {
+            logger.error("Invalid channel count: \(channelCount)")
+            return
+        }
+        
+        let expectedFrameCount = bufferSize / MemoryLayout<Float>.size
+        guard expectedFrameCount > 0 && expectedFrameCount <= 8192 else {
+            logger.error("Invalid buffer size: \(bufferSize) bytes (\(expectedFrameCount) frames)")
+            return
+        }
+        
+        guard expectedFrameCount % Int(channelCount) == 0 else {
+            logger.error("Buffer size not aligned with channel count: \(expectedFrameCount) frames, \(channelCount) channels")
+            return
+        }
+
+        // Process audio with proper error handling
+        Task { @MainActor in
             do {
+                // Convert data to float array safely
+                guard let audioPtr = audioPtr else {
+                    logger.error("Audio data is nil")
+                    await self.sendErrorResponse(message: message, connection: connection, originalData: nil, bufferSize: 0)
+                    return
+                }
+                
+                let floatBuffer = audioPtr.withMemoryRebound(to: Float.self, capacity: bufferSize / MemoryLayout<Float>.size) { floatPtr in
+                    Array(UnsafeBufferPointer(start: floatPtr, count: bufferSize / MemoryLayout<Float>.size))
+                }
+
+                // Validate buffer contents
+                guard !floatBuffer.isEmpty else {
+                    logger.error("Empty audio buffer")
+                    await self.sendErrorResponse(message: message, connection: connection, originalData: audioPtr, bufferSize: bufferSize)
+                    return
+                }
+
+                // Process through ML pipeline
                 let processedBuffer = try await self.audioProcessor.processAudioBuffer(floatBuffer, sampleRate: Float(sampleRate))
 
-                // Convert back to Data
+                // Validate processed buffer
+                guard processedBuffer.count == floatBuffer.count else {
+                    logger.error("Processed buffer size mismatch: expected \(floatBuffer.count), got \(processedBuffer.count)")
+                    await self.sendErrorResponse(message: message, connection: connection, originalData: audioPtr, bufferSize: bufferSize)
+                    return
+                }
+
+                // Convert back to data
                 let processedData = processedBuffer.withUnsafeBufferPointer { bufferPtr in
                     Data(buffer: bufferPtr)
                 }
 
-                reply(processedData)
+                // Send successful reply
+                await self.sendSuccessResponse(message: message, connection: connection, data: processedData)
+
+                logger.debug("Successfully processed audio buffer of \(floatBuffer.count) samples")
             } catch {
-                self.logger.error("Audio processing failed: \(error.localizedDescription)")
-                // Return original buffer on error
-                reply(buffer)
+                logger.error("Audio processing failed: \(error.localizedDescription)")
+                await self.sendErrorResponse(message: message, connection: connection, originalData: audioPtr, bufferSize: bufferSize)
             }
         }
     }
-
-    func setNoiseCancellationEnabled(_ enabled: Bool) {
-        noiseCancellationEnabled = enabled
-        logger.info("Noise cancellation \(enabled ? "enabled" : "disabled")")
+    
+    @MainActor
+    private func sendSuccessResponse(message: xpc_object_t, connection: xpc_connection_t, data: Data) {
+        guard let reply = xpc_dictionary_create_reply(message) else {
+            logger.error("Failed to create XPC success reply")
+            return
+        }
+        
+        data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
+            if let baseAddress = ptr.baseAddress {
+                xpc_dictionary_set_data(reply, "processedAudioData", baseAddress, data.count)
+                xpc_dictionary_set_int64(reply, "status", 0) // Success
+            }
+        }
+        
+        xpc_connection_send_message(connection, reply)
     }
-
-    func getProcessingLatency() -> Double {
-        // Return current processing latency in milliseconds
-        // This would be measured from the audio processor
-        return 0.62 // Current measured latency
+    
+    @MainActor
+    private func sendErrorResponse(message: xpc_object_t, connection: xpc_connection_t, originalData: UnsafeRawPointer?, bufferSize: size_t) {
+        guard let reply = xpc_dictionary_create_reply(message) else {
+            logger.error("Failed to create XPC error reply")
+            return
+        }
+        
+        // Send original data back if available, otherwise send empty buffer
+        if let originalData = originalData, bufferSize > 0 {
+            xpc_dictionary_set_data(reply, "processedAudioData", originalData, bufferSize)
+        } else {
+            let emptyBuffer: [Float] = []
+            emptyBuffer.withUnsafeBufferPointer { bufferPtr in
+                if let baseAddress = bufferPtr.baseAddress {
+                    xpc_dictionary_set_data(reply, "processedAudioData", baseAddress, 0)
+                }
+            }
+        }
+        
+        xpc_dictionary_set_int64(reply, "status", -1) // Error
+        xpc_connection_send_message(connection, reply)
     }
 }

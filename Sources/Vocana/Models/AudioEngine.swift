@@ -65,6 +65,7 @@ public protocol MLAudioProcessorProtocol: AnyObject {
     func initializeMLProcessing()
     func stopMLProcessing()
     func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]?
+    func processAudioBuffer(_ buffer: [Float], sampleRate: Float) async throws -> [Float]
     func suspendMLProcessing(reason: String)
     func attemptMemoryPressureRecovery()
     func isMemoryPressureSuspended() -> Bool

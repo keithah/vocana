@@ -7,11 +7,11 @@ assignees: ''
 ---
 
 ## Description
-The Core Audio HAL plugin is fully implemented and working. Virtual audio devices appear in macOS System Preferences. Now connect the Swift application to discover and control these HAL devices.
+The Core Audio HAL plugin is fully implemented and working. Virtual audio devices appear in System Preferences. Now connect the Swift application to discover and control these HAL devices.
 
 ## Current Status
 - ✅ HAL Plugin: AudioServerPluginDriverInterface FULLY IMPLEMENTED AND WORKING
-- ✅ Device Registration: "Vocana Microphone" and "Vocana Speaker" appear in macOS system
+- ✅ Device Registration: "Vocana Microphone" and "Vocana Speaker" appear in system
 - ✅ Build & Install: Plugin built, signed, and installed in /Library/Audio/Plug-Ins/HAL/
 - ✅ System Integration: Devices visible in system_profiler and System Preferences
 - ✅ XPC Framework: Inter-process communication bridge established

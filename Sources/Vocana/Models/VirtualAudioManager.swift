@@ -186,14 +186,17 @@ enum VocanaNoiseCancellationState: UInt32 {
                     if result == kAudioHardwareNoError, let deviceUID = uidBuffer.pointee {
                         let uid = deviceUID as String
                         // Check if this is a Vocana device
-                        if uid.contains("com.vocana.audio.input") {
-                            inputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: true, originalDeviceID: deviceID)
-                            foundInputDevice = true
-                            logger.info("Discovered Vocana input device: \(uid)")
-                        } else if uid.contains("com.vocana.audio.output") {
-                            outputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: false, originalDeviceID: deviceID)
-                            foundOutputDevice = true
-                            logger.info("Discovered Vocana output device: \(uid)")
+                        if uid.contains("VocanaVirtualDevice2ch_UID") {
+                            // First device is input, second device (_2_UID) is output
+                            if uid.contains("_2_UID") {
+                                outputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: false, originalDeviceID: deviceID)
+                                foundOutputDevice = true
+                                logger.info("Discovered Vocana output device: \(uid)")
+                            } else {
+                                inputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: true, originalDeviceID: deviceID)
+                                foundInputDevice = true
+                                logger.info("Discovered Vocana input device: \(uid)")
+                            }
                         }
                     }
                 }

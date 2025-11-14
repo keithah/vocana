@@ -38,7 +38,7 @@ This document tracks the comprehensive fixes applied across multiple code review
 - **I/O Operations**: StartIO/StopIO/Read/Write callbacks implemented
 - **XPC Framework**: Inter-process communication bridge established
 - **Build System**: Plugin builds, signs, and installs correctly
-- **System Integration**: Devices appear in macOS System Preferences
+- **System Integration**: Devices appear in System Preferences
 
 ### Final Verification
 - **43/43 tests passing** (100% success rate)
@@ -121,7 +121,7 @@ Focus on **Bucket 5 & 6**
 - ✅ 100% tests passing (43/43)
 - ✅ Zero build warnings
 - ✅ HAL Plugin fully implemented and working
-- ✅ Virtual audio devices appear in macOS system
+- ✅ Virtual audio devices appear in system
 - ✅ XPC communication framework established
 - 📊 Production readiness: 4.8/5 stars
 

@@ -50,8 +50,8 @@ else
     exit 1
 fi
 
-# Set secure permissions (750 for system directory, 644 for files)
-chmod 750 /Library/Audio/Plug-Ins/HAL/VocanaVirtualDevice.driver
+# Set secure permissions (755 for system directory, 644 for files)
+chmod 755 /Library/Audio/Plug-Ins/HAL/VocanaVirtualDevice.driver
 chmod 644 /Library/Audio/Plug-Ins/HAL/VocanaVirtualDevice.driver/Contents/Info.plist
 chmod 755 /Library/Audio/Plug-Ins/HAL/VocanaVirtualDevice.driver/Contents/MacOS
 chmod 755 /Library/Audio/Plug-Ins/HAL/VocanaVirtualDevice.driver/Contents/MacOS/VocanaVirtualDevice

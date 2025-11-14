@@ -268,15 +268,15 @@ static Boolean                      gBox_Acquired                       = kBox_A
 static pthread_mutex_t              gDevice_IOMutex                     = PTHREAD_MUTEX_INITIALIZER;
 static Float64                      gDevice_SampleRate                  = 48000.0;
 static Float64                      gDevice_RequestedSampleRate         = 0.0;
-static atomic_uint_fast64_t           gDevice_IOIsRunning                 = ATOMIC_VAR_INIT(0);
-static atomic_uint_fast64_t           gDevice2_IOIsRunning                = ATOMIC_VAR_INIT(0);
+static atomic_uint_fast64_t           gDevice_IOIsRunning                 = 0;
+static atomic_uint_fast64_t           gDevice2_IOIsRunning                = 0;
 static const UInt32                 kDevice_RingBufferSize              = 16384;
 static Float64                      gDevice_HostTicksPerFrame           = 0.0;
 static Float64                      gDevice_AdjustedTicksPerFrame       = 0.0;
-static _Atomic Float64               gDevice_PreviousTicks               = ATOMIC_VAR_INIT(0.0);
-static _Atomic UInt64                gDevice_NumberTimeStamps            = ATOMIC_VAR_INIT(0);
+static _Atomic Float64               gDevice_PreviousTicks               = 0.0;
+static _Atomic UInt64                gDevice_NumberTimeStamps            = 0;
 static Float64                      gDevice_AnchorSampleTime            = 0.0;
-static _Atomic UInt64                gDevice_AnchorHostTime              = ATOMIC_VAR_INIT(0);
+static _Atomic UInt64                gDevice_AnchorHostTime              = 0;
 
 static bool                         gStream_Input_IsActive              = true;
 static bool                         gStream_Output_IsActive             = true;
@@ -289,7 +289,7 @@ static bool                         gMute_Master_Value                  = false;
 static UInt32                       kClockSource_NumberItems            = 2;
 #define                             kClockSource_InternalFixed         "Internal Fixed"
 #define                             kClockSource_InternalAdjustable    "Internal Adjustable"
-static _Atomic UInt32                gClockSource_Value                  = ATOMIC_VAR_INIT(0);
+static _Atomic UInt32                gClockSource_Value                  = 0;
 static bool                         gPitch_Adjust_Enabled               = false;
 
 static struct ObjectInfo            kDevice_ObjectList[]                = {
@@ -4576,8 +4576,14 @@ static OSStatus	VocanaVirtualDevice_DoIOOperation(AudioServerPlugInDriverRef inD
                 return kAudioHardwareIllegalOperationError;
             }
             
-            memcpy(ioMainBuffer, gRingBuffer + ringBufferFrameLocationStart * kNumber_Of_Channels, firstPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
-            memcpy((Float32*)ioMainBuffer + firstPartFrameSize * kNumber_Of_Channels, gRingBuffer, secondPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
+            // Copy the buffers with null checks
+            if (gRingBuffer != NULL) {
+                memcpy(ioMainBuffer, gRingBuffer + ringBufferFrameLocationStart * kNumber_Of_Channels, firstPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
+                memcpy((Float32*)ioMainBuffer + firstPartFrameSize * kNumber_Of_Channels, gRingBuffer, secondPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
+            } else {
+                // Ring buffer not allocated, clear output buffer
+                vDSP_vclr(ioMainBuffer, 1, inIOBufferFrameSize * kNumber_Of_Channels);
+            }
             
             // Finally we'll apply the output volume to the buffer.
 	    if(kEnableVolumeControl)
@@ -4615,9 +4621,11 @@ static OSStatus	VocanaVirtualDevice_DoIOOperation(AudioServerPlugInDriverRef inD
         }
         
         
-        // Copy the buffers.
-        memcpy(gRingBuffer + ringBufferFrameLocationStart * kNumber_Of_Channels, ioMainBuffer, firstPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
-        memcpy(gRingBuffer, (Float32*)ioMainBuffer + firstPartFrameSize * kNumber_Of_Channels, secondPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
+        // Copy the buffers with null checks
+        if (gRingBuffer != NULL) {
+            memcpy(gRingBuffer + ringBufferFrameLocationStart * kNumber_Of_Channels, ioMainBuffer, firstPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
+            memcpy(gRingBuffer, (Float32*)ioMainBuffer + firstPartFrameSize * kNumber_Of_Channels, secondPartFrameSize * kNumber_Of_Channels * sizeof(Float32));
+        }
         
         // Save the last output time.
         atomic_store(&lastOutputSampleTimeAtomic, (uint_least64_t)(inIOCycleInfo->mOutputTime.mSampleTime + inIOBufferFrameSize));

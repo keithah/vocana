@@ -269,7 +269,12 @@ class PerformanceBenchmarks: XCTestCase {
         originalTime = measureTime {
             var input = testInput
             for layer in layers {
-                input = try! layer.forward(input, hiddenStates: &originalHiddenStates)
+                do {
+                    input = try layer.forward(input, hiddenStates: &originalHiddenStates)
+                } catch {
+                    XCTFail("Layer forward failed: \(error)")
+                    return
+                }
             }
         }
 
@@ -279,7 +284,12 @@ class PerformanceBenchmarks: XCTestCase {
         quantizedTime = measureTime {
             var input = testInput
             for layer in quantizedLayers {
-                input = try! layer.forward(input, hiddenStates: &quantizedHiddenStates)
+                do {
+                    input = try layer.forward(input, hiddenStates: &quantizedHiddenStates)
+                } catch {
+                    XCTFail("Quantized layer forward failed: \(error)")
+                    return
+                }
             }
         }
 
@@ -337,7 +347,12 @@ class PerformanceBenchmarks: XCTestCase {
 
             var hiddenStates = [String: [Float]]()
             for layer in layers {
-                processed = try! layer.forward(Array(processed.prefix(512)), hiddenStates: &hiddenStates)
+                do {
+                    processed = try layer.forward(Array(processed.prefix(512)), hiddenStates: &hiddenStates)
+                } catch {
+                    XCTFail("CPU pipeline layer forward failed: \(error)")
+                    return
+                }
             }
         }
 

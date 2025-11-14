@@ -78,61 +78,123 @@ class AudioProcessingXPCService: NSObject {
             return
         }
 
-        // Extract audio data from message
+        // Extract audio data from message with validation
         var bufferSize: size_t = 0
         let audioPtr = xpc_dictionary_get_data(message, "audioData", &bufferSize)
         let sampleRate = xpc_dictionary_get_double(message, "sampleRate")
-        _ = xpc_dictionary_get_int64(message, "channelCount") // channelCount not used in processing
+        let channelCount = xpc_dictionary_get_int64(message, "channelCount")
 
+        // Validate message parameters
         guard audioPtr != nil && bufferSize > 0 else {
             logger.error("Invalid XPC message format - missing audio data")
             return
         }
+        
+        guard sampleRate > 0 && sampleRate <= 192000 else {
+            logger.error("Invalid sample rate: \(sampleRate)")
+            return
+        }
+        
+        guard channelCount > 0 && channelCount <= 8 else {
+            logger.error("Invalid channel count: \(channelCount)")
+            return
+        }
+        
+        let expectedFrameCount = bufferSize / MemoryLayout<Float>.size
+        guard expectedFrameCount > 0 && expectedFrameCount <= 8192 else {
+            logger.error("Invalid buffer size: \(bufferSize) bytes (\(expectedFrameCount) frames)")
+            return
+        }
+        
+        guard expectedFrameCount % Int(channelCount) == 0 else {
+            logger.error("Buffer size not aligned with channel count: \(expectedFrameCount) frames, \(channelCount) channels")
+            return
+        }
 
-        // Process audio
-        Task {
+        // Process audio with proper error handling
+        Task { @MainActor in
             do {
-                // Convert data to float array
+                // Convert data to float array safely
                 guard let audioPtr = audioPtr else {
                     logger.error("Audio data is nil")
+                    await self.sendErrorResponse(message: message, connection: connection, originalData: nil, bufferSize: 0)
                     return
                 }
-
+                
                 let floatBuffer = audioPtr.withMemoryRebound(to: Float.self, capacity: bufferSize / MemoryLayout<Float>.size) { floatPtr in
                     Array(UnsafeBufferPointer(start: floatPtr, count: bufferSize / MemoryLayout<Float>.size))
                 }
 
+                // Validate buffer contents
+                guard !floatBuffer.isEmpty else {
+                    logger.error("Empty audio buffer")
+                    await self.sendErrorResponse(message: message, connection: connection, originalData: audioPtr, bufferSize: bufferSize)
+                    return
+                }
+
                 // Process through ML pipeline
                 let processedBuffer = try await self.audioProcessor.processAudioBuffer(floatBuffer, sampleRate: Float(sampleRate))
+
+                // Validate processed buffer
+                guard processedBuffer.count == floatBuffer.count else {
+                    logger.error("Processed buffer size mismatch: expected \(floatBuffer.count), got \(processedBuffer.count)")
+                    await self.sendErrorResponse(message: message, connection: connection, originalData: audioPtr, bufferSize: bufferSize)
+                    return
+                }
 
                 // Convert back to data
                 let processedData = processedBuffer.withUnsafeBufferPointer { bufferPtr in
                     Data(buffer: bufferPtr)
                 }
 
-                // Send reply
-                guard let reply = xpc_dictionary_create_reply(message) else {
-                    logger.error("Failed to create XPC reply")
-                    return
-                }
-                processedData.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
-                    xpc_dictionary_set_data(reply, "processedAudioData", ptr.baseAddress!, processedData.count)
-                }
-                xpc_connection_send_message(connection, reply)
+                // Send successful reply
+                await self.sendSuccessResponse(message: message, connection: connection, data: processedData)
 
-                logger.debug("Processed audio buffer of \(floatBuffer.count) samples")
+                logger.debug("Successfully processed audio buffer of \(floatBuffer.count) samples")
             } catch {
                 logger.error("Audio processing failed: \(error.localizedDescription)")
-
-                // Send original data back on error
-                guard let reply = xpc_dictionary_create_reply(message) else {
-                    logger.error("Failed to create XPC reply")
-                    return
-                }
-                xpc_dictionary_set_data(reply, "processedAudioData", audioPtr!, bufferSize)
-                xpc_connection_send_message(connection, reply)
+                await self.sendErrorResponse(message: message, connection: connection, originalData: audioPtr, bufferSize: bufferSize)
             }
         }
     }
+    
+    @MainActor
+    private func sendSuccessResponse(message: xpc_object_t, connection: xpc_connection_t, data: Data) {
+        guard let reply = xpc_dictionary_create_reply(message) else {
+            logger.error("Failed to create XPC success reply")
+            return
+        }
+        
+        data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
+            if let baseAddress = ptr.baseAddress {
+                xpc_dictionary_set_data(reply, "processedAudioData", baseAddress, data.count)
+                xpc_dictionary_set_int64(reply, "status", 0) // Success
+            }
+        }
+        
+        xpc_connection_send_message(connection, reply)
+    }
+    
+    @MainActor
+    private func sendErrorResponse(message: xpc_object_t, connection: xpc_connection_t, originalData: UnsafeRawPointer?, bufferSize: size_t) {
+        guard let reply = xpc_dictionary_create_reply(message) else {
+            logger.error("Failed to create XPC error reply")
+            return
+        }
+        
+        // Send original data back if available, otherwise send empty buffer
+        if let originalData = originalData, bufferSize > 0 {
+            xpc_dictionary_set_data(reply, "processedAudioData", originalData, bufferSize)
+        } else {
+            let emptyBuffer: [Float] = []
+            emptyBuffer.withUnsafeBufferPointer { bufferPtr in
+                if let baseAddress = bufferPtr.baseAddress {
+                    xpc_dictionary_set_data(reply, "processedAudioData", baseAddress, 0)
+                }
+            }
+        }
+        
+        xpc_dictionary_set_int64(reply, "status", -1) // Error
+        xpc_connection_send_message(connection, reply)
+    }
 }
-

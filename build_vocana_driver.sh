@@ -53,9 +53,21 @@ cp "Sources/VocanaAudioDriver/Info.plist" "${PROJECT_NAME}.driver/Contents/"
 # Set proper permissions
 chmod 755 "${PROJECT_NAME}.driver/Contents/MacOS/${PROJECT_NAME}"
 
-# Code sign (adhoc for development)
+# Code sign with developer identity (if available) or ad-hoc for development
 echo "Code signing..."
-codesign --force --sign - "${PROJECT_NAME}.driver"
+if codesign --verify --verbose "${PROJECT_NAME}.driver" 2>/dev/null; then
+    echo "✅ Driver already properly signed"
+else
+    # Try to find a development certificate
+    DEVELOPER_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | grep -o '"[^"]*"' | head -1 | tr -d '"')
+    if [ -n "$DEVELOPER_ID" ]; then
+        echo "Using developer certificate: $DEVELOPER_ID"
+        codesign --force --sign "$DEVELOPER_ID" "${PROJECT_NAME}.driver"
+    else
+        echo "⚠️  No developer certificate found, using ad-hoc signing"
+        codesign --force --sign - "${PROJECT_NAME}.driver"
+    fi
+fi
 
 echo "✅ Build complete: ${PROJECT_NAME}.driver"
 echo ""

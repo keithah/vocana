@@ -12,7 +12,7 @@ import AppKit
 import CoreAudio
 import OSLog
 
-// Stub VocanaAudioDevice for UI development until HAL plugin is implemented
+// VocanaAudioDevice represents a HAL plugin audio device with XPC communication
 class VocanaAudioDevice: NSObject, ObservableObject {
     let deviceID: UInt32
     let isInputDevice: Bool
@@ -27,19 +27,17 @@ class VocanaAudioDevice: NSObject, ObservableObject {
     }
 
     var deviceName: String {
-        return isInputDevice ? "Vocana Microphone" : "Vocana Speaker"
+        return "VocanaVirtualDevice 2ch"
     }
 
     var deviceUID: String {
-        return isInputDevice ? "com.vocana.audio.input" : "com.vocana.audio.output"
+        return "com.vocana.VirtualAudioDevice"
     }
 
     var sampleRate: Float64 { return 48000.0 }
     var channelCount: UInt32 { return 2 }
 
-    func processAudioBuffer(_ audioBuffer: Any, frameCount: UInt32, format: Any) {
-        // TODO: Implement audio processing when ML model is integrated
-    }
+
 
     func enableNoiseCancellation(_ enabled: Bool) {
         noiseCancellationState = enabled ? .on : .off
@@ -70,6 +68,12 @@ enum VocanaNoiseCancellationState: UInt32 {
 
 @objc class VirtualAudioManager: NSObject, ObservableObject {
     static let shared = VirtualAudioManager()
+
+    // MARK: - Concurrency
+
+    private let deviceDiscoveryQueue = DispatchQueue(label: "com.vocana.deviceDiscovery", qos: .userInteractive)
+
+    // MARK: - Published Properties
 
     @Published var inputDevice: VocanaAudioDevice?
     @Published var outputDevice: VocanaAudioDevice?
@@ -118,8 +122,8 @@ enum VocanaNoiseCancellationState: UInt32 {
     }
 
     private func discoverVocanaDevices() -> Bool {
-        var foundInputDevice = false
-        var foundOutputDevice = false
+        var foundInputDevice: VocanaAudioDevice? = nil
+        var foundOutputDevice: VocanaAudioDevice? = nil
 
         // Get all audio devices
         var deviceIDs = [AudioObjectID]()
@@ -138,80 +142,69 @@ enum VocanaNoiseCancellationState: UInt32 {
             &dataSize
         )
 
-        if result == kAudioHardwareNoError {
-            let deviceCount = Int(dataSize) / MemoryLayout<AudioObjectID>.size
-            deviceIDs = [AudioObjectID](repeating: 0, count: deviceCount)
-
-            result = AudioObjectGetPropertyData(
-                AudioObjectID(kAudioObjectSystemObject),
-                &propertyAddress,
-                0,
-                nil,
-                &dataSize,
-                &deviceIDs
-            )
+        guard result == noErr else {
+            logger.error("Failed to get audio devices data size: \(result)")
+            return false
         }
 
-        if result == kAudioHardwareNoError {
-            for deviceID in deviceIDs {
-                // Get device UID
-                var uidPropertyAddress = AudioObjectPropertyAddress(
-                    mSelector: kAudioDevicePropertyDeviceUID,
-                    mScope: kAudioObjectPropertyScopeGlobal,
-                    mElement: kAudioObjectPropertyElementMain
-                )
+        let deviceCount = Int(dataSize) / MemoryLayout<AudioObjectID>.size
+        deviceIDs = Array(repeating: AudioObjectID(), count: deviceCount)
 
-                var uidSize: UInt32 = 0
-                result = AudioObjectGetPropertyDataSize(
-                    deviceID,
-                    &uidPropertyAddress,
-                    0,
-                    nil,
-                    &uidSize
-                )
+        result = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &dataSize,
+            &deviceIDs
+        )
 
-                if result == kAudioHardwareNoError {
-                    let uidBuffer = UnsafeMutablePointer<CFString?>.allocate(capacity: 1)
-                    defer { uidBuffer.deallocate() }
+        guard result == noErr else {
+            logger.error("Failed to get audio devices: \(result)")
+            return false
+        }
 
-                    result = AudioObjectGetPropertyData(
-                        deviceID,
-                        &uidPropertyAddress,
-                        0,
-                        nil,
-                        &uidSize,
-                        uidBuffer
-                    )
+        // Find Vocana devices
+        var nameProperty = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceNameCFString,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
 
-                    if result == kAudioHardwareNoError, let deviceUID = uidBuffer.pointee {
-                        let uid = deviceUID as String
-                        // Check if this is a Vocana device
-                        if uid.contains("com.vocana.audio.input") {
-                            inputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: true, originalDeviceID: deviceID)
-                            foundInputDevice = true
-                            logger.info("Discovered Vocana input device: \(uid)")
-                        } else if uid.contains("com.vocana.audio.output") {
-                            outputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: false, originalDeviceID: deviceID)
-                            foundOutputDevice = true
-                            logger.info("Discovered Vocana output device: \(uid)")
-                        }
-                    }
+        for deviceID in deviceIDs {
+            var deviceNamePtr: Unmanaged<CFString>?
+            var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            let result = AudioObjectGetPropertyData(
+                deviceID,
+                &nameProperty,
+                0,
+                nil,
+                &nameSize,
+                &deviceNamePtr
+            )
+
+            if result == noErr, let deviceNamePtr = deviceNamePtr {
+                let deviceName = deviceNamePtr.takeRetainedValue() as String
+                if deviceName.contains("VocanaVirtualDevice") {
+                    logger.info("Found Vocana virtual device: \(deviceName) (ID: \(deviceID))")
+                    // Use same device for both input and output (2ch stereo)
+                    foundInputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: true, originalDeviceID: deviceID)
+                    foundOutputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: false, originalDeviceID: deviceID)
                 }
             }
         }
 
-        let success = foundInputDevice && foundOutputDevice
+        // Update devices atomically
+        deviceDiscoveryQueue.sync {
+            self.inputDevice = foundInputDevice
+            self.outputDevice = foundOutputDevice
+        }
+
+        let success = foundInputDevice != nil && foundOutputDevice != nil
         if success {
-            logger.info("Successfully discovered Vocana HAL devices")
-            NotificationCenter.default.post(name: NSNotification.Name("VocanaDeviceStateChanged"), object: nil)
+            logger.info("Successfully discovered Vocana virtual audio devices")
         } else {
-            logger.warning("Failed to discover Vocana HAL devices - HAL plugin may not be loaded")
-            if !foundInputDevice {
-                logger.warning("Vocana input device not found")
-            }
-            if !foundOutputDevice {
-                logger.warning("Vocana output device not found")
-            }
+            logger.warning("Vocana devices not found - HAL plugin may not be installed or running")
         }
 
         return success
@@ -224,7 +217,9 @@ enum VocanaNoiseCancellationState: UInt32 {
     }
 
     var areDevicesAvailable: Bool {
-        return inputDevice != nil && outputDevice != nil
+        return deviceDiscoveryQueue.sync {
+            return inputDevice != nil && outputDevice != nil
+        }
     }
 
     // MARK: - Control Interface

@@ -488,7 +488,7 @@ class AudioEngine: ObservableObject {
             callback?(processedSamples)
 
             // Update UI safely on MainActor - batch updates to reduce context switches
-            Task { @MainActor [weak self] in
+            DispatchQueue.main.async { [weak self] in
                 self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
             }
         } else {
@@ -624,10 +624,9 @@ class AudioEngine: ObservableObject {
     
     deinit {
         memoryPressureSource?.cancel()
-        // Fix CRITICAL-003: Cleanup resources without MainActor to avoid retain cycles
+        // Fix CRITICAL-003: Cleanup resources synchronously to prevent retain cycles
         decayTimer?.invalidate()
         decayTimer = nil
-        // Note: audioSessionManager cleanup will happen automatically when object is deallocated
-        // since it's a MainActor-isolated object
+        // AudioSessionManager cleanup will happen automatically on deallocation
     }
 }

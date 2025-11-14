@@ -173,8 +173,8 @@ class AudioSessionManager {
                        memcpy(destChannels[channel], sourceChannels[channel], bytesToCopy)
                     }
                     
-                   // Fix CRITICAL: Call callback directly on audio thread to prevent blocking
-                   // Buffer processing will handle thread safety internally
+                   // Fix CRITICAL: Call callback directly without async dispatch to prevent race conditions
+                   // Buffer is already copied, safe to pass to callback
                    self.onAudioBufferReceived?(copiedBuffer)
                }
             isTapInstalled = true

@@ -4,7 +4,6 @@ import os.log
 /// Manages ML model inference and audio processing
 /// Responsibility: DeepFilterNet initialization, inference, memory pressure handling
 /// Isolated from audio capture, buffering, and level calculations
-@MainActor
 class MLAudioProcessor: MLAudioProcessorProtocol {
     private static let logger = Logger(subsystem: "Vocana", category: "MLAudioProcessor")
     
@@ -130,12 +129,12 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
         mlInitializationTask?.cancel()
     }
     
-     /// Process audio chunk with DeepFilterNet if available
-     /// - Parameters:
-     ///   - chunk: Audio samples to process
-     ///   - sensitivity: Sensitivity multiplier (0-1)
-     /// - Returns: Processed audio samples
-     func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
+      /// Process audio chunk with DeepFilterNet if available
+      /// - Parameters:
+      ///   - chunk: Audio samples to process
+      ///   - sensitivity: Sensitivity multiplier (0-1)
+      /// - Returns: Processed audio samples
+      nonisolated func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
          // Fix CRITICAL: Perform all state checks atomically within single sync block to prevent TOCTOU race
          let capturedDenoiser = mlStateQueue.sync { () -> DeepFilterNet? in
              guard !mlProcessingSuspendedDueToMemory else {
@@ -205,11 +204,24 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
         Self.logger.info("Attempting ML processing recovery after memory pressure")
     }
     
-    /// Check if ML is suspended due to memory pressure
-    /// - Returns: true if suspended, false otherwise
-    func isMemoryPressureSuspended() -> Bool {
-        return mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
-    }
+     /// Check if ML is suspended due to memory pressure
+     /// - Returns: true if suspended, false otherwise
+     nonisolated func isMemoryPressureSuspended() -> Bool {
+         return mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
+     }
+
+     /// Process audio buffer asynchronously for XPC service
+     /// - Parameters:
+     ///   - buffer: Audio buffer as array of floats
+     ///   - sampleRate: Sample rate of the audio
+     /// - Returns: Processed audio buffer
+     func processAudioBuffer(_ buffer: [Float], sampleRate: Float) async throws -> [Float] {
+         // Use default sensitivity of 1.0
+         guard let processed = processAudioWithML(chunk: buffer, sensitivity: 1.0) else {
+             throw NSError(domain: "MLAudioProcessor", code: -1, userInfo: [NSLocalizedDescriptionKey: "ML processing failed"])
+         }
+         return processed
+     }
     
     // MARK: - Private Helpers
     

@@ -18,13 +18,14 @@
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
-
+	<key>CFBundleSignature</key>
+	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>CFPlugInFactories</key>
 	<dict>
 		<key>550e8400-e29b-41d4-a716-446655440000</key>
-		<string>VocanaAudioServerPlugin_Create</string>
+		<string>VocanaAudioServerPluginFactory</string>
 	</dict>
 	<key>CFPlugInTypes</key>
 	<dict>
@@ -33,6 +34,5 @@
 			<string>550e8400-e29b-41d4-a716-446655440000</string>
 		</array>
 	</dict>
-
 </dict>
 </plist>

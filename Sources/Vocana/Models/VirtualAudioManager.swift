@@ -9,8 +9,10 @@
 import Foundation
 import Combine
 import AppKit
+import CoreAudio
+import OSLog
 
-// Stub VocanaAudioDevice for UI development until HAL plugin is implemented
+// VocanaAudioDevice represents a HAL plugin audio device with XPC communication
 class VocanaAudioDevice: NSObject, ObservableObject {
     let deviceID: UInt32
     let isInputDevice: Bool
@@ -25,19 +27,17 @@ class VocanaAudioDevice: NSObject, ObservableObject {
     }
 
     var deviceName: String {
-        return isInputDevice ? "Vocana Microphone" : "Vocana Speaker"
+        return "VocanaVirtualDevice 2ch"
     }
 
     var deviceUID: String {
-        return isInputDevice ? "com.vocana.audio.input" : "com.vocana.audio.output"
+        return "com.vocana.VirtualAudioDevice"
     }
 
     var sampleRate: Float64 { return 48000.0 }
     var channelCount: UInt32 { return 2 }
 
-    func processAudioBuffer(_ audioBuffer: Any, frameCount: UInt32, format: Any) {
-        // TODO: Implement audio processing when ML model is integrated
-    }
+
 
     func enableNoiseCancellation(_ enabled: Bool) {
         noiseCancellationState = enabled ? .on : .off
@@ -69,10 +69,18 @@ enum VocanaNoiseCancellationState: UInt32 {
 @objc class VirtualAudioManager: NSObject, ObservableObject {
     static let shared = VirtualAudioManager()
 
+    // MARK: - Concurrency
+
+    private let deviceDiscoveryQueue = DispatchQueue(label: "com.vocana.deviceDiscovery", qos: .userInteractive)
+
+    // MARK: - Published Properties
+
     @Published var inputDevice: VocanaAudioDevice?
     @Published var outputDevice: VocanaAudioDevice?
     @Published var isInputNoiseCancellationEnabled = false
     @Published var isOutputNoiseCancellationEnabled = false
+
+    private let logger = Logger(subsystem: "com.vocana", category: "VirtualAudioManager")
 
     // TODO: Replace with actual VocanaAudioManager when HAL plugin is implemented
     // private let objcManager = VocanaAudioManager.shared()
@@ -82,6 +90,8 @@ enum VocanaNoiseCancellationState: UInt32 {
         super.init()
         setupBindings()
         setupNotifications()
+        // Discover HAL devices on startup
+        _ = discoverVocanaDevices()
     }
 
     // MARK: - Setup
@@ -107,34 +117,123 @@ enum VocanaNoiseCancellationState: UInt32 {
     // MARK: - Device Management
 
     func createVirtualDevices() -> Bool {
-        // HAL plugin handles actual device creation - this is just UI state management
-        // Return false until HAL plugin successfully creates devices
-        return false
+        // HAL plugin handles actual device creation - this discovers existing HAL devices
+        return discoverVocanaDevices()
+    }
+
+    private func discoverVocanaDevices() -> Bool {
+        var foundInputDevice: VocanaAudioDevice? = nil
+        var foundOutputDevice: VocanaAudioDevice? = nil
+
+        // Get all audio devices
+        var deviceIDs = [AudioObjectID]()
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var dataSize: UInt32 = 0
+        var result = AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &dataSize
+        )
+
+        guard result == noErr else {
+            logger.error("Failed to get audio devices data size: \(result)")
+            return false
+        }
+
+        let deviceCount = Int(dataSize) / MemoryLayout<AudioObjectID>.size
+        deviceIDs = Array(repeating: AudioObjectID(), count: deviceCount)
+
+        result = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &dataSize,
+            &deviceIDs
+        )
+
+        guard result == noErr else {
+            logger.error("Failed to get audio devices: \(result)")
+            return false
+        }
+
+        // Find Vocana devices
+        var nameProperty = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceNameCFString,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        for deviceID in deviceIDs {
+            var deviceNamePtr: Unmanaged<CFString>?
+            var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            let result = AudioObjectGetPropertyData(
+                deviceID,
+                &nameProperty,
+                0,
+                nil,
+                &nameSize,
+                &deviceNamePtr
+            )
+
+            if result == noErr, let deviceNamePtr = deviceNamePtr {
+                let deviceName = deviceNamePtr.takeRetainedValue() as String
+                if deviceName.contains("VocanaVirtualDevice") {
+                    logger.info("Found Vocana virtual device: \(deviceName) (ID: \(deviceID))")
+                    // Use same device for both input and output (2ch stereo)
+                    foundInputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: true, originalDeviceID: deviceID)
+                    foundOutputDevice = VocanaAudioDevice(deviceID: deviceID, isInputDevice: false, originalDeviceID: deviceID)
+                }
+            }
+        }
+
+        // Update devices atomically
+        deviceDiscoveryQueue.sync {
+            self.inputDevice = foundInputDevice
+            self.outputDevice = foundOutputDevice
+        }
+
+        let success = foundInputDevice != nil && foundOutputDevice != nil
+        if success {
+            logger.info("Successfully discovered Vocana virtual audio devices")
+        } else {
+            logger.warning("Vocana devices not found - HAL plugin may not be installed or running")
+        }
+
+        return success
     }
 
     func destroyVirtualDevices() {
-        // TODO: Implement when HAL plugin entitlements are obtained
         inputDevice = nil
         outputDevice = nil
+        logger.info("Virtual audio devices destroyed")
     }
 
     var areDevicesAvailable: Bool {
-        // TODO: Implement when HAL plugin entitlements are obtained
-        return inputDevice != nil && outputDevice != nil
+        return deviceDiscoveryQueue.sync {
+            return inputDevice != nil && outputDevice != nil
+        }
     }
 
     // MARK: - Control Interface
 
     func enableInputNoiseCancellation(_ enabled: Bool) {
-        // TODO: Implement when HAL plugin entitlements are obtained
         isInputNoiseCancellationEnabled = enabled
         inputDevice?.setNoiseCancellationState(enabled ? .on : .off)
+        logger.info("Input noise cancellation \(enabled ? "enabled" : "disabled")")
     }
 
     func enableOutputNoiseCancellation(_ enabled: Bool) {
-        // TODO: Implement when HAL plugin entitlements are obtained
         isOutputNoiseCancellationEnabled = enabled
         outputDevice?.setNoiseCancellationState(enabled ? .on : .off)
+        logger.info("Output noise cancellation \(enabled ? "enabled" : "disabled")")
     }
 
     // MARK: - Application Detection

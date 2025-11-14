@@ -62,15 +62,30 @@ final class MockMLAudioProcessor: MLAudioProcessorProtocol {
     
     func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
         guard isMLProcessingActive else { return nil }
-        
+
         // Simulate processing latency (very fast for mock)
         let latencyMs = Double.random(in: 0.1...0.3)
         processingLatencyMs = latencyMs
         recordLatency(latencyMs)
         recordSuccess()
-        
+
         // Return the input buffer unchanged (mock processing)
         return chunk
+    }
+
+    func processAudioBuffer(_ buffer: [Float], sampleRate: Float) async throws -> [Float] {
+        guard isMLProcessingActive else {
+            throw NSError(domain: "MockMLAudioProcessor", code: -1, userInfo: [NSLocalizedDescriptionKey: "ML processing not active"])
+        }
+
+        // Simulate processing latency
+        let latencyMs = Double.random(in: 0.1...0.3)
+        processingLatencyMs = latencyMs
+        recordLatency(latencyMs)
+        recordSuccess()
+
+        // Return the input buffer unchanged (mock processing)
+        return buffer
     }
     
     func activateML() async -> Bool {

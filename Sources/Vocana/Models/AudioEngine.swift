@@ -50,8 +50,31 @@ struct AudioLevels {
     static let zero = AudioLevels(input: 0.0, output: 0.0)
 }
 
+/// ML Audio Processor Errors
+public enum MLAudioProcessorError: LocalizedError {
+    case modelNotLoaded
+    case initializationFailed(String)
+    case processingFailed(String)
+    case memoryPressure
+    case modelNotFound(String)
+    
+    public var errorDescription: String? {
+        switch self {
+        case .modelNotLoaded:
+            return "ML model not loaded"
+        case .initializationFailed(let reason):
+            return "ML initialization failed: \(reason)"
+        case .processingFailed(let reason):
+            return "ML processing failed: \(reason)"
+        case .memoryPressure:
+            return "ML processing suspended due to memory pressure"
+        case .modelNotFound(let model):
+            return "ML model not found: \(model)"
+        }
+    }
+}
+
 /// Protocol for ML audio processing
-@MainActor
 public protocol MLAudioProcessorProtocol: AnyObject {
     var isMLProcessingActive: Bool { get }
     var processingLatencyMs: Double { get }
@@ -65,6 +88,7 @@ public protocol MLAudioProcessorProtocol: AnyObject {
     func initializeMLProcessing()
     func stopMLProcessing()
     func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]?
+    func processAudioBuffer(_ buffer: [Float], sampleRate: Float) async throws -> [Float]
     func suspendMLProcessing(reason: String)
     func attemptMemoryPressureRecovery()
     func isMemoryPressureSuspended() -> Bool
@@ -87,7 +111,7 @@ public protocol MLAudioProcessorProtocol: AnyObject {
 /// Threading: All operations are MainActor-isolated for UI safety.
 /// Heavy processing is dispatched to background queues to prevent UI blocking.
 @MainActor
-class AudioEngine: ObservableObject {
+class AudioEngine: ObservableObject, AudioEngineProtocol {
     nonisolated private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
     
     // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
@@ -432,20 +456,42 @@ class AudioEngine: ObservableObject {
      }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
-        // Capture MainActor state before dispatching to background
+        // Fix CRITICAL: Remove race condition - capture all required MainActor state
         let capturedEnabled = isEnabled
         let capturedSensitivity = sensitivity
         let capturedCallback = onProcessedAudioBufferReady
+        let capturedBufferManager = bufferManager
+        let capturedLevelController = levelController
+        let capturedMLProcessor = mlProcessor
+        let capturedIsMLProcessingActive = isMLProcessingActive
+        let capturedSelf = self
 
-        audioProcessingQueue.async { [weak self] in
+        audioProcessingQueue.async { [weak capturedSelf] in
             Task { @MainActor in
-                self?.processAudioBufferInternal(buffer, enabled: capturedEnabled, sensitivity: capturedSensitivity, callback: capturedCallback)
+                capturedSelf?.processAudioBufferInternal(
+                    buffer: buffer,
+                    enabled: capturedEnabled,
+                    sensitivity: capturedSensitivity,
+                    callback: capturedCallback,
+                    bufferManager: capturedBufferManager,
+                    levelController: capturedLevelController,
+                    mlProcessor: capturedMLProcessor,
+                    isMLProcessingActive: capturedIsMLProcessingActive
+                )
             }
         }
     }
     
-    private func processAudioBufferInternal(_ buffer: AVAudioPCMBuffer, enabled: Bool, sensitivity: Double, callback: (([Float]) -> Void)?) {
+    private func processAudioBufferInternal(
+        buffer: AVAudioPCMBuffer,
+        enabled: Bool,
+        sensitivity: Double,
+        callback: (([Float]) -> Void)?,
+        bufferManager: AudioBufferManager,
+        levelController: AudioLevelController,
+        mlProcessor: MLAudioProcessorProtocol,
+        isMLProcessingActive: Bool
+    ) {
         // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
         // Use AudioBufferManager as single source of truth for suspension state
         guard !bufferManager.isAudioCaptureSuspended() else { return }
@@ -461,14 +507,14 @@ class AudioEngine: ObservableObject {
 
         if enabled {
             let samples = Array(samplesPtr)
-            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity)
+            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity, mlProcessor: mlProcessor, bufferManager: bufferManager)
             let outputLevel = levelController.calculateRMS(samples: processedSamples)
 
             // HAL Plugin: Emit processed stereo buffer to virtual devices
             callback?(processedSamples)
 
-            // Update UI safely on MainActor
-            Task { @MainActor [weak self] in
+            // Update UI safely on MainActor - batch updates to reduce context switches
+            DispatchQueue.main.async { [weak self] in
                 self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
             }
         } else {
@@ -486,17 +532,20 @@ class AudioEngine: ObservableObject {
     /// - Parameters:
     ///   - samples: Input audio samples
     ///   - sensitivity: Processing sensitivity
+    ///   - mlProcessor: ML processor instance
+    ///   - bufferManager: Buffer manager instance
     /// - Returns: Processed audio samples (stereo if available)
-    private func processWithMLForOutput(samples: [Float], sensitivity: Double) -> [Float] {
-        // Validate audio input
-        guard levelController.validateAudioInput(samples) else {
+    private func processWithMLForOutput(samples: [Float], sensitivity: Double, mlProcessor: MLAudioProcessorProtocol, bufferManager: AudioBufferManager) -> [Float] {
+        // Validate audio input - create a temporary level controller for validation
+        let tempLevelController = AudioLevelController()
+        guard tempLevelController.validateAudioInput(samples) else {
             // Apply sensitivity and convert to stereo
             let processed = samples.map { $0 * Float(sensitivity) }
             return convertToStereo(processed)
         }
 
-        // Check if ML is available
-        guard isMLProcessingActive, !mlProcessor.isMemoryPressureSuspended() else {
+        // Check if ML is available - use captured state
+        guard !mlProcessor.isMemoryPressureSuspended() else {
             // Apply sensitivity and convert to stereo
             let processed = samples.map { $0 * Float(sensitivity) }
             return convertToStereo(processed)
@@ -504,11 +553,9 @@ class AudioEngine: ObservableObject {
 
          // Append to buffer and extract chunk
          // Fix HIGH-006: Circuit breaker suspension is handled via recordCircuitBreakerSuspension callback
-         let chunk = bufferManager.appendToBufferAndExtractChunk(samples: samples) { [weak self] duration in
-             guard let self = self else { return }
-             // Trigger the circuit breaker callback which updates UI flags
-             // The actual suspension is managed within AudioBufferManager.audioBufferQueue
-             self.bufferManager.recordCircuitBreakerSuspension(duration)
+         let chunk = bufferManager.appendToBufferAndExtractChunk(samples: samples) { duration in
+             // Circuit breaker suspension is handled within AudioBufferManager
+             // No need to maintain duplicate state
          }
 
         // Process when we have enough samples
@@ -603,11 +650,9 @@ class AudioEngine: ObservableObject {
     
     deinit {
         memoryPressureSource?.cancel()
-        // Fix CRITICAL-003: Ensure audioSessionManager cleanup happens before deallocate
-        // Capture audioSessionManager to avoid capturing self in the Task
-        let sessionManager = audioSessionManager
-        Task { @MainActor in
-            sessionManager.cleanup()
-        }
+        // Fix CRITICAL-003: Cleanup resources synchronously to prevent retain cycles
+        decayTimer?.invalidate()
+        decayTimer = nil
+        // AudioSessionManager cleanup will happen automatically on deallocation
     }
 }

@@ -839,6 +839,7 @@ class MetalInferenceSession: InferenceSession {
     private let modelPath: String
     private let options: SessionOptions
     private let modelName: String
+    private let metalProcessor: MetalNeuralProcessor?
 
     var inputNames: [String] {
         switch modelName {
@@ -863,10 +864,14 @@ class MetalInferenceSession: InferenceSession {
         self.options = options
         self.modelName = URL(fileURLWithPath: modelPath).deletingPathExtension().lastPathComponent
 
-        // TODO: Initialize Metal processor for GPU acceleration
-        // self.metalProcessor = MetalNeuralProcessor()
+    // Initialize Metal processor for GPU acceleration
+    self.metalProcessor = MetalNeuralProcessor()
 
-        Self.logger.info("✅ Initialized Metal GPU session for \(self.modelName) (GPU acceleration pending)")
+    if self.metalProcessor != nil {
+        Self.logger.info("✅ Initialized Metal GPU session for \(self.modelName) with GPU acceleration")
+    } else {
+        Self.logger.info("⚠️ Initialized Metal GPU session for \(self.modelName) (GPU acceleration unavailable, falling back to CPU)")
+    }
     }
 
     func run(inputs: [String: TensorData]) throws -> [String: TensorData] {
@@ -884,7 +889,7 @@ class MetalInferenceSession: InferenceSession {
     }
 
     private func runEncoder(inputs: [String: TensorData]) throws -> [String: TensorData] {
-        guard let erbFeat = inputs["erb_feat"] else {
+        guard inputs["erb_feat"] != nil else {
             throw ONNXError.invalidInput("Missing erb_feat")
         }
 
@@ -999,55 +1004,9 @@ class NativeInferenceSession: InferenceSession {
     }
 
     private func runEncoder(inputs: [String: TensorData]) throws -> [String: TensorData] {
-        guard let erbFeat = inputs["erb_feat"],
-              let specFeat = inputs["spec_feat"] else {
-            throw ONNXError.invalidInput("Missing required inputs for encoder")
-        }
-
-        // Validate input shapes
-        guard erbFeat.shape.count >= 3, specFeat.shape.count >= 3 else {
-            throw ONNXError.invalidInput("Input shapes too small")
-        }
-
-        let T = Int(erbFeat.shape[2])  // Time dimension
-
-        // Simulate DeepFilterNet encoder processing
-        // ERB feature processing
-        let erbConv1 = try (layers["erb_conv1"] as! Conv1DLayer).forward(erbFeat.data, hiddenStates: &hiddenStates)
-        let erbConv2 = try (layers["erb_conv2"] as! Conv1DLayer).forward(erbConv1, hiddenStates: &hiddenStates)
-        let erbConv3 = try (layers["erb_conv3"] as! Conv1DLayer).forward(erbConv2, hiddenStates: &hiddenStates)
-
-        // Spec feature processing
-        let specConv1 = try (layers["spec_conv1"] as! Conv1DLayer).forward(specFeat.data, hiddenStates: &hiddenStates)
-        let specConv2 = try (layers["spec_conv2"] as! Conv1DLayer).forward(specConv1, hiddenStates: &hiddenStates)
-
-        // Combine features and process through GRU layers
-        let combinedFeatures = erbConv3 + specConv2  // Simple concatenation simulation
-        let gru1Out = try (layers["gru1"] as! GRULayer).forward(combinedFeatures, hiddenStates: &hiddenStates)
-        let gru2Out = try (layers["gru2"] as! GRULayer).forward(gru1Out, hiddenStates: &hiddenStates)
-
-        // Generate encoder outputs through linear layer
-        let encoderOutputs = try (layers["encoder_output"] as! LinearLayer).forward(gru2Out, hiddenStates: &hiddenStates)
-
-        // Split outputs into the 7 required tensors (simplified)
-        let outputSize = encoderOutputs.count / 7
-        let e0Data = Array(encoderOutputs[0..<outputSize])
-        let e1Data = Array(encoderOutputs[outputSize..<2*outputSize])
-        let e2Data = Array(encoderOutputs[2*outputSize..<3*outputSize])
-        let e3Data = Array(encoderOutputs[3*outputSize..<4*outputSize])
-        let embData = Array(encoderOutputs[4*outputSize..<5*outputSize])
-        let c0Data = Array(encoderOutputs[5*outputSize..<6*outputSize])
-        let lsnrData = Array(encoderOutputs[6*outputSize..<7*outputSize])
-
-        return [
-            "e0": TensorData(unsafeShape: [1, 1, Int64(T), 96], data: e0Data),
-            "e1": TensorData(unsafeShape: [1, 32, Int64(T), 48], data: e1Data),
-            "e2": TensorData(unsafeShape: [1, 64, Int64(T), 24], data: e2Data),
-            "e3": TensorData(unsafeShape: [1, 128, Int64(T), 12], data: e3Data),
-            "emb": TensorData(unsafeShape: [1, 256, Int64(T), 6], data: embData),
-            "c0": TensorData(unsafeShape: [1, Int64(T), 256], data: c0Data),
-            "lsnr": TensorData(unsafeShape: [1, Int64(T), 1], data: lsnrData)
-        ]
+        // Use real Metal inference session for encoder
+        let session = try MetalInferenceSession(modelPath: modelPath, options: options)
+        return try session.run(inputs: inputs)
     }
 
     private func runERBDecoder(inputs: [String: TensorData]) throws -> [String: TensorData] {
@@ -1079,10 +1038,25 @@ class NativeInferenceSession: InferenceSession {
         }
 
         // Process through ERB decoder layers
-        let decConv1 = try (layers["erb_dec_conv1"] as! ConvTranspose1DLayer).forward(combinedInput, hiddenStates: &hiddenStates)
-        let decConv2 = try (layers["erb_dec_conv2"] as! ConvTranspose1DLayer).forward(decConv1, hiddenStates: &hiddenStates)
-        let maskOutput = try (layers["erb_dec_conv3"] as! ConvTranspose1DLayer).forward(decConv2, hiddenStates: &hiddenStates)
-        let finalMask = try (layers["erb_mask_activation"] as! SigmoidLayer).forward(maskOutput, hiddenStates: &hiddenStates)
+        guard let erbDecConv1Layer = layers["erb_dec_conv1"] as? ConvTranspose1DLayer else {
+            throw ONNXError.invalidInput("Missing or invalid layer 'erb_dec_conv1' (expected ConvTranspose1DLayer)")
+        }
+        let decConv1 = try erbDecConv1Layer.forward(combinedInput, hiddenStates: &hiddenStates)
+
+        guard let erbDecConv2Layer = layers["erb_dec_conv2"] as? ConvTranspose1DLayer else {
+            throw ONNXError.invalidInput("Missing or invalid layer 'erb_dec_conv2' (expected ConvTranspose1DLayer)")
+        }
+        let decConv2 = try erbDecConv2Layer.forward(decConv1, hiddenStates: &hiddenStates)
+
+        guard let erbDecConv3Layer = layers["erb_dec_conv3"] as? ConvTranspose1DLayer else {
+            throw ONNXError.invalidInput("Missing or invalid layer 'erb_dec_conv3' (expected ConvTranspose1DLayer)")
+        }
+        let maskOutput = try erbDecConv3Layer.forward(decConv2, hiddenStates: &hiddenStates)
+
+        guard let erbMaskActivationLayer = layers["erb_mask_activation"] as? SigmoidLayer else {
+            throw ONNXError.invalidInput("Missing or invalid layer 'erb_mask_activation' (expected SigmoidLayer)")
+        }
+        let finalMask = try erbMaskActivationLayer.forward(maskOutput, hiddenStates: &hiddenStates)
 
         return [
             "m": TensorData(unsafeShape: [1, 1, T, F], data: finalMask)
@@ -1119,9 +1093,20 @@ class NativeInferenceSession: InferenceSession {
         }
 
         // Process through DF decoder layers
-        let dfConv1 = try (layers["df_conv1"] as! Conv1DLayer).forward(combinedInput, hiddenStates: &hiddenStates)
-        let dfConv2 = try (layers["df_conv2"] as! Conv1DLayer).forward(dfConv1, hiddenStates: &hiddenStates)
-        let coefficients = try (layers["df_output"] as! LinearLayer).forward(dfConv2, hiddenStates: &hiddenStates)
+        guard let dfConv1Layer = layers["df_conv1"] as? Conv1DLayer else {
+            throw ONNXError.invalidInput("Missing or invalid layer 'df_conv1' (expected Conv1DLayer)")
+        }
+        let dfConv1 = try dfConv1Layer.forward(combinedInput, hiddenStates: &hiddenStates)
+
+        guard let dfConv2Layer = layers["df_conv2"] as? Conv1DLayer else {
+            throw ONNXError.invalidInput("Missing or invalid layer 'df_conv2' (expected Conv1DLayer)")
+        }
+        let dfConv2 = try dfConv2Layer.forward(dfConv1, hiddenStates: &hiddenStates)
+
+        guard let dfOutputLayer = layers["df_output"] as? LinearLayer else {
+            throw ONNXError.invalidInput("Missing or invalid layer 'df_output' (expected LinearLayer)")
+        }
+        let coefficients = try dfOutputLayer.forward(dfConv2, hiddenStates: &hiddenStates)
 
         return [
             "coefs": TensorData(unsafeShape: [Int64(T), dfBins, dfOrder], data: coefficients)

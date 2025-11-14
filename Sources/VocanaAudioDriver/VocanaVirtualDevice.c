@@ -273,10 +273,10 @@ static UInt64                       gDevice2_IOIsRunning                = 0;
 static const UInt32                 kDevice_RingBufferSize              = 16384;
 static Float64                      gDevice_HostTicksPerFrame           = 0.0;
 static Float64                      gDevice_AdjustedTicksPerFrame       = 0.0;
-static Float64                      gDevice_PreviousTicks               = 0.0;
-static UInt64                       gDevice_NumberTimeStamps            = 0;
+static _Atomic Float64               gDevice_PreviousTicks               = ATOMIC_VAR_INIT(0.0);
+static _Atomic UInt64                gDevice_NumberTimeStamps            = ATOMIC_VAR_INIT(0);
 static Float64                      gDevice_AnchorSampleTime            = 0.0;
-static UInt64                       gDevice_AnchorHostTime              = 0;
+static _Atomic UInt64                gDevice_AnchorHostTime              = ATOMIC_VAR_INIT(0);
 
 static bool                         gStream_Input_IsActive              = true;
 static bool                         gStream_Output_IsActive             = true;
@@ -289,7 +289,7 @@ static bool                         gMute_Master_Value                  = false;
 static UInt32                       kClockSource_NumberItems            = 2;
 #define                             kClockSource_InternalFixed         "Internal Fixed"
 #define                             kClockSource_InternalAdjustable    "Internal Adjustable"
-static UInt32                       gClockSource_Value                  = 0;
+static _Atomic UInt32                gClockSource_Value                  = ATOMIC_VAR_INIT(0);
 static bool                         gPitch_Adjust_Enabled               = false;
 
 static struct ObjectInfo            kDevice_ObjectList[]                = {
@@ -1466,7 +1466,7 @@ static OSStatus	VocanaVirtualDevice_GetPlugInPropertyData(AudioServerPlugInDrive
 			if(theNumberItemsToFetch > 1)
 			{
 				((AudioObjectID*)outData)[0] = kObjectID_Box;
-				((AudioObjectID*)outData)[0] = kObjectID_Device;
+				((AudioObjectID*)outData)[1] = kObjectID_Device;
 			}
 			else if(theNumberItemsToFetch > 0)
 			{
@@ -2615,10 +2615,6 @@ static OSStatus	VocanaVirtualDevice_GetDevicePropertyData(AudioServerPlugInDrive
             //    we need to take both the state lock to check this value for thread safety.
             FailWithAction(inDataSize < sizeof(UInt32), theAnswer = kAudioHardwareBadPropertySizeError, Done, "VocanaVirtualDevice_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceIsRunning for the device");
             pthread_mutex_lock(&gPlugIn_StateMutex);
-            if (inObjectID == kObjectID_Device) {
-                *((UInt32*)outData) = ((gDevice_IOIsRunning > 0) > 0) ? 1 : 0;
-            }
-            
             switch (inObjectID) {
                 case kObjectID_Device:
                     *((UInt32*)outData) = ((gDevice_IOIsRunning > 0) > 0) ? 1 : 0;
@@ -2723,7 +2719,7 @@ static OSStatus	VocanaVirtualDevice_GetDevicePropertyData(AudioServerPlugInDrive
                 case kObjectID_Device2:
                     for (UInt32 i = 0, k = 0; k < theNumberItemsToFetch; i++)
                     {
-                        if ((kDevice_ObjectList[i].type == kObjectType_Control) && !(!gPitch_Adjust_Enabled && kDevice_ObjectList[i].id==kObjectID_Pitch_Adjust))
+                        if ((kDevice2_ObjectList[i].type == kObjectType_Control) && !(!gPitch_Adjust_Enabled && kDevice2_ObjectList[i].id==kObjectID_Pitch_Adjust))
                         {
                             ((AudioObjectID*)outData)[k++] = kDevice2_ObjectList[i].id;
                         }
@@ -4425,41 +4421,41 @@ static OSStatus	VocanaVirtualDevice_GetZeroTimeStamp(AudioServerPlugInDriverRef 
 	FailWithAction(inDriver != gAudioServerPlugInDriverRef, theAnswer = kAudioHardwareBadObjectError, Done, "VocanaVirtualDevice_GetZeroTimeStamp: bad driver reference");
 	FailWithAction(inDeviceObjectID != kObjectID_Device && inDeviceObjectID != kObjectID_Device2, theAnswer = kAudioHardwareBadObjectError, Done, "VocanaVirtualDevice_GetZeroTimeStamp: bad device ID");
 
-	//	we need to hold the locks
-	pthread_mutex_lock(&gDevice_IOMutex);
-	
 	//	get the current host time
 	theCurrentHostTime = mach_absolute_time();
 	
-	//	calculate the next host time
+	//	calculate the next host time using atomic operations for real-time safety
 	theHostTicksPerRingBuffer = gDevice_HostTicksPerFrame * ((Float64)kDevice_RingBufferSize);
-    if (gClockSource_Value > 0) {
+    if (atomic_load(&gClockSource_Value) > 0) {
         theAdjustedTicksPerRingBuffer = gDevice_AdjustedTicksPerFrame * ((Float64)kDevice_RingBufferSize);
     }
     else {
         theAdjustedTicksPerRingBuffer = gDevice_HostTicksPerFrame * ((Float64)kDevice_RingBufferSize);
     }
     
-	theNextTickOffset = gDevice_PreviousTicks + theAdjustedTicksPerRingBuffer;
+	//	Use atomic operations to avoid real-time violations
+	UInt64 currentNumberTimeStamps = atomic_load(&gDevice_NumberTimeStamps);
+	Float64 currentPreviousTicks = atomic_load(&gDevice_PreviousTicks);
+	UInt64 currentAnchorHostTime = atomic_load(&gDevice_AnchorHostTime);
     
-	theNextHostTime = gDevice_AnchorHostTime + ((UInt64)theNextTickOffset);
+	theNextTickOffset = currentPreviousTicks + theAdjustedTicksPerRingBuffer;
+	theNextHostTime = currentAnchorHostTime + ((UInt64)theNextTickOffset);
 	
 	//	go to the next time if the next host time is less than the current time
 	if(theNextHostTime <= theCurrentHostTime)
 	{
-		++gDevice_NumberTimeStamps;
-		gDevice_PreviousTicks = theNextTickOffset;
+		currentNumberTimeStamps++;
+		currentPreviousTicks = theNextTickOffset;
+		
+		//	Atomic updates for real-time safety
+		atomic_store(&gDevice_NumberTimeStamps, currentNumberTimeStamps);
+		atomic_store(&gDevice_PreviousTicks, currentPreviousTicks);
 	}
 	
 	//	set the return values
-	*outSampleTime = gDevice_NumberTimeStamps * kDevice_RingBufferSize;
-	*outHostTime = gDevice_AnchorHostTime + gDevice_PreviousTicks;
+	*outSampleTime = currentNumberTimeStamps * kDevice_RingBufferSize;
+	*outHostTime = currentAnchorHostTime + currentPreviousTicks;
 	*outSeed = 1;
-    
-    // DebugMsg("SampleTime: %f \t HostTime: %llu", *outSampleTime, *outHostTime);
-	
-	//	unlock the state lock
-	pthread_mutex_unlock(&gDevice_IOMutex);
 	
 Done:
 	return theAnswer;
@@ -4610,14 +4606,18 @@ static OSStatus	VocanaVirtualDevice_DoIOOperation(AudioServerPlugInDriverRef inD
         {
             DebugMsg("VocanaVirtualDevice: Overload detected, attempting graceful recovery");
             
-            // Clear buffer to recover from overload
-            pthread_mutex_lock(&gRingBufferMutex);
+            // Clear buffer to recover from overload using lock-free approach
             if (gRingBuffer != NULL) {
-                vDSP_vclr(gRingBuffer, 1, kRing_Buffer_Frame_Size * kNumber_Of_Channels);
-                atomic_store(&gRingBufferWritePos, 0);
-                atomic_store(&isBufferClearAtomic, true);
+                // Use atomic flag to ensure thread-safe buffer clearing
+                static atomic_flag clearingFlag = ATOMIC_FLAG_INIT;
+                if (!atomic_flag_test_and_set(&clearingFlag)) {
+                    // Only one thread can clear at a time
+                    vDSP_vclr(gRingBuffer, 1, kRing_Buffer_Frame_Size * kNumber_Of_Channels);
+                    atomic_store(&gRingBufferWritePos, 0);
+                    atomic_store(&isBufferClearAtomic, true);
+                    atomic_flag_clear(&clearingFlag);
+                }
             }
-            pthread_mutex_unlock(&gRingBufferMutex);
             
             // Return success but log the issue for monitoring
             return noErr;

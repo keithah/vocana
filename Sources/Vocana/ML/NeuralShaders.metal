@@ -316,8 +316,11 @@ kernel void fft_inverse(
     const int N = constants.fftSize;
     if (gid >= uint(N)) return;
 
-    // Convert input to complex
-    Complex x[MAX_FFT_SIZE];
+    // CRITICAL SECURITY: Prevent stack buffer overflow - validate FFT size
+    if (N > MAX_FFT_SIZE) return;
+    
+    // Convert input to complex - use device memory instead of stack
+    device Complex* x = reinterpret_cast<device Complex*>(output_real + N); // Use output buffer as temporary storage
     for (int i = 0; i < N; ++i) {
         x[i] = Complex{input_real[i], input_imag[i]};
     }

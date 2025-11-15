@@ -246,7 +246,8 @@ enum VocanaNoiseCancellationState: UInt32 {
     }
 
     var areDevicesAvailable: Bool {
-        return deviceDiscoveryQueue.sync {
+        // CRITICAL FIX: Read @Published properties on MainActor to prevent race conditions
+        return DispatchQueue.main.sync {
             return inputDevice != nil && outputDevice != nil
         }
     }
@@ -335,12 +336,16 @@ enum VocanaNoiseCancellationState: UInt32 {
             return
         }
 
+        // CRITICAL FIX: Capture device references before async to prevent race conditions
+        let currentInputDevice = inputDevice
+        let currentOutputDevice = outputDevice
+        
         // Update UI state based on device changes
-        DispatchQueue.main.async {
-            if deviceID == self.inputDevice?.deviceID {
-                self.isInputNoiseCancellationEnabled = (state != .off)
-            } else if deviceID == self.outputDevice?.deviceID {
-                self.isOutputNoiseCancellationEnabled = (state != .off)
+        DispatchQueue.main.async { [weak self] in
+            if deviceID == currentInputDevice?.deviceID {
+                self?.isInputNoiseCancellationEnabled = (state != .off)
+            } else if deviceID == currentOutputDevice?.deviceID {
+                self?.isOutputNoiseCancellationEnabled = (state != .off)
             }
         }
     }

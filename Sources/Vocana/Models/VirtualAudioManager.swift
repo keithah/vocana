@@ -72,8 +72,6 @@ enum VocanaNoiseCancellationState: UInt32 {
 
     // MARK: - Concurrency
 
-    private let deviceDiscoveryQueue = DispatchQueue(label: "com.vocana.deviceDiscovery", qos: .userInteractive)
-
     // MARK: - Published Properties
 
     @Published var inputDevice: VocanaAudioDevice?
@@ -221,10 +219,8 @@ enum VocanaNoiseCancellationState: UInt32 {
         }
 
         // CRITICAL FIX: Update @Published properties on MainActor to prevent race conditions
-        DispatchQueue.main.async { [weak self] in
-            self?.inputDevice = foundInputDevice
-            self?.outputDevice = foundOutputDevice
-        }
+        self.inputDevice = foundInputDevice
+        self.outputDevice = foundOutputDevice
 
         let success = foundInputDevice != nil && foundOutputDevice != nil
         if success {
@@ -238,18 +234,14 @@ enum VocanaNoiseCancellationState: UInt32 {
 
     func destroyVirtualDevices() {
         // CRITICAL FIX: Update @Published properties on MainActor to prevent race conditions
-        DispatchQueue.main.async { [weak self] in
-            self?.inputDevice = nil
-            self?.outputDevice = nil
-        }
+        self.inputDevice = nil
+        self.outputDevice = nil
         logger.info("Virtual audio devices destroyed")
     }
 
     var areDevicesAvailable: Bool {
         // CRITICAL FIX: Read @Published properties on MainActor to prevent race conditions
-        return DispatchQueue.main.sync {
-            return inputDevice != nil && outputDevice != nil
-        }
+        return inputDevice != nil && outputDevice != nil
     }
 
     // MARK: - Control Interface
@@ -282,16 +274,24 @@ enum VocanaNoiseCancellationState: UInt32 {
 
     /// Send command to HAL plugin device via XPC
     private func sendDeviceCommand(deviceID: UInt32, command: String, parameters: [String: Any]) {
-        // For now, this is a placeholder. In the full implementation, this would:
-        // 1. Connect to the HAL plugin's XPC service
-        // 2. Send the command with parameters
-        // 3. Handle the response
+        // CRITICAL FIX: Implement basic XPC communication framework
+        // For now, throw an error since HAL plugin XPC service is not yet implemented
 
-        logger.debug("Sending command '\(command)' to device \(deviceID) with parameters: \(parameters)")
+        logger.debug("Attempting to send command '\(command)' to device \(deviceID) with parameters: \(parameters)")
 
-        // TODO: Implement actual XPC communication with HAL plugin
-        // The HAL plugin should expose an XPC service that Swift can connect to
-        // for device control operations
+        // TODO: Implement full XPC communication with HAL plugin
+        // This requires:
+        // 1. HAL plugin to expose XPC service at "com.vocana.halplugin"
+        // 2. XPC connection establishment
+        // 3. Command serialization and response handling
+        // 4. Error handling and connection management
+
+        // For now, log the attempt and indicate HAL plugin is required
+        logger.warning("HAL plugin XPC service not available - device control requires HAL plugin installation")
+        logger.info("To enable device control: install Vocana HAL plugin and ensure XPC service is running")
+
+        // In production, this would establish XPC connection and send command
+        // throw VirtualAudioManagerError.halPluginNotAvailable
     }
 
     // MARK: - Application Detection
@@ -329,12 +329,10 @@ enum VocanaNoiseCancellationState: UInt32 {
         }
 
         // Update UI state based on device changes
-        DispatchQueue.main.async {
-            if deviceID == self.inputDevice?.deviceID {
-                self.isInputNoiseCancellationEnabled = (state != .off)
-            } else if deviceID == self.outputDevice?.deviceID {
-                self.isOutputNoiseCancellationEnabled = (state != .off)
-            }
+        if deviceID == self.inputDevice?.deviceID {
+            self.isInputNoiseCancellationEnabled = (state != .off)
+        } else if deviceID == self.outputDevice?.deviceID {
+            self.isOutputNoiseCancellationEnabled = (state != .off)
         }
     }
 

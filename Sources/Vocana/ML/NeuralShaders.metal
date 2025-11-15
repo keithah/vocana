@@ -263,8 +263,11 @@ kernel void fft_forward(
     // CRITICAL FIX: Only thread 0 performs the full FFT to avoid race conditions
     if (gid != 0) return;
 
+    // CRITICAL SECURITY: Validate FFT size to prevent buffer overflow
+    if (N > MAX_FFT_SIZE) return;
+    
     // Convert real input to complex (imaginary part = 0)
-    Complex x[MAX_FFT_SIZE]; // Maximum FFT size
+    thread Complex x[MAX_FFT_SIZE]; // Thread-local, not stack
     for (int i = 0; i < N; ++i) {
         x[i] = Complex{input[i], 0.0f};
     }
@@ -399,8 +402,11 @@ kernel void stft_analysis(
     const int frame_start = frame_gid * constants.hopSize;
     const int fft_size = constants.fftSize;
 
+    // CRITICAL SECURITY: Validate FFT size to prevent buffer overflow
+    if (fft_size > MAX_FFT_SIZE) return;
+    
     // Extract and window the frame
-    Complex frame[MAX_FFT_SIZE]; // Max FFT size
+    thread Complex frame[MAX_FFT_SIZE]; // Thread-local, not stack
     for (int i = 0; i < fft_size; ++i) {
         float sample = (frame_start + i < constants.windowSize) ? input[frame_start + i] : 0.0f;
         float win_val = (i < constants.windowSize) ? window[i] : 1.0f;
@@ -508,6 +514,12 @@ kernel void generate_erb_filterbank(
     float freq = float(freq_bin) * constants.sampleRate / float(constants.fftSize);
 
     // ERB filter shape (simplified triangular filter)
+    // CRITICAL FIX: Prevent division by zero when numBands <= 1
+    if (constants.numBands <= 1) {
+        filterbank[gid] = 1.0f; // Use full amplitude for single band case
+        return;
+    }
+
     float erb_center = freq_to_erb(constants.minFreq) +
                       float(band) * (freq_to_erb(constants.maxFreq) - freq_to_erb(constants.minFreq)) /
                       float(constants.numBands - 1);

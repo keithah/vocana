@@ -575,8 +575,13 @@ final class DeepFilterNet: @unchecked Sendable {
         
         // Resolve and validate path within app sandbox
         let url = URL(fileURLWithPath: modelsDirectory)
-        let resolvedURL = url.standardizedFileURL
+        let resolvedURL = url.resolvingSymlinksInPath()
         let resolvedPath = resolvedURL.path
+
+        // CRITICAL SECURITY: Validate canonical path doesn't contain traversal after symlink resolution
+        guard !resolvedPath.contains("../") && !resolvedPath.contains("..\\") else {
+            throw DeepFilterError.modelLoadFailed("Canonical path contains traversal after symlink resolution: \(resolvedPath)")
+        }
         
         // Restrict to app bundle and known safe directories only
         var allowedPaths: Set<String> = Set([

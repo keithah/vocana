@@ -176,6 +176,25 @@ struct TensorData {
         self.shape = shape
         self.data = data
         
+        // CRITICAL SECURITY: Comprehensive input validation
+        guard !shape.isEmpty else {
+            throw ONNXError.runtimeError("Tensor shape cannot be empty")
+        }
+
+        guard shape.count <= 8 else {
+            throw ONNXError.runtimeError("Too many dimensions (\(shape.count)), maximum allowed is 8")
+        }
+
+        // Validate each dimension
+        for (index, dim) in shape.enumerated() {
+            guard dim > 0 else {
+                throw ONNXError.runtimeError("Dimension \(index) must be positive, got \(dim)")
+            }
+            guard dim <= 1_000_000 else {
+                throw ONNXError.runtimeError("Dimension \(index) too large (\(dim)), maximum allowed is 1,000,000")
+            }
+        }
+
         // Validate with overflow checking
         var expectedSize = Int64(1)
         for dim in shape {
@@ -184,6 +203,11 @@ struct TensorData {
                 throw ONNXError.runtimeError("Shape dimensions overflow Int64: \(shape)")
             }
             expectedSize = product
+        }
+
+        // Prevent excessive memory allocation
+        guard expectedSize <= 100_000_000 else {
+            throw ONNXError.runtimeError("Tensor too large (\(expectedSize) elements), maximum allowed is 100,000,000")
         }
         
         // Safe conversion for comparison

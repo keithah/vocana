@@ -228,9 +228,8 @@ class AudioSessionManager {
     /// Start simulated audio playback (for testing)
     func startSimulatedAudio() {
         timer = Timer.scheduledTimer(withTimeInterval: AppConstants.audioUpdateInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.updateSimulatedLevels()
-            }
+            // Timer callbacks are already on main thread
+            self?.updateSimulatedLevels()
         }
         // Fix MEDIUM: Ensure timer runs during event tracking and other RunLoop modes
         RunLoop.main.add(timer!, forMode: .common)
@@ -261,9 +260,8 @@ class AudioSessionManager {
     func suspendAudioCapture(duration: TimeInterval) {
         audioCaptureSuspensionTimer?.invalidate()
         audioCaptureSuspensionTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.resumeAudioCapture()
-            }
+            // Timer callbacks are already on main thread
+            self?.resumeAudioCapture()
         }
     }
     

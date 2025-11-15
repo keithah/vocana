@@ -74,12 +74,19 @@ enum LaunchAtLoginHelper {
         
         let launchAgentPlist = NSHomeDirectory() + "/Library/LaunchAgents/com.vocana.app.plist"
         let launchAgentDir = NSHomeDirectory() + "/Library/LaunchAgents"
-        
+
+        // SECURITY: Validate file path is within expected directory structure
+        let expectedPrefix = NSHomeDirectory() + "/Library/LaunchAgents/"
+        guard launchAgentPlist.hasPrefix(expectedPrefix) && launchAgentPlist.hasSuffix("com.vocana.app.plist") else {
+            os_log("Invalid launch agent plist path: %{public}@", log: .default, type: .error, launchAgentPlist)
+            return
+        }
+
         let fileManager = FileManager.default
-        
+
         // Ensure LaunchAgents directory exists
         try? fileManager.createDirectory(atPath: launchAgentDir, withIntermediateDirectories: true, attributes: nil)
-        
+
         if enabled {
             // Create launch agent plist
             let plistDict: [String: Any] = [

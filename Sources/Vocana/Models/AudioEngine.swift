@@ -689,16 +689,41 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
         if pressureLevel.contains(.critical) {
             memoryPressureLevel = .critical
             mlProcessor.suspendMLProcessing(reason: "Critical memory pressure")
+            // Additional recovery: reduce processing quality
+            bufferManager.clearAudioBuffers()
         } else if pressureLevel.contains(.warning) {
             memoryPressureLevel = .warning
             // Reduce buffer sizes but continue processing
             bufferManager.clearAudioBuffers()
+        } else if pressureLevel.isEmpty {
+            // Memory pressure relieved - attempt recovery
+            recoverFromMemoryPressure()
         }
         
         // Fix HIGH-004: Update performance status when memory pressure changes
         updatePerformanceStatus()
         
         Self.logger.warning("Memory pressure detected: \(self.memoryPressureLevel.rawValue)")
+    }
+
+    private func recoverFromMemoryPressure() {
+        // Attempt to recover from memory pressure
+        let previousLevel = memoryPressureLevel
+
+        // Check if memory pressure is actually relieved
+        if memoryPressureSource?.mask.isEmpty ?? true {
+            memoryPressureLevel = .normal
+
+            // Resume ML processing if it was suspended
+            if previousLevel == .critical {
+                mlProcessor.resumeMLProcessing()
+                Self.logger.info("Resumed ML processing after memory pressure relief")
+            }
+
+            // Update performance status
+            updatePerformanceStatus()
+            Self.logger.info("Memory pressure relieved, recovered to normal operation")
+        }
     }
     
     deinit {

@@ -102,11 +102,17 @@ class MetalNeuralProcessor {
         bufferPoolQueue.async {
             let size = buffer.length
             var buffers = self.bufferPool[size] ?? []
-            if buffers.count < self.bufferPoolMaxSize {
-                buffers.append(buffer)
-                self.bufferPool[size] = buffers
+
+            // Enforce pool size limit - if full, don't add the buffer
+            if buffers.count >= self.bufferPoolMaxSize {
+                // Buffer will be deallocated automatically when it goes out of scope
+                self.logger.debug("Buffer pool full for size \(size), discarding returned buffer")
+                return
             }
-            // If pool is full, buffer will be deallocated automatically
+
+            buffers.append(buffer)
+            self.bufferPool[size] = buffers
+            self.logger.debug("Returned buffer to pool: size \(size), pool count \(buffers.count)")
         }
     }
 

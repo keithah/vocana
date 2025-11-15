@@ -190,7 +190,7 @@ final class SwiftAppIntegrationTests: XCTestCase {
                     // Simple quality score: higher levels + lower errors = better quality
                     let levelScore = (levels.input + levels.output) / 2.0
                     let errorPenalty = Double(telemetry.mlProcessingFailures + telemetry.audioBufferOverflows) * 0.1
-                    let qualityScore = max(0.0, levelScore - errorPenalty)
+                    let qualityScore = max(0.0, Double(levelScore) - errorPenalty)
                     
                     qualityLock.lock()
                     qualityScores.append(qualityScore)

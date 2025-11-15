@@ -257,7 +257,7 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
     
     // MARK: - Private State
     
-    private var isEnabled: Bool = false
+    internal var isEnabled: Bool = false
     private var sensitivity: Double = 0.5
     private var decayTimer: Timer?
 
@@ -404,15 +404,24 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
         self.sensitivity = sensitivity
 
         if isEnabled {
-            isUsingRealAudio = audioSessionManager.startRealAudioCapture()
+            // Try to use HAL plugin devices first
+            let virtualAudioManager = VirtualAudioManager.shared
+            if virtualAudioManager.areDevicesAvailable {
+                Self.logger.info("Using HAL plugin virtual audio devices")
+                isUsingRealAudio = true
+
+                // Connect to HAL plugin devices
+                _ = virtualAudioManager.createVirtualDevices()
+
+                // XPC service is started in VirtualAudioManager init
+            } else {
+                // Fallback to real audio capture
+                Self.logger.info("HAL plugin devices not available, using real audio capture")
+                isUsingRealAudio = audioSessionManager.startRealAudioCapture()
+            }
 
             // Ensure output device is set up for processed audio routing
             _ = audioSessionManager.startVocanaAudioOutput()
-
-            // Always start simulated audio for testing and fallback
-            audioSessionManager.isEnabled = isEnabled
-            audioSessionManager.sensitivity = sensitivity
-            audioSessionManager.startSimulatedAudio()
 
             initializeMLProcessing()
         } else {
@@ -455,7 +464,7 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
          mlProcessor.initializeMLProcessing()
      }
     
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+    internal func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         // Fix CRITICAL: Remove race condition - capture all required MainActor state
         let capturedEnabled = isEnabled
         let capturedSensitivity = sensitivity

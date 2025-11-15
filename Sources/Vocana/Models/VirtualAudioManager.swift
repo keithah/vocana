@@ -82,16 +82,26 @@ enum VocanaNoiseCancellationState: UInt32 {
 
     private let logger = Logger(subsystem: "com.vocana", category: "VirtualAudioManager")
 
-    // TODO: Replace with actual VocanaAudioManager when HAL plugin is implemented
-    // private let objcManager = VocanaAudioManager.shared()
+    // Connect to HAL plugin for device control
+    private var xpcService: AudioProcessingXPCService?
     private var cancellables = Set<AnyCancellable>()
 
     override init() {
         super.init()
-        setupBindings()
-        setupNotifications()
-        // Discover HAL devices on startup
-        _ = discoverVocanaDevices()
+
+        // Initialize XPC service for HAL plugin communication
+        Task {
+            let mlProcessor = MLAudioProcessor()
+            self.xpcService = AudioProcessingXPCService(audioProcessor: mlProcessor)
+            await MainActor.run {
+                setupBindings()
+                setupNotifications()
+                // Start XPC service
+                xpcService?.start()
+                // Discover HAL devices on startup
+                _ = discoverVocanaDevices()
+            }
+        }
     }
 
     // MARK: - Setup
@@ -226,14 +236,42 @@ enum VocanaNoiseCancellationState: UInt32 {
 
     func enableInputNoiseCancellation(_ enabled: Bool) {
         isInputNoiseCancellationEnabled = enabled
-        inputDevice?.setNoiseCancellationState(enabled ? .on : .off)
+        inputDevice?.enableNoiseCancellation(enabled)
+
+        // Send command to HAL plugin via XPC
+        if let device = inputDevice {
+            sendDeviceCommand(deviceID: device.deviceID, command: "setNoiseCancellation",
+                            parameters: ["enabled": enabled, "isInput": true])
+        }
+
         logger.info("Input noise cancellation \(enabled ? "enabled" : "disabled")")
     }
 
     func enableOutputNoiseCancellation(_ enabled: Bool) {
         isOutputNoiseCancellationEnabled = enabled
-        outputDevice?.setNoiseCancellationState(enabled ? .on : .off)
+        outputDevice?.enableNoiseCancellation(enabled)
+
+        // Send command to HAL plugin via XPC
+        if let device = outputDevice {
+            sendDeviceCommand(deviceID: device.deviceID, command: "setNoiseCancellation",
+                            parameters: ["enabled": enabled, "isInput": false])
+        }
+
         logger.info("Output noise cancellation \(enabled ? "enabled" : "disabled")")
+    }
+
+    /// Send command to HAL plugin device via XPC
+    private func sendDeviceCommand(deviceID: UInt32, command: String, parameters: [String: Any]) {
+        // For now, this is a placeholder. In the full implementation, this would:
+        // 1. Connect to the HAL plugin's XPC service
+        // 2. Send the command with parameters
+        // 3. Handle the response
+
+        logger.debug("Sending command '\(command)' to device \(deviceID) with parameters: \(parameters)")
+
+        // TODO: Implement actual XPC communication with HAL plugin
+        // The HAL plugin should expose an XPC service that Swift can connect to
+        // for device control operations
     }
 
     // MARK: - Application Detection

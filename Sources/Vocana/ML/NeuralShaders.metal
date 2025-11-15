@@ -260,8 +260,12 @@ kernel void fft_forward(
     const int N = constants.fftSize;
     if (gid >= uint(N)) return;
 
+    // CRITICAL SECURITY: Prevent stack buffer overflow - validate FFT size
+    if (N > MAX_FFT_SIZE) return;
+    
     // Convert real input to complex (imaginary part = 0)
-    Complex x[MAX_FFT_SIZE]; // Maximum FFT size
+    // Use device memory instead of stack to prevent overflow
+    device Complex* x = reinterpret_cast<device Complex*>(output + N); // Use output buffer as temporary storage
     for (int i = 0; i < N; ++i) {
         x[i] = Complex{input[i], 0.0f};
     }
@@ -368,6 +372,13 @@ kernel void generate_hann_window(
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= uint(windowSize)) return;
+    
+    // CRITICAL SECURITY: Prevent division by zero
+    if (windowSize <= 1) {
+        window[gid] = 1.0f; // For window size 0 or 1, use full amplitude
+        return;
+    }
+    
     float phase = 2.0f * M_PI_F * float(gid) / float(windowSize - 1);
     window[gid] = 0.5f * (1.0f - cos(phase));
 }

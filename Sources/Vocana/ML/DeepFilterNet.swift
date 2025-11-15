@@ -136,9 +136,12 @@ final class DeepFilterNet: @unchecked Sendable {
         let dfDecoder: ONNXModel
 
         if let modelsDir = modelsDirectory {
-            let encPath = "\(modelsDir)/enc.onnx"
-            let erbDecPath = "\(modelsDir)/erb_dec.onnx"
-            let dfDecPath = "\(modelsDir)/df_dec.onnx"
+            // CRITICAL SECURITY: Sanitize models directory path to prevent traversal attacks
+            let sanitizedModelsDir = try Self.sanitizeModelsDirectory(modelsDir)
+            
+            let encPath = "\(sanitizedModelsDir)/enc.onnx"
+            let erbDecPath = "\(sanitizedModelsDir)/erb_dec.onnx"
+            let dfDecPath = "\(sanitizedModelsDir)/df_dec.onnx"
 
             encoder = try Self.loadModel(path: encPath, name: "encoder")
             erbDecoder = try Self.loadModel(path: erbDecPath, name: "ERB decoder")
@@ -553,6 +556,68 @@ final class DeepFilterNet: @unchecked Sendable {
     ///   - name: Human-readable name for error messages
     /// - Returns: Loaded ONNXModel instance
     /// - Throws: DeepFilterError.modelLoadFailed if model cannot be loaded
+    /// Sanitizes models directory path to prevent directory traversal attacks
+    /// - Parameter modelsDirectory: User-provided models directory path
+    /// - Returns: Sanitized canonical path safe to use
+    /// - Throws: DeepFilterError if path is invalid or outside allowed directories
+    private static func sanitizeModelsDirectory(_ modelsDirectory: String) throws -> String {
+        let fm = FileManager.default
+        
+        // Basic path validation
+        guard !modelsDirectory.isEmpty else {
+            throw DeepFilterError.modelLoadFailed("Empty models directory path")
+        }
+
+        // Prevent obvious traversal attempts
+        guard !modelsDirectory.contains("../") && !modelsDirectory.contains("..\\") && !modelsDirectory.hasPrefix("/") else {
+            throw DeepFilterError.modelLoadFailed("Invalid directory format: potential traversal attack")
+        }
+        
+        // Resolve and validate path within app sandbox
+        let url = URL(fileURLWithPath: modelsDirectory)
+        let resolvedURL = url.standardizedFileURL
+        let resolvedPath = resolvedURL.path
+        
+        // Restrict to app bundle and known safe directories only
+        var allowedPaths: Set<String> = Set([
+            Bundle.main.resourcePath,
+            Bundle.main.bundlePath,
+        ].compactMap { basePath in
+            guard let basePath = basePath, !basePath.isEmpty else { return nil }
+            return URL(fileURLWithPath: basePath).standardizedFileURL.path
+        })
+
+        // Allow Resources/Models directory for testing and development
+        if let resourcesModelsPath = Bundle.main.resourceURL?.appendingPathComponent("Models").path {
+            allowedPaths.insert(resourcesModelsPath)
+        }
+        
+        // Also allow direct Resources/Models path for development
+        let devResourcesModels = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Resources")
+            .appendingPathComponent("Models")
+            .standardizedFileURL.path
+        allowedPaths.insert(devResourcesModels)
+        
+        // Strict path validation - must be within allowed directories
+        let isPathAllowed = allowedPaths.contains { allowedPath in
+            // Must be exactly within allowed path or subdirectory
+            resolvedPath == allowedPath || resolvedPath.hasPrefix(allowedPath + "/")
+        }
+        
+        guard isPathAllowed else {
+            throw DeepFilterError.modelLoadFailed("Models directory not in allowed directories: \(resolvedPath)")
+        }
+        
+        // Verify directory exists and is accessible
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: resolvedPath, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw DeepFilterError.modelLoadFailed("Models directory does not exist or is not a directory: \(resolvedPath)")
+        }
+        
+        return resolvedPath
+    }
+
     private static func loadModel(path: String, name: String, useMock: Bool = false) throws -> ONNXModel {
         if useMock {
             // Create mock ONNX model without requiring file to exist

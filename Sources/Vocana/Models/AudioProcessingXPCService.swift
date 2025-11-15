@@ -7,6 +7,8 @@
 
 import Foundation
 import OSLog
+import Security
+import AppKit
 
 // Import XPC framework
 import XPC
@@ -84,21 +86,73 @@ class AudioProcessingXPCService: NSObject {
         // Validate client entitlements and bundle ID
         let clientPID = xpc_connection_get_pid(connection)
 
-        // For now, implement basic PID validation
-        // In production, this should validate code signing, entitlements, etc.
         guard clientPID > 0 else {
             logger.warning("Invalid client PID: \(clientPID)")
             return false
         }
 
-        // TODO: Add proper entitlement and code signing validation
-        // This is a placeholder for basic security - production should validate:
-        // 1. Code signing certificate
-        // 2. Entitlements
-        // 3. Bundle identifier
-        // 4. Process ownership
+        // CRITICAL SECURITY: Validate bundle identifier first
+        guard validateBundleIdentifier(pid: clientPID) else {
+            logger.error("Client bundle identifier validation failed for PID: \(clientPID)")
+            return false
+        }
 
-        logger.debug("Validated XPC client with PID: \(clientPID)")
+        // CRITICAL SECURITY: Basic code signing validation
+        guard validateCodeSigningBasic(pid: clientPID) else {
+            logger.error("Client code signing validation failed for PID: \(clientPID)")
+            return false
+        }
+
+        logger.info("Successfully validated XPC client with PID: \(clientPID)")
+        return true
+    }
+
+    private func validateCodeSigningBasic(pid: pid_t) -> Bool {
+        // Basic validation that the process is code signed
+        // This prevents unsigned code from connecting
+        var code: SecStaticCode?
+        let url = URL(fileURLWithPath: "/proc/\(pid)/file")
+        
+        let status = SecStaticCodeCreateWithPath(url as CFURL, [], &code)
+        guard status == errSecSuccess, let secCode = code else {
+            logger.error("Failed to create static code for PID: \(pid) - process may not be code signed")
+            return false
+        }
+
+        // Basic validation that code is signed
+        let validateStatus = SecStaticCodeCheckValidity(secCode, [], nil)
+        guard validateStatus == errSecSuccess else {
+            logger.error("Code signing validation failed for PID: \(pid)")
+            return false
+        }
+
+        return true
+    }
+
+    private func validateBundleIdentifier(pid: pid_t) -> Bool {
+        // Use NSRunningApplication to validate bundle identifier
+        guard let runningApp = NSRunningApplication(processIdentifier: pid) else {
+            logger.error("Could not find running application for PID: \(pid)")
+            return false
+        }
+
+        guard let bundleIdentifier = runningApp.bundleIdentifier else {
+            logger.error("Could not get bundle identifier for PID: \(pid)")
+            return false
+        }
+
+        // Only allow Vocana bundle identifiers
+        let allowedIdentifiers = [
+            "com.vocana.Vocana",
+            "com.vocana.VocanaAudioDriver",
+            "com.vocana.VocanaAudioServerPlugin"
+        ]
+
+        guard allowedIdentifiers.contains(bundleIdentifier) else {
+            logger.error("Unauthorized bundle identifier: \(bundleIdentifier)")
+            return false
+        }
+
         return true
     }
 
@@ -108,18 +162,45 @@ class AudioProcessingXPCService: NSObject {
             return
         }
 
-        // Extract audio data from message
+        // Extract audio data from message with security validation
         var bufferSize: size_t = 0
         let audioPtr = xpc_dictionary_get_data(message, "audioData", &bufferSize)
         let sampleRate = xpc_dictionary_get_double(message, "sampleRate")
-        _ = xpc_dictionary_get_int64(message, "channelCount") // channelCount not used in processing
+        let channelCount = xpc_dictionary_get_int64(message, "channelCount")
 
+        // CRITICAL SECURITY: Validate all input parameters
         guard audioPtr != nil && bufferSize > 0 else {
             logger.error("Invalid XPC message format - missing audio data")
             return
         }
 
+        // CRITICAL SECURITY: Prevent buffer overflow attacks
+        let maxBufferSize = 1024 * 1024 // 1MB max buffer size
+        guard bufferSize <= maxBufferSize else {
+            logger.error("Buffer size too large: \(bufferSize) bytes (max: \(maxBufferSize))")
+            return
+        }
+
+        // CRITICAL SECURITY: Validate sample rate
+        guard sampleRate >= 8000 && sampleRate <= 192000 else {
+            logger.error("Invalid sample rate: \(sampleRate)")
+            return
+        }
+
+        // CRITICAL SECURITY: Validate channel count
+        guard channelCount >= 1 && channelCount <= 8 else {
+            logger.error("Invalid channel count: \(channelCount)")
+            return
+        }
+
+        // CRITICAL SECURITY: Ensure buffer size is aligned to Float boundary
+        guard bufferSize % MemoryLayout<Float>.size == 0 else {
+            logger.error("Buffer size not aligned to Float boundary: \(bufferSize)")
+            return
+        }
+
         // CRITICAL: Copy XPC data immediately - the pointer is only valid for the lifetime of this message
+        // Use safe copying with bounds checking
         let originalAudioData = Data(bytes: audioPtr!, count: bufferSize)
 
         // Store connection reference to prevent premature cleanup

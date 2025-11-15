@@ -220,10 +220,10 @@ enum VocanaNoiseCancellationState: UInt32 {
             }
         }
 
-        // Update devices atomically
-        deviceDiscoveryQueue.sync {
-            self.inputDevice = foundInputDevice
-            self.outputDevice = foundOutputDevice
+        // CRITICAL FIX: Update @Published properties on MainActor to prevent race conditions
+        DispatchQueue.main.async { [weak self] in
+            self?.inputDevice = foundInputDevice
+            self?.outputDevice = foundOutputDevice
         }
 
         let success = foundInputDevice != nil && foundOutputDevice != nil
@@ -237,9 +237,10 @@ enum VocanaNoiseCancellationState: UInt32 {
     }
 
     func destroyVirtualDevices() {
-        deviceDiscoveryQueue.sync {
-            self.inputDevice = nil
-            self.outputDevice = nil
+        // CRITICAL FIX: Update @Published properties on MainActor to prevent race conditions
+        DispatchQueue.main.async { [weak self] in
+            self?.inputDevice = nil
+            self?.outputDevice = nil
         }
         logger.info("Virtual audio devices destroyed")
     }
@@ -253,7 +254,11 @@ enum VocanaNoiseCancellationState: UInt32 {
     // MARK: - Control Interface
 
     func enableInputNoiseCancellation(_ enabled: Bool) {
-        isInputNoiseCancellationEnabled = enabled
+        // CRITICAL FIX: Update @Published property on MainActor to prevent race conditions
+        DispatchQueue.main.async { [weak self] in
+            self?.isInputNoiseCancellationEnabled = enabled
+        }
+        
         inputDevice?.enableNoiseCancellation(enabled)
 
         // Send command to HAL plugin via XPC
@@ -266,7 +271,11 @@ enum VocanaNoiseCancellationState: UInt32 {
     }
 
     func enableOutputNoiseCancellation(_ enabled: Bool) {
-        isOutputNoiseCancellationEnabled = enabled
+        // CRITICAL FIX: Update @Published property on MainActor to prevent race conditions
+        DispatchQueue.main.async { [weak self] in
+            self?.isOutputNoiseCancellationEnabled = enabled
+        }
+        
         outputDevice?.enableNoiseCancellation(enabled)
 
         // Send command to HAL plugin via XPC

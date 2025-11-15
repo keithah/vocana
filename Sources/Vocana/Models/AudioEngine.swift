@@ -446,7 +446,7 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
          mlProcessor.initializeMLProcessing()
      }
     
-    internal func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+    func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         // Fix CRITICAL: Remove race condition - capture all required MainActor state
         let capturedEnabled = isEnabled
         let capturedSensitivity = sensitivity
@@ -458,36 +458,51 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
         let capturedSelf = self
 
         audioProcessingQueue.async { [weak capturedSelf] in
+            // CRITICAL FIX: Perform heavy processing off main thread
+            let result = capturedSelf?.performHeavyAudioProcessing(
+                buffer: buffer,
+                enabled: capturedEnabled,
+                sensitivity: capturedSensitivity,
+                bufferManager: capturedBufferManager,
+                levelController: capturedLevelController,
+                mlProcessor: capturedMLProcessor,
+                isMLProcessingActive: capturedIsMLProcessingActive
+            )
+            
+            // Only UI updates on main thread
             Task { @MainActor in
-                capturedSelf?.processAudioBufferInternal(
-                    buffer: buffer,
-                    enabled: capturedEnabled,
-                    sensitivity: capturedSensitivity,
-                    callback: capturedCallback,
-                    bufferManager: capturedBufferManager,
-                    levelController: capturedLevelController,
-                    mlProcessor: capturedMLProcessor,
-                    isMLProcessingActive: capturedIsMLProcessingActive
-                )
+                if let (inputLevel, outputLevel, processedSamples) = result {
+                    // HAL Plugin: Emit processed stereo buffer to virtual devices
+                    capturedCallback?(processedSamples)
+                    
+                    // Update UI safely on MainActor
+                    capturedSelf?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
+                } else {
+                    // Apply level decay when disabled
+                    let decayedLevels = capturedSelf?.levelController.applyDecay() ?? AudioLevels.zero
+                    
+                    // Update UI safely on MainActor
+                    capturedSelf?.currentLevels = decayedLevels
+                }
             }
         }
     }
     
-    private func processAudioBufferInternal(
+    nonisolated     // CRITICAL FIX: Perform heavy audio processing off main thread
+    private func performHeavyAudioProcessing(
         buffer: AVAudioPCMBuffer,
         enabled: Bool,
         sensitivity: Double,
-        callback: (([Float]) -> Void)?,
         bufferManager: AudioBufferManager,
         levelController: AudioLevelController,
         mlProcessor: MLAudioProcessorProtocol,
         isMLProcessingActive: Bool
-    ) {
+    ) -> (inputLevel: Float, outputLevel: Float, processedSamples: [Float])? {
         // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
         // Use AudioBufferManager as single source of truth for suspension state
-        guard !bufferManager.isAudioCaptureSuspended() else { return }
+        guard !bufferManager.isAudioCaptureSuspended() else { return nil }
 
-        guard let channelData = buffer.floatChannelData else { return }
+        guard let channelData = buffer.floatChannelData else { return nil }
         let channelDataValue = channelData.pointee
         let frames = buffer.frameLength
 
@@ -500,23 +515,26 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
             let samples = Array(samplesPtr)
             let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity, mlProcessor: mlProcessor, bufferManager: bufferManager)
             let outputLevel = levelController.calculateRMS(samples: processedSamples)
-
-            // HAL Plugin: Emit processed stereo buffer to virtual devices
-            callback?(processedSamples)
-
-            // Update UI safely on MainActor - batch updates to reduce context switches
-            DispatchQueue.main.async { [weak self] in
-                self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
-            }
+            
+            return (inputLevel, outputLevel, processedSamples)
         } else {
             // Apply level decay when disabled
             let decayedLevels = levelController.applyDecay()
-
-            // Update UI safely on MainActor
-            Task { @MainActor [weak self] in
-                self?.currentLevels = decayedLevels
-            }
+            return (inputLevel, decayedLevels.output, [])
         }
+    }
+
+    private func processAudioBufferInternal(
+        buffer: AVAudioPCMBuffer,
+        enabled: Bool,
+        sensitivity: Double,
+        callback: (([Float]) -> Void)?,
+        bufferManager: AudioBufferManager,
+        levelController: AudioLevelController,
+        mlProcessor: MLAudioProcessorProtocol,
+        isMLProcessingActive: Bool
+    ) {
+        // This method is now just a wrapper - actual processing moved off main thread
     }
     
     /// Process audio samples with ML and return processed samples for output

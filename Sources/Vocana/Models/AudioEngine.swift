@@ -74,25 +74,7 @@ public enum MLAudioProcessorError: LocalizedError {
     }
 }
 
-/// Protocol for ML audio processing
-public protocol MLAudioProcessorProtocol: AnyObject {
-    var isMLProcessingActive: Bool { get }
-    var processingLatencyMs: Double { get }
-    var memoryPressureLevel: Int { get }
 
-    var recordFailure: () -> Void { get set }
-    var recordLatency: (Double) -> Void { get set }
-    var recordSuccess: () -> Void { get set }
-    var onMLProcessingReady: () -> Void { get set }
-
-    func initializeMLProcessing()
-    func stopMLProcessing()
-    func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]?
-    func processAudioBuffer(_ buffer: [Float], sampleRate: Float) async throws -> [Float]
-    func suspendMLProcessing(reason: String)
-    func attemptMemoryPressureRecovery()
-    func isMemoryPressureSuspended() -> Bool
-}
 
 /// AudioEngine manages the complete audio processing pipeline for Vocana.
 ///

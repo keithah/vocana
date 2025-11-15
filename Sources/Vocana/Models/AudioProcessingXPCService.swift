@@ -7,6 +7,8 @@
 
 import Foundation
 import OSLog
+import Security
+import AppKit
 
 // Import XPC framework
 import XPC
@@ -207,15 +209,15 @@ class AudioProcessingXPCService: NSObject {
         // CRITICAL: Copy XPC data immediately - the pointer is only valid for the lifetime of this message
         let originalAudioData = Data(bytes: audioPtr!, count: bufferSize)
 
-        // CRITICAL FIX: Retain XPC message for use in async task
-        let messageRef = Unmanaged.passRetained(message)
-        let connectionRef = Unmanaged.passRetained(connection)
+        // CRITICAL FIX: Retain XPC objects for use in async task
+        let messageRef = xpc_retain(message)
+        let connectionRef = xpc_retain(connection)
 
         // Process audio
         Task {
-            defer { 
-                connectionRef.release()
-                messageRef.release()
+            defer {
+                xpc_release(connectionRef)
+                xpc_release(messageRef)
             }
 
             do {
@@ -246,7 +248,7 @@ class AudioProcessingXPCService: NSObject {
                 }
 
                 // Send reply
-                guard let reply = xpc_dictionary_create_reply(messageRef.takeUnretainedValue()) else {
+                guard let reply = xpc_dictionary_create_reply(messageRef) else {
                     logger.error("Failed to create XPC reply")
                     return
                 }

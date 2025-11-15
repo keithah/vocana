@@ -260,6 +260,9 @@ kernel void fft_forward(
     const int N = constants.fftSize;
     if (gid >= uint(N)) return;
 
+    // CRITICAL FIX: Only thread 0 performs the full FFT to avoid race conditions
+    if (gid != 0) return;
+
     // Convert real input to complex (imaginary part = 0)
     Complex x[MAX_FFT_SIZE]; // Maximum FFT size
     for (int i = 0; i < N; ++i) {
@@ -404,8 +407,36 @@ kernel void stft_analysis(
         frame[i] = Complex{sample * win_val, 0.0f};
     }
 
-    // Compute FFT (simplified - would need full FFT implementation)
-    // For now, just copy the windowed frame
+    // CRITICAL FIX: Perform actual FFT computation
+    // Bit reversal permutation
+    for (int i = 0; i < fft_size; ++i) {
+        int j = bit_reverse(i, constants.log2fftSize);
+        if (i < j) {
+            Complex temp = frame[i];
+            frame[i] = frame[j];
+            frame[j] = temp;
+        }
+    }
+
+    // Cooley-Tukey FFT
+    for (int s = 1; s <= constants.log2fftSize; ++s) {
+        int m = 1 << s;
+        int m2 = m >> 1;
+        Complex wm = twiddle_factor(1, m, constants.inverse);
+
+        for (int k = 0; k < fft_size; k += m) {
+            Complex w = Complex{1.0f, 0.0f};
+            for (int j = 0; j < m2; ++j) {
+                Complex t = complex_multiply(w, frame[k + j + m2]);
+                Complex u = frame[k + j];
+                frame[k + j] = complex_add(u, t);
+                frame[k + j + m2] = Complex{u.real - t.real, u.imag - t.imag};
+                w = complex_multiply(w, wm);
+            }
+        }
+    }
+
+    // Store FFT results
     for (int i = 0; i < fft_size; ++i) {
         stft_real[frame_gid * fft_size + i] = frame[i].real;
         stft_imag[frame_gid * fft_size + i] = frame[i].imag;

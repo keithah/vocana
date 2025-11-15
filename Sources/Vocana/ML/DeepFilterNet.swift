@@ -592,12 +592,8 @@ final class DeepFilterNet: @unchecked Sendable {
             allowedPaths.insert(resourcesModelsPath)
         }
         
-        // Also allow direct Resources/Models path for development
-        let devResourcesModels = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Resources")
-            .appendingPathComponent("Models")
-            .standardizedFileURL.path
-        allowedPaths.insert(devResourcesModels)
+        // CRITICAL SECURITY: Removed insecure currentDirectoryPath inclusion
+        // Only allow explicitly configured or app bundle paths
         
         // Strict path validation - must be within allowed directories
         let isPathAllowed = allowedPaths.contains { allowedPath in

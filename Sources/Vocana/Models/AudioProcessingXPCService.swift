@@ -237,8 +237,7 @@ class AudioProcessingXPCService: NSObject {
 
                 // Convert back to data
                 let processedData = processedBuffer.withUnsafeBufferPointer { bufferPtr in
-                    Data(bytes: bufferPtr.baseAddress!, 
-                         count: bufferPtr.count * MemoryLayout<Float>.size)
+                    Data(bytes: bufferPtr.baseAddress!, count: bufferPtr.count * MemoryLayout<Float>.size)
                 }
 
                 // Check if connection is still valid before sending reply

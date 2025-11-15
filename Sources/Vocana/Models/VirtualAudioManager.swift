@@ -237,15 +237,17 @@ enum VocanaNoiseCancellationState: UInt32 {
     }
 
     func destroyVirtualDevices() {
-        deviceDiscoveryQueue.sync {
-            self.inputDevice = nil
-            self.outputDevice = nil
+        // CRITICAL FIX: Update @Published properties on MainActor to prevent race conditions
+        DispatchQueue.main.async { [weak self] in
+            self?.inputDevice = nil
+            self?.outputDevice = nil
         }
         logger.info("Virtual audio devices destroyed")
     }
 
     var areDevicesAvailable: Bool {
-        return deviceDiscoveryQueue.sync {
+        // CRITICAL FIX: Read @Published properties on MainActor to prevent race conditions
+        return DispatchQueue.main.sync {
             return inputDevice != nil && outputDevice != nil
         }
     }

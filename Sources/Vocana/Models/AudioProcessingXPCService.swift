@@ -122,12 +122,16 @@ class AudioProcessingXPCService: NSObject {
         // CRITICAL: Copy XPC data immediately - the pointer is only valid for the lifetime of this message
         let originalAudioData = Data(bytes: audioPtr!, count: bufferSize)
 
-        // Store connection reference to prevent premature cleanup
+        // CRITICAL FIX: Retain XPC message for use in async task
+        let messageRef = Unmanaged.passRetained(message)
         let connectionRef = Unmanaged.passRetained(connection)
 
         // Process audio
         Task {
-            defer { connectionRef.release() }
+            defer { 
+                connectionRef.release()
+                messageRef.release()
+            }
 
             do {
                 // Convert data to float array
@@ -146,7 +150,8 @@ class AudioProcessingXPCService: NSObject {
 
                 // Convert back to data
                 let processedData = processedBuffer.withUnsafeBufferPointer { bufferPtr in
-                    Data(buffer: bufferPtr)
+                    Data(bytes: bufferPtr.baseAddress!, 
+                         count: bufferPtr.count * MemoryLayout<Float>.size)
                 }
 
                 // Check if connection is still valid before sending reply
@@ -156,7 +161,7 @@ class AudioProcessingXPCService: NSObject {
                 }
 
                 // Send reply
-                guard let reply = xpc_dictionary_create_reply(message) else {
+                guard let reply = xpc_dictionary_create_reply(messageRef.takeUnretainedValue()) else {
                     logger.error("Failed to create XPC reply")
                     return
                 }

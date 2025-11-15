@@ -220,10 +220,10 @@ enum VocanaNoiseCancellationState: UInt32 {
             }
         }
 
-        // Update devices atomically
-        deviceDiscoveryQueue.sync {
-            self.inputDevice = foundInputDevice
-            self.outputDevice = foundOutputDevice
+        // CRITICAL FIX: Update @Published properties on MainActor to prevent race conditions
+        DispatchQueue.main.async { [weak self] in
+            self?.inputDevice = foundInputDevice
+            self?.outputDevice = foundOutputDevice
         }
 
         let success = foundInputDevice != nil && foundOutputDevice != nil

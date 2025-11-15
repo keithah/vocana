@@ -48,9 +48,14 @@ final class SwiftAppIntegrationTests: XCTestCase {
     func testCompleteAudioProcessingPipeline() {
         let pipelineExpectation = XCTestExpectation(description: "Complete audio processing pipeline")
         
-        // Step 1: Create virtual devices
-        let deviceCreationResult = virtualAudioManager.createVirtualDevices()
-        XCTAssertTrue(deviceCreationResult || !deviceCreationResult, "Device creation should complete")
+        // Step 1: Create virtual devices (should complete within timeout)
+        let deviceCreationExpectation = XCTestExpectation(description: "Device creation completes")
+        Task {
+            let deviceCreationResult = await virtualAudioManager.createVirtualDevices()
+            // Device creation result is validated by later pipeline expectations
+            deviceCreationExpectation.fulfill()
+        }
+        wait(for: [deviceCreationExpectation], timeout: 2.0)
         
         // Step 2: Start audio processing
         audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.7)
@@ -498,15 +503,8 @@ final class SwiftAppIntegrationTests: XCTestCase {
         
         wait(for: [concurrentExpectation], timeout: 5.0)
         
-        // Verify final state is consistent
-        let audioProcessingState = audioEngine.isEnabled
-        let inputNoiseState = virtualAudioManager.isInputNoiseCancellationEnabled
-        let outputNoiseState = virtualAudioManager.isOutputNoiseCancellationEnabled
-        
-        // States should be valid boolean values
-        XCTAssertTrue(audioProcessingState == true || audioProcessingState == false, "Audio processing state should be valid")
-        XCTAssertTrue(inputNoiseState == true || inputNoiseState == false, "Input noise state should be valid")
-        XCTAssertTrue(outputNoiseState == true || outputNoiseState == false, "Output noise state should be valid")
+        // Verify final state is consistent - no crash/deadlock within timeout is the primary signal
+        // The concurrent operations completed without hanging, which validates thread safety
     }
     
     // MARK: - Performance and Stress Tests
@@ -543,37 +541,29 @@ final class SwiftAppIntegrationTests: XCTestCase {
         stabilityExpectation.expectedFulfillmentCount = 100
         
         let startTime = CFAbsoluteTimeGetCurrent()
-        var errors = 0
-        
+
         // Start audio processing
         audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.6)
-        
+
         for i in 0..<100 {
             DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + Double(i) * 0.05) {
-                do {
-                    let testBuffer = self.createTestAudioBuffer(frameCount: 256, frequency: 440 + Float(i % 50))
-                    self.audioEngine.processAudioBuffer(testBuffer)
-                    
-                    // Verify state consistency
-                    let levels = self.audioEngine.currentLevels
-                    XCTAssertFalse(levels.input.isNaN, "Input level should not be NaN")
-                    XCTAssertFalse(levels.output.isNaN, "Output level should not be NaN")
-                    
-                } catch {
-                    errors += 1
-                }
-                
+                let testBuffer = self.createTestAudioBuffer(frameCount: 256, frequency: 440 + Float(i % 50))
+                self.audioEngine.processAudioBuffer(testBuffer)
+
+                // Verify state consistency
+                let levels = self.audioEngine.currentLevels
+                XCTAssertFalse(levels.input.isNaN, "Input level should not be NaN")
+                XCTAssertFalse(levels.output.isNaN, "Output level should not be NaN")
+
                 stabilityExpectation.fulfill()
             }
         }
-        
+
         wait(for: [stabilityExpectation], timeout: 10.0)
-        
+
         let totalTime = CFAbsoluteTimeGetCurrent() - startTime
-        let errorRate = Double(errors) / 100.0
-        
-        print(String(format: "Long Running Stability: %.3fs total, %.1f%% error rate", totalTime, errorRate * 100))
-        XCTAssertLessThan(errorRate, 0.05, "Error rate should be < 5%")
+
+        print(String(format: "Long Running Stability: %.3fs total", totalTime))
         XCTAssertLessThan(totalTime, 8.0, "Should complete in reasonable time")
     }
     

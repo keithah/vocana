@@ -66,6 +66,7 @@ enum VocanaNoiseCancellationState: UInt32 {
     case processing = 2
 }
 
+@MainActor
 @objc class VirtualAudioManager: NSObject, ObservableObject {
     static let shared = VirtualAudioManager()
 
@@ -140,8 +141,8 @@ enum VocanaNoiseCancellationState: UInt32 {
     }
 
     private func discoverVocanaDevices() -> Bool {
-        var foundInputDevice: VocanaAudioDevice? = nil
-        var foundOutputDevice: VocanaAudioDevice? = nil
+        var foundInputDevice: VocanaAudioDevice?
+        var foundOutputDevice: VocanaAudioDevice?
 
         // Get all audio devices
         var deviceIDs = [AudioObjectID]()
@@ -168,14 +169,21 @@ enum VocanaNoiseCancellationState: UInt32 {
         let deviceCount = Int(dataSize) / MemoryLayout<AudioObjectID>.size
         deviceIDs = Array(repeating: AudioObjectID(), count: deviceCount)
 
-        result = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize,
-            &deviceIDs
-        )
+        if deviceCount > 0 {
+            deviceIDs.withUnsafeMutableBufferPointer { buffer in
+                guard let baseAddress = buffer.baseAddress else { return }
+                result = AudioObjectGetPropertyData(
+                    AudioObjectID(kAudioObjectSystemObject),
+                    &propertyAddress,
+                    0,
+                    nil,
+                    &dataSize,
+                    baseAddress
+                )
+            }
+        } else {
+            result = noErr
+        }
 
         guard result == noErr else {
             logger.error("Failed to get audio devices: \(result)")
@@ -184,7 +192,7 @@ enum VocanaNoiseCancellationState: UInt32 {
 
         // Find Vocana devices
         var nameProperty = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceNameCFString,
+            mSelector: kAudioObjectPropertyName,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
@@ -229,8 +237,10 @@ enum VocanaNoiseCancellationState: UInt32 {
     }
 
     func destroyVirtualDevices() {
-        inputDevice = nil
-        outputDevice = nil
+        deviceDiscoveryQueue.sync {
+            self.inputDevice = nil
+            self.outputDevice = nil
+        }
         logger.info("Virtual audio devices destroyed")
     }
 

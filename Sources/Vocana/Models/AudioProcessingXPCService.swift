@@ -62,14 +62,44 @@ class AudioProcessingXPCService: NSObject {
         if type == XPC_TYPE_CONNECTION {
             // New connection
             let newConnection = event
+
+            // Add client validation
+            guard validateClientConnection(newConnection) else {
+                logger.error("Rejecting unauthorized XPC connection")
+                xpc_connection_cancel(newConnection)
+                return
+            }
+
             xpc_connection_set_event_handler(newConnection) { [weak self] message in
                 self?.handleXPCMessage(message, from: newConnection)
             }
             xpc_connection_resume(newConnection)
-            logger.info("Accepted new XPC connection")
+            logger.info("Accepted authorized XPC connection")
         } else if type == XPC_TYPE_ERROR {
             logger.error("XPC connection error")
         }
+    }
+
+    private func validateClientConnection(_ connection: xpc_connection_t) -> Bool {
+        // Validate client entitlements and bundle ID
+        let clientPID = xpc_connection_get_pid(connection)
+
+        // For now, implement basic PID validation
+        // In production, this should validate code signing, entitlements, etc.
+        guard clientPID > 0 else {
+            logger.warning("Invalid client PID: \(clientPID)")
+            return false
+        }
+
+        // TODO: Add proper entitlement and code signing validation
+        // This is a placeholder for basic security - production should validate:
+        // 1. Code signing certificate
+        // 2. Entitlements
+        // 3. Bundle identifier
+        // 4. Process ownership
+
+        logger.debug("Validated XPC client with PID: \(clientPID)")
+        return true
     }
 
     private func handleXPCMessage(_ message: xpc_object_t, from connection: xpc_connection_t) {
@@ -92,8 +122,13 @@ class AudioProcessingXPCService: NSObject {
         // CRITICAL: Copy XPC data immediately - the pointer is only valid for the lifetime of this message
         let originalAudioData = Data(bytes: audioPtr!, count: bufferSize)
 
+        // Store connection reference to prevent premature cleanup
+        let connectionRef = Unmanaged.passRetained(connection)
+
         // Process audio
         Task {
+            defer { connectionRef.release() }
+
             do {
                 // Convert data to float array
                 guard bufferSize % MemoryLayout<Float>.size == 0 else {
@@ -114,6 +149,12 @@ class AudioProcessingXPCService: NSObject {
                     Data(buffer: bufferPtr)
                 }
 
+                // Check if connection is still valid before sending reply
+                guard xpc_connection_get_pid(connection) != 0 else {
+                    logger.warning("Connection closed before reply could be sent")
+                    return
+                }
+
                 // Send reply
                 guard let reply = xpc_dictionary_create_reply(message) else {
                     logger.error("Failed to create XPC reply")
@@ -131,6 +172,12 @@ class AudioProcessingXPCService: NSObject {
                 logger.debug("Processed audio buffer of \(floatBuffer.count) samples")
             } catch {
                 logger.error("Audio processing failed: \(error.localizedDescription)")
+
+                // Check if connection is still valid before sending error reply
+                guard xpc_connection_get_pid(connection) != 0 else {
+                    logger.warning("Connection closed before error reply could be sent")
+                    return
+                }
 
                 // Send original data back on error
                 guard let reply = xpc_dictionary_create_reply(message) else {

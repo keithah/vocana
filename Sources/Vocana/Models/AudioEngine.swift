@@ -426,13 +426,49 @@ class AudioEngine: ObservableObject {
     
     // MARK: - Private Methods
     
+    // CRITICAL FIX: Perform heavy audio processing off main thread
+    private func performHeavyAudioProcessing(
+        buffer: AVAudioPCMBuffer,
+        enabled: Bool,
+        sensitivity: Double,
+        bufferManager: AudioBufferManager,
+        levelController: AudioLevelController,
+        mlProcessor: MLAudioProcessorProtocol,
+        isMLProcessingActive: Bool
+    ) -> (inputLevel: Float, outputLevel: Float, processedSamples: [Float])? {
+        // Fix HIGH: Skip processing if audio capture is suspended (circuit breaker)
+        // Use AudioBufferManager as single source of truth for suspension state
+        guard !bufferManager.isAudioCaptureSuspended() else { return nil }
+
+        guard let channelData = buffer.floatChannelData else { return nil }
+        let channelDataValue = channelData.pointee
+        let frames = buffer.frameLength
+
+        let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
+
+        // Calculate input level
+        let inputLevel = levelController.calculateRMSFromPointer(samplesPtr)
+
+        if enabled {
+            let samples = Array(samplesPtr)
+            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity)
+            let outputLevel = levelController.calculateRMS(samples: processedSamples)
+            
+            return (inputLevel, outputLevel, processedSamples)
+        } else {
+            // Apply level decay when disabled
+            let decayedLevels = levelController.applyDecay()
+            return (inputLevel, decayedLevels.output, [])
+        }
+    }
+    
      private func initializeMLProcessing() {
          // Fix HIGH-008: ML initialization is now async with callback notification
          // No need for arbitrary sleep - onMLProcessingReady callback will notify when ready
          mlProcessor.initializeMLProcessing()
      }
     
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+    internal func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
         // Capture MainActor state before dispatching to background
         let capturedEnabled = isEnabled
@@ -440,8 +476,34 @@ class AudioEngine: ObservableObject {
         let capturedCallback = onProcessedAudioBufferReady
 
         audioProcessingQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // CRITICAL FIX: Perform heavy processing off main thread
+            let result = self.performHeavyAudioProcessing(
+                buffer: buffer,
+                enabled: capturedEnabled,
+                sensitivity: capturedSensitivity,
+                bufferManager: self.bufferManager,
+                levelController: self.levelController,
+                mlProcessor: self.mlProcessor,
+                isMLProcessingActive: self.isMLProcessingActive
+            )
+            
+            // Only UI updates on main thread
             Task { @MainActor in
-                self?.processAudioBufferInternal(buffer, enabled: capturedEnabled, sensitivity: capturedSensitivity, callback: capturedCallback)
+                if let (inputLevel, outputLevel, processedSamples) = result {
+                    // HAL Plugin: Emit processed stereo buffer to virtual devices
+                    capturedCallback?(processedSamples)
+                    
+                    // Update UI safely on MainActor
+                    self.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
+                } else {
+                    // Apply level decay when disabled
+                    let decayedLevels = self.levelController.applyDecay()
+                    
+                    // Update UI safely on MainActor
+                    self.currentLevels = decayedLevels
+                }
             }
         }
     }

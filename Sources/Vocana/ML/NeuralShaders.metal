@@ -260,7 +260,9 @@ kernel void fft_forward(
     const int N = constants.fftSize;
     if (gid >= uint(N)) return;
 
-    // CRITICAL FIX: Only thread 0 performs the full FFT to avoid race conditions
+    // TODO: Implement proper parallel FFT with thread synchronization
+    // Currently using single-threaded FFT for correctness
+    // For production, replace with Metal Performance Shaders or implement proper parallel algorithm
     if (gid != 0) return;
 
     // CRITICAL SECURITY: Validate FFT size to prevent buffer overflow
@@ -321,8 +323,8 @@ kernel void fft_inverse(
     // CRITICAL SECURITY: Prevent stack buffer overflow - validate FFT size
     if (N > MAX_FFT_SIZE) return;
     
-    // Convert input to complex - use device memory instead of stack
-    device Complex* x = reinterpret_cast<device Complex*>(output_real + N); // Use output buffer as temporary storage
+    // Convert input to complex - use thread-local storage for safety
+    thread Complex x[MAX_FFT_SIZE]; // Thread-local, not stack
     for (int i = 0; i < N; ++i) {
         x[i] = Complex{input_real[i], input_imag[i]};
     }
@@ -368,6 +370,7 @@ struct STFTConstants {
     int windowSize;
     int numFrames;
     bool inverse;
+    int log2fftSize;
 };
 
 // Hann window generation

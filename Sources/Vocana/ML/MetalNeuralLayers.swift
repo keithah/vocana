@@ -9,6 +9,65 @@ import Metal
 import MetalPerformanceShaders
 import os.log
 
+// MARK: - Advanced GPU Operation Structures
+
+struct BatchConv1DConstants {
+    let batchSize: Int32
+    let inputChannels: Int32
+    let outputChannels: Int32
+    let kernelSize: Int32
+    let stride: Int32
+    let inputLength: Int32
+    let outputLength: Int32
+}
+
+struct AttentionConstants {
+    let batchSize: Int32
+    let seqLength: Int32
+    let numHeads: Int32
+    let headDim: Int32
+    let modelDim: Int32
+}
+
+struct FusedConvActivationConstants {
+    let inputChannels: Int32
+    let outputChannels: Int32
+    let kernelSize: Int32
+    let stride: Int32
+    let inputLength: Int32
+    let outputLength: Int32
+    let activationType: Int32
+}
+
+struct QuantizedConvConstants {
+    let inputChannels: Int32
+    let outputChannels: Int32
+    let kernelSize: Int32
+    let stride: Int32
+    let inputLength: Int32
+    let outputLength: Int32
+    let scale: Float
+    let zeroPoint: Int32
+}
+
+struct AdvancedSTFTConstants {
+    let fftSize: Int32
+    let hopSize: Int32
+    let windowSize: Int32
+    let numFrames: Int32
+    let numChannels: Int32
+    let useHannWindow: Bool
+    let scaleFactor: Float
+}
+
+struct TransformerConstants {
+    let batchSize: Int32
+    let seqLength: Int32
+    let modelDim: Int32
+    let numHeads: Int32
+    let ffDim: Int32
+}
+
 /// Metal-based GPU acceleration for neural network operations
 class MetalNeuralProcessor {
     private let logger = Logger(subsystem: "com.vocana.ml", category: "metal")
@@ -118,6 +177,19 @@ class MetalNeuralProcessor {
 
         // Create new buffer if none available in pool
         return device?.makeBuffer(length: length)
+    }
+
+    /// Creates a Metal buffer from array data
+    private func createBuffer<T>(data: [T]) -> MTLBuffer {
+        guard let device = device else {
+            fatalError("Metal device not available")
+        }
+        let length = data.count * MemoryLayout<T>.size
+        guard let buffer = device.makeBuffer(length: length, options: .storageModeShared) else {
+            fatalError("Failed to create Metal buffer")
+        }
+        memcpy(buffer.contents(), data, length)
+        return buffer
     }
 
     deinit {
@@ -843,9 +915,13 @@ struct ERBConstants {
 enum MetalError: Error, LocalizedError {
     case notInitialized
     case libraryCreationFailed
+    case pipelineCreationFailed
+    case bufferCreationFailed
+    case commandBufferFailed
     case functionNotFound(String)
-    case commandBufferCreationFailed
-    case mpsNotAvailable
+    case bufferAllocationFailed
+    case kernelExecutionFailed(String)
+    case executionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -853,12 +929,390 @@ enum MetalError: Error, LocalizedError {
             return "Metal GPU acceleration not initialized"
         case .libraryCreationFailed:
             return "Failed to create Metal library"
+        case .pipelineCreationFailed:
+            return "Failed to create compute pipeline"
+        case .bufferCreationFailed:
+            return "Failed to create Metal buffer"
+        case .commandBufferFailed:
+            return "Failed to create command buffer"
         case .functionNotFound(let name):
-            return "Metal function '\(name)' not found"
+            return "Metal function '\(name)' not found in library"
+        case .bufferAllocationFailed:
+            return "Failed to allocate Metal buffer"
+        case .kernelExecutionFailed(let reason):
+            return "Kernel execution failed: \(reason)"
+        case .executionFailed(let reason):
+            return "Execution failed: \(reason)"
         case .commandBufferCreationFailed:
             return "Failed to create Metal command buffer"
         case .mpsNotAvailable:
             return "Metal Performance Shaders not available"
+        }
+    }
+
+    // MARK: - Advanced GPU Operations
+
+    /// Performs batch convolution for processing multiple audio streams simultaneously
+    /// - Parameters:
+    ///   - input: Input tensor [batch, channels, length]
+    ///   - weights: Weight tensor [out_channels, in_channels, kernel]
+    ///   - bias: Bias tensor [out_channels]
+    ///   - batchSize: Number of audio streams to process
+    ///   - inputChannels: Number of input channels per stream
+    ///   - outputChannels: Number of output channels per stream
+    ///   - inputLength: Length of input sequence
+    ///   - kernelSize: Convolution kernel size
+    ///   - stride: Convolution stride
+    /// - Returns: Output tensor [batch, out_channels, out_length]
+    func batchConv1D(input: [Float], weights: [Float], bias: [Float],
+                    batchSize: Int, inputChannels: Int, outputChannels: Int,
+                    inputLength: Int, kernelSize: Int, stride: Int) async throws -> [Float] {
+        guard let device = self.device, let commandQueue = self.commandQueue else {
+            throw MetalError.notInitialized
+        }
+
+        let outputLength = (inputLength - kernelSize) / stride + 1
+        let outputSize = batchSize * outputChannels * outputLength
+
+        let constants = BatchConv1DConstants(
+            batchSize: Int32(batchSize),
+            inputChannels: Int32(inputChannels),
+            outputChannels: Int32(outputChannels),
+            kernelSize: Int32(kernelSize),
+            stride: Int32(stride),
+            inputLength: Int32(inputLength),
+            outputLength: Int32(outputLength)
+        )
+
+        return try await executeComputeKernel(
+            kernelName: "batch_conv1d_forward",
+            inputBuffers: [
+                createBuffer(data: input),
+                createBuffer(data: weights),
+                createBuffer(data: bias)
+            ],
+            outputSize: outputSize,
+            constants: constants,
+            threadGroups: MTLSize(width: batchSize, height: outputChannels, depth: outputLength)
+        )
+    }
+
+    /// Performs multi-head attention computation
+    /// - Parameters:
+    ///   - query: Query tensor [batch, seq, model_dim]
+    ///   - key: Key tensor [batch, seq, model_dim]
+    ///   - value: Value tensor [batch, seq, model_dim]
+    ///   - weightsQ: Query weights [model_dim, model_dim]
+    ///   - weightsK: Key weights [model_dim, model_dim]
+    ///   - weightsV: Value weights [model_dim, model_dim]
+    ///   - weightsO: Output weights [model_dim, model_dim]
+    ///   - batchSize: Batch size
+    ///   - seqLength: Sequence length
+    ///   - numHeads: Number of attention heads
+    ///   - modelDim: Model dimension
+    /// - Returns: Attention output [batch, seq, model_dim]
+    func multiHeadAttention(query: [Float], key: [Float], value: [Float],
+                           weightsQ: [Float], weightsK: [Float], weightsV: [Float], weightsO: [Float],
+                           batchSize: Int, seqLength: Int, numHeads: Int, modelDim: Int) async throws -> [Float] {
+        guard let device = self.device, let commandQueue = self.commandQueue else {
+            throw MetalError.notInitialized
+        }
+
+        let headDim = modelDim / numHeads
+        let outputSize = batchSize * seqLength * modelDim
+
+        let constants = AttentionConstants(
+            batchSize: Int32(batchSize),
+            seqLength: Int32(seqLength),
+            numHeads: Int32(numHeads),
+            headDim: Int32(headDim),
+            modelDim: Int32(modelDim)
+        )
+
+        return try await executeComputeKernel(
+            kernelName: "multihead_attention",
+            inputBuffers: [
+                createBuffer(data: query),
+                createBuffer(data: key),
+                createBuffer(data: value),
+                createBuffer(data: weightsQ),
+                createBuffer(data: weightsK),
+                createBuffer(data: weightsV),
+                createBuffer(data: weightsO)
+            ],
+            outputSize: outputSize,
+            constants: constants,
+            threadGroups: MTLSize(width: batchSize, height: seqLength, depth: numHeads)
+        )
+    }
+
+    /// Performs fused convolution + activation for better performance
+    /// - Parameters:
+    ///   - input: Input tensor [channels, length]
+    ///   - weights: Weight tensor [out_channels, in_channels, kernel]
+    ///   - bias: Bias tensor [out_channels]
+    ///   - kernelSize: Convolution kernel size
+    ///   - stride: Convolution stride
+    ///   - activationType: 0=ReLU, 1=GELU, 2=Swish
+    /// - Returns: Output tensor [out_channels, out_length]
+    func fusedConv1DActivation(input: [Float], weights: [Float], bias: [Float],
+                              inputChannels: Int, outputChannels: Int, inputLength: Int,
+                              kernelSize: Int, stride: Int, activationType: Int) async throws -> [Float] {
+        guard let device = self.device, let commandQueue = self.commandQueue else {
+            throw MetalError.notInitialized
+        }
+
+        let outputLength = (inputLength - kernelSize) / stride + 1
+        let outputSize = outputChannels * outputLength
+
+        let constants = FusedConvActivationConstants(
+            inputChannels: Int32(inputChannels),
+            outputChannels: Int32(outputChannels),
+            kernelSize: Int32(kernelSize),
+            stride: Int32(stride),
+            inputLength: Int32(inputLength),
+            outputLength: Int32(outputLength),
+            activationType: Int32(activationType)
+        )
+
+        return try await executeComputeKernel(
+            kernelName: "fused_conv1d_activation",
+            inputBuffers: [
+                createBuffer(data: input),
+                createBuffer(data: weights),
+                createBuffer(data: bias)
+            ],
+            outputSize: outputSize,
+            constants: constants
+        )
+    }
+
+    /// Performs 8-bit quantized convolution for memory efficiency
+    /// - Parameters:
+    ///   - input: Quantized input tensor
+    ///   - weights: Quantized weight tensor
+    ///   - bias: Float bias tensor
+    ///   - scale: Dequantization scale factor
+    ///   - zeroPoint: Quantization zero point
+    /// - Returns: Dequantized output tensor
+    func quantizedConv1D(input: [Int8], weights: [Int8], bias: [Float],
+                        inputChannels: Int, outputChannels: Int, inputLength: Int,
+                        kernelSize: Int, stride: Int, scale: Float, zeroPoint: Int) async throws -> [Float] {
+        guard let device = self.device, let commandQueue = self.commandQueue else {
+            throw MetalError.notInitialized
+        }
+
+        let outputLength = (inputLength - kernelSize) / stride + 1
+        let outputSize = outputChannels * outputLength
+
+        let constants = QuantizedConvConstants(
+            inputChannels: Int32(inputChannels),
+            outputChannels: Int32(outputChannels),
+            kernelSize: Int32(kernelSize),
+            stride: Int32(stride),
+            inputLength: Int32(inputLength),
+            outputLength: Int32(outputLength),
+            scale: scale,
+            zeroPoint: Int32(zeroPoint)
+        )
+
+        return try await executeComputeKernel(
+            kernelName: "quantized_conv1d_forward",
+            inputBuffers: [
+                createBuffer(data: input),
+                createBuffer(data: weights),
+                createBuffer(data: bias)
+            ],
+            outputSize: outputSize,
+            constants: constants
+        )
+    }
+
+    /// Performs advanced STFT with multi-channel support
+    /// - Parameters:
+    ///   - input: Multi-channel audio input [channels, samples]
+    ///   - window: Window function
+    ///   - fftSize: FFT size
+    ///   - hopSize: Hop size between frames
+    ///   - numChannels: Number of audio channels
+    ///   - numFrames: Number of STFT frames
+    ///   - useHannWindow: Whether to use Hann windowing
+    /// - Returns: STFT result (real, imaginary) [channels, frames, fft_size/2]
+    func advancedSTFT(input: [Float], window: [Float], fftSize: Int, hopSize: Int,
+                     numChannels: Int, numFrames: Int, useHannWindow: Bool,
+                     scaleFactor: Float = 1.0) async throws -> (real: [Float], imag: [Float]) {
+        guard let device = self.device, let commandQueue = self.commandQueue else {
+            throw MetalError.notInitialized
+        }
+
+        let windowSize = window.count
+        let outputSize = numChannels * numFrames * (fftSize / 2)
+
+        let constants = AdvancedSTFTConstants(
+            fftSize: Int32(fftSize),
+            hopSize: Int32(hopSize),
+            windowSize: Int32(windowSize),
+            numFrames: Int32(numFrames),
+            numChannels: Int32(numChannels),
+            useHannWindow: useHannWindow,
+            scaleFactor: scaleFactor
+        )
+
+        let realOutput = try await executeComputeKernel(
+            kernelName: "advanced_stft_analysis",
+            inputBuffers: [
+                createBuffer(data: input),
+                createBuffer(data: window)
+            ],
+            outputSize: outputSize,
+            constants: constants,
+            threadGroups: MTLSize(width: numChannels, height: numFrames, depth: fftSize / 2)
+        )
+
+        let imagOutput = try await executeComputeKernel(
+            kernelName: "advanced_stft_analysis",
+            inputBuffers: [
+                createBuffer(data: input),
+                createBuffer(data: window)
+            ],
+            outputSize: outputSize,
+            constants: constants,
+            threadGroups: MTLSize(width: numChannels, height: numFrames, depth: fftSize / 2),
+            outputIndex: 1  // Get imaginary output
+        )
+
+        return (real: realOutput, imag: imagOutput)
+    }
+
+    /// Performs transformer feed-forward network computation
+    /// - Parameters:
+    ///   - input: Input tensor [batch, seq, model_dim]
+    ///   - weights1: First layer weights [model_dim, ff_dim]
+    ///   - weights2: Second layer weights [ff_dim, model_dim]
+    ///   - bias1: First layer bias [ff_dim]
+    ///   - bias2: Second layer bias [model_dim]
+    ///   - batchSize: Batch size
+    ///   - seqLength: Sequence length
+    ///   - modelDim: Model dimension
+    ///   - ffDim: Feed-forward dimension
+    /// - Returns: Transformer output [batch, seq, model_dim]
+    func transformerFeedForward(input: [Float], weights1: [Float], weights2: [Float],
+                               bias1: [Float], bias2: [Float],
+                               batchSize: Int, seqLength: Int, modelDim: Int, ffDim: Int) async throws -> [Float] {
+        guard let device = self.device, let commandQueue = self.commandQueue else {
+            throw MetalError.notInitialized
+        }
+
+        let outputSize = batchSize * seqLength * modelDim
+
+        let constants = TransformerConstants(
+            batchSize: Int32(batchSize),
+            seqLength: Int32(seqLength),
+            modelDim: Int32(modelDim),
+            numHeads: 0,  // Not used in feed-forward
+            ffDim: Int32(ffDim)
+        )
+
+        return try await executeComputeKernel(
+            kernelName: "transformer_feedforward",
+            inputBuffers: [
+                createBuffer(data: input),
+                createBuffer(data: weights1),
+                createBuffer(data: weights2),
+                createBuffer(data: bias1),
+                createBuffer(data: bias2)
+            ],
+            outputSize: outputSize,
+            constants: constants,
+            threadGroups: MTLSize(width: batchSize, height: seqLength, depth: modelDim)
+        )
+    }
+
+    // MARK: - Helper Methods for Advanced Operations
+
+    /// Executes a compute kernel with advanced parameters
+    private func executeComputeKernel(kernelName: String, inputBuffers: [MTLBuffer],
+                                    outputSize: Int, constants: Any,
+                                    threadGroups: MTLSize? = nil,
+                                    outputIndex: Int = 0) async throws -> [Float] {
+        guard let device = self.device, let commandQueue = self.commandQueue,
+              let library = self.library else {
+            throw MetalError.notInitialized
+        }
+
+        guard let kernelFunction = library.makeFunction(name: kernelName),
+              let pipeline = try? device.makeComputePipelineState(function: kernelFunction) else {
+            throw MetalError.pipelineCreationFailed
+        }
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalError.commandBufferCreationFailed
+        }
+
+        // Set compute pipeline
+        encoder.setComputePipelineState(pipeline)
+
+        // Set input buffers
+        for (index, buffer) in inputBuffers.enumerated() {
+            encoder.setBuffer(buffer, offset: 0, index: index)
+        }
+
+        // Create output buffer
+        guard let outputBuffer = device.makeBuffer(length: outputSize * MemoryLayout<Float>.size,
+                                                  options: .storageModeShared) else {
+            encoder.endEncoding()
+            throw MetalError.bufferCreationFailed
+        }
+
+        encoder.setBuffer(outputBuffer, offset: 0, index: inputBuffers.count + outputIndex)
+
+        // Set constants buffer
+        let constantsBuffer = createConstantsBuffer(constants)
+        encoder.setBuffer(constantsBuffer, offset: 0, index: inputBuffers.count + 1)
+
+        // Calculate thread groups
+        let threadsPerGroup = MTLSize(width: min(256, outputSize), height: 1, depth: 1)
+        let groups: MTLSize
+        if let customGroups = threadGroups {
+            groups = customGroups
+        } else {
+            let groupWidth = (outputSize + threadsPerGroup.width - 1) / threadsPerGroup.width
+            groups = MTLSize(width: groupWidth, height: 1, depth: 1)
+        }
+
+        encoder.dispatchThreadgroups(groups, threadsPerThreadgroup: threadsPerGroup)
+        encoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if let error = commandBuffer.error {
+            throw MetalError.kernelExecutionFailed(error.localizedDescription)
+        }
+
+        // Return output data
+        let outputPtr = outputBuffer.contents().bindMemory(to: Float.self, capacity: outputSize)
+        return Array(UnsafeBufferPointer(start: outputPtr, count: outputSize))
+    }
+
+    /// Creates a constants buffer from various constant structures
+    private func createConstantsBuffer(_ constants: Any) -> MTLBuffer {
+        switch constants {
+        case let batchConv as BatchConv1DConstants:
+            return createBuffer(data: [batchConv])
+        case let attention as AttentionConstants:
+            return createBuffer(data: [attention])
+        case let fused as FusedConvActivationConstants:
+            return createBuffer(data: [fused])
+        case let quantized as QuantizedConvConstants:
+            return createBuffer(data: [quantized])
+        case let stft as AdvancedSTFTConstants:
+            return createBuffer(data: [stft])
+        case let transformer as TransformerConstants:
+            return createBuffer(data: [transformer])
+        default:
+            fatalError("Unsupported constants type")
         }
     }
 }
@@ -941,12 +1395,12 @@ class MetalConv1DLayer: NeuralLayer {
                             acc += input[inputIndex] * weights[baseWeight + k]
                         }
                     }
-                    output[outC * outputLength + t] = max(0.0, acc)  // ReLU
-                }
-            }
-            return output
-        }
-    }
+                     output[outC * outputLength + t] = max(0.0, acc)  // ReLU
+                 }
+             }
+             return output
+         }
+     }
 }
 
 class MetalLinearLayer: NeuralLayer {

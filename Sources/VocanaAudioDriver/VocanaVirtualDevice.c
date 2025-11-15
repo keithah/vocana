@@ -2484,24 +2484,32 @@ static OSStatus	VocanaVirtualDevice_GetDevicePropertyData(AudioServerPlugInDrive
             theNumberItemsToFetch = minimum(inDataSize / sizeof(AudioObjectID), device_object_list_size(inAddress->mScope, inObjectID));
 
             //    fill out the list with the right objects
-            switch (inObjectID) {
+             switch (inObjectID) {
                 case kObjectID_Device:
-                    for (UInt32 i = 0, k = 0; k < theNumberItemsToFetch; i++)
                     {
-                        if (kDevice_ObjectList[i].scope == inAddress->mScope || inAddress->mScope == kAudioObjectPropertyScopeGlobal)
+                        UInt32 writeIndex = 0; // Separate index for each device case to prevent buffer corruption
+                        for (UInt32 i = 0; i < kDevice_ObjectListSize && writeIndex < theNumberItemsToFetch; i++)
                         {
-                            ((AudioObjectID*)outData)[k++] = kDevice_ObjectList[i].id;
+                            if (kDevice_ObjectList[i].scope == inAddress->mScope || inAddress->mScope == kAudioObjectPropertyScopeGlobal)
+                            {
+                                ((AudioObjectID*)outData)[writeIndex++] = kDevice_ObjectList[i].id;
+                            }
                         }
+                        theNumberItemsToFetch = writeIndex; // Update to actual number of items written
                     }
                     break;
 
                 case kObjectID_Device2:
-                    for (UInt32 i = 0, k = 0; k < theNumberItemsToFetch; i++)
                     {
-                        if (kDevice2_ObjectList[i].scope == inAddress->mScope || inAddress->mScope == kAudioObjectPropertyScopeGlobal)
+                        UInt32 writeIndex = 0; // Separate index for each device case to prevent buffer corruption
+                        for (UInt32 i = 0; i < kDevice2_ObjectListSize && writeIndex < theNumberItemsToFetch; i++)
                         {
-                            ((AudioObjectID*)outData)[k++] = kDevice2_ObjectList[i].id;
+                            if (kDevice2_ObjectList[i].scope == inAddress->mScope || inAddress->mScope == kAudioObjectPropertyScopeGlobal)
+                            {
+                                ((AudioObjectID*)outData)[writeIndex++] = kDevice2_ObjectList[i].id;
+                            }
                         }
+                        theNumberItemsToFetch = writeIndex; // Update to actual number of items written
                     }
                     break;
             }
@@ -2668,24 +2676,31 @@ static OSStatus	VocanaVirtualDevice_GetDevicePropertyData(AudioServerPlugInDrive
             //    fill out the list with as many objects as requested
             switch (inObjectID) {
                 case kObjectID_Device:
-                    for (UInt32 i = 0, k = 0; k < theNumberItemsToFetch; i++)
                     {
-                        if ((kDevice_ObjectList[i].type == kObjectType_Stream) &&
-                            (kDevice_ObjectList[i].scope == inAddress->mScope || inAddress->mScope == kAudioObjectPropertyScopeGlobal))
+                        UInt32 deviceWriteIndex = 0; // Separate index to prevent buffer corruption
+                        for (UInt32 i = 0; i < kDevice_ObjectListSize && deviceWriteIndex < theNumberItemsToFetch; i++)
                         {
-                            ((AudioObjectID*)outData)[k++] = kDevice_ObjectList[i].id;
+                            if (kDevice_ObjectList[i].scope == inAddress->mScope || inAddress->mScope == kAudioObjectPropertyScopeGlobal)
+                            {
+                                ((AudioObjectID*)outData)[deviceWriteIndex++] = kDevice_ObjectList[i].id;
+                            }
                         }
+                        theNumberItemsToFetch = deviceWriteIndex; // Update to actual items written
                     }
                     break;
 
                 case kObjectID_Device2:
-                    for (UInt32 i = 0, k = 0; k < theNumberItemsToFetch; i++)
                     {
-                        if ((kDevice2_ObjectList[i].type == kObjectType_Stream) &&
-                            (kDevice2_ObjectList[i].scope == inAddress->mScope || inAddress->mScope == kAudioObjectPropertyScopeGlobal))
+                        UInt32 device2WriteIndex = 0; // Separate index to prevent buffer corruption
+                        for (UInt32 i = 0; i < kDevice2_ObjectListSize && device2WriteIndex < theNumberItemsToFetch; i++)
                         {
-                            ((AudioObjectID*)outData)[k++] = kDevice2_ObjectList[i].id;
+                            if ((kDevice2_ObjectList[i].type == kObjectType_Stream) &&
+                                (kDevice2_ObjectList[i].scope == inAddress->mScope || inAddress->mScope == kAudioObjectPropertyScopeGlobal))
+                            {
+                                ((AudioObjectID*)outData)[device2WriteIndex++] = kDevice2_ObjectList[i].id;
+                            }
                         }
+                        theNumberItemsToFetch = device2WriteIndex; // Update to actual items written
                     }
                     break;
             }
@@ -2705,24 +2720,32 @@ static OSStatus	VocanaVirtualDevice_GetDevicePropertyData(AudioServerPlugInDrive
             switch (inObjectID) {
                 case kObjectID_Device:
                     pthread_mutex_lock(&gPlugIn_StateMutex);
-                    for (UInt32 i = 0, k = 0; k < theNumberItemsToFetch; i++)
                     {
-                        // TODO remove hack! There must be a better way than looking for a fixed i
-                        if ((kDevice_ObjectList[i].type == kObjectType_Control) && !(!gPitch_Adjust_Enabled && kDevice_ObjectList[i].id==kObjectID_Pitch_Adjust))
+                        UInt32 deviceControlIndex = 0; // Separate index to prevent buffer corruption
+                        for (UInt32 i = 0; i < kDevice_ObjectListSize && deviceControlIndex < theNumberItemsToFetch; i++)
                         {
-                            ((AudioObjectID*)outData)[k++] = kDevice_ObjectList[i].id;
+                            // TODO remove hack! There must be a better way than looking for a fixed i
+                            if ((kDevice_ObjectList[i].type == kObjectType_Control) && !(!gPitch_Adjust_Enabled && kDevice_ObjectList[i].id==kObjectID_Pitch_Adjust))
+                            {
+                                ((AudioObjectID*)outData)[deviceControlIndex++] = kDevice_ObjectList[i].id;
+                            }
                         }
+                        theNumberItemsToFetch = deviceControlIndex; // Update to actual items written
                     }
                     pthread_mutex_unlock(&gPlugIn_StateMutex);
                     break;
 
                 case kObjectID_Device2:
-                    for (UInt32 i = 0, k = 0; k < theNumberItemsToFetch; i++)
                     {
-                        if ((kDevice2_ObjectList[i].type == kObjectType_Control) && !(!gPitch_Adjust_Enabled && kDevice2_ObjectList[i].id==kObjectID_Pitch_Adjust))
+                        UInt32 device2ControlIndex = 0; // Separate index to prevent buffer corruption
+                        for (UInt32 i = 0; i < kDevice2_ObjectListSize && device2ControlIndex < theNumberItemsToFetch; i++)
                         {
-                            ((AudioObjectID*)outData)[k++] = kDevice2_ObjectList[i].id;
+                            if ((kDevice2_ObjectList[i].type == kObjectType_Control) && !(!gPitch_Adjust_Enabled && kDevice2_ObjectList[i].id==kObjectID_Pitch_Adjust))
+                            {
+                                ((AudioObjectID*)outData)[device2ControlIndex++] = kDevice2_ObjectList[i].id;
+                            }
                         }
+                        theNumberItemsToFetch = device2ControlIndex; // Update to actual items written
                     }
                     break;
             }

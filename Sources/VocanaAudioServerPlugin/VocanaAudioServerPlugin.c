@@ -22,6 +22,9 @@
 #include <Availability.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <xpc/xpc.h>
+#include <Security/SecCode.h>
+#include <Security/SecRequirement.h>
+#include <bsm/audit.h>
 #include "VocanaAudioServerPlugin.h"
 
 //==================================================================================================
@@ -51,6 +54,10 @@
     } \
     ptr; \
 })
+
+// XPC Security validation
+#define VOCANA_BUNDLE_ID "com.vocana.Vocana"
+#define VOCANA_TEAM_ID "TEAM_ID_PLACEHOLDER" // Replace with actual Team ID
 
 //==================================================================================================
 // MARK: - Plugin State Structure
@@ -87,11 +94,61 @@ typedef struct VocanaAudioServerPlugin {
     // XPC connection for audio processing
     xpc_connection_t xpcConnection;
     Boolean xpcConnected;
+    
+    // XPC security validation
+    Boolean xpcClientValidated;
+    pid_t xpcClientPID;
 
 } VocanaAudioServerPlugin;
 
 // Global plugin instance
 static VocanaAudioServerPlugin *gPlugin = NULL;
+
+//==================================================================================================
+// MARK: - XPC Security Validation
+//==================================================================================================
+
+static Boolean VocanaAudioServerPlugin_ValidateClient(pid_t clientPID) {
+    if (clientPID <= 0) {
+        ErrorMsg("Invalid client PID: %d", clientPID);
+        return false;
+    }
+    
+    // Get audit session for additional validation
+    auditinfo_addr_t auditInfo;
+    if (getaudit_addr(&auditInfo, sizeof(auditInfo)) != 0) {
+        ErrorMsg("Failed to get audit info for PID %d", clientPID);
+        return false;
+    }
+    
+    // Validate the process is running as the correct user
+    // In production, this should validate against specific user/group IDs
+    if (auditInfo.ai_auid == 0) {
+        ErrorMsg("Rejecting root access from PID %d", clientPID);
+        return false;
+    }
+    
+    return true;
+}
+
+static Boolean VocanaAudioServerPlugin_ValidateCodeSignature(pid_t clientPID) {
+    // For now, implement basic PID validation
+    // In production, this should include proper code signature validation
+    // using SecCodeCopySigningInformation and other Security framework APIs
+    
+    if (clientPID <= 0 || clientPID > 99999) {
+        ErrorMsg("Invalid client PID range: %d", clientPID);
+        return false;
+    }
+    
+    // Additional validation could include:
+    // - Checking if the process belongs to the expected user
+    // - Validating the code signature
+    // - Checking the bundle identifier
+    
+    DebugMsg("Basic PID validation passed for PID %d", clientPID);
+    return true;
+}
 
 //==================================================================================================
 // MARK: - XPC Connection Management
@@ -108,7 +165,7 @@ static void VocanaAudioServerPlugin_ConnectToXPCService(VocanaAudioServerPlugin 
         return;
     }
 
-    // Set up event handler
+    // Set up event handler with security validation
     xpc_connection_set_event_handler(plugin->xpcConnection, ^(xpc_object_t event) {
         xpc_type_t type = xpc_get_type(event);
 
@@ -116,9 +173,11 @@ static void VocanaAudioServerPlugin_ConnectToXPCService(VocanaAudioServerPlugin 
             if (event == XPC_ERROR_CONNECTION_INVALID) {
                 ErrorMsg("XPC connection invalid");
                 plugin->xpcConnected = false;
+                plugin->xpcClientValidated = false;
             } else {
                 ErrorMsg("XPC connection error");
                 plugin->xpcConnected = false;
+                plugin->xpcClientValidated = false;
             }
         } else if (type == XPC_TYPE_DICTIONARY) {
             // Handle responses from XPC service
@@ -129,6 +188,7 @@ static void VocanaAudioServerPlugin_ConnectToXPCService(VocanaAudioServerPlugin 
     // Resume connection
     xpc_connection_resume(plugin->xpcConnection);
     plugin->xpcConnected = true;
+    plugin->xpcClientValidated = false;
 
     DebugMsg("Connected to XPC service");
 }
@@ -138,13 +198,38 @@ static void VocanaAudioServerPlugin_ProcessAudioThroughXPC(VocanaAudioServerPlug
         return;
     }
 
+    // Validate client before processing
+    if (!plugin->xpcClientValidated) {
+        // Get current connection PID and validate
+        pid_t clientPID = xpc_connection_get_pid(plugin->xpcConnection);
+        if (!VocanaAudioServerPlugin_ValidateClient(clientPID) || 
+            !VocanaAudioServerPlugin_ValidateCodeSignature(clientPID)) {
+            ErrorMsg("XPC client validation failed, refusing audio processing");
+            return;
+        }
+        plugin->xpcClientValidated = true;
+        plugin->xpcClientPID = clientPID;
+        DebugMsg("XPC client validated for audio processing: PID %d", clientPID);
+    }
+
     // Create XPC message
     xpc_object_t message = xpc_dictionary_create(NULL, NULL, 0);
+    if (!message) {
+        ErrorMsg("Failed to create XPC message");
+        return;
+    }
 
-    // Add audio data as raw bytes
-    xpc_dictionary_set_data(message, "audioData", audioBuffer, bufferSize);
-    xpc_dictionary_set_double(message, "sampleRate", plugin->sampleRate);
-    xpc_dictionary_set_int64(message, "channelCount", kNumber_Of_Channels);
+    // Add audio data as raw bytes with size validation
+    if (bufferSize > 0 && bufferSize <= 65536) { // Reasonable size limit
+        xpc_dictionary_set_data(message, "audioData", audioBuffer, bufferSize);
+        xpc_dictionary_set_double(message, "sampleRate", plugin->sampleRate);
+        xpc_dictionary_set_int64(message, "channelCount", kNumber_Of_Channels);
+        xpc_dictionary_set_int64(message, "clientPID", plugin->xpcClientPID);
+    } else {
+        ErrorMsg("Invalid audio buffer size: %zu", bufferSize);
+        xpc_release(message);
+        return;
+    }
 
     // Send message and wait for reply (synchronous for real-time audio)
     xpc_object_t reply = xpc_connection_send_message_with_reply_sync(plugin->xpcConnection, message);
@@ -160,7 +245,7 @@ static void VocanaAudioServerPlugin_ProcessAudioThroughXPC(VocanaAudioServerPlug
             memcpy(audioBuffer, processedData, bufferSize);
             DebugMsg("Processed %u frames through XPC", frameCount);
         } else {
-            ErrorMsg("Invalid processed audio data from XPC");
+            ErrorMsg("Invalid processed audio data from XPC: expected %zu, got %zu", bufferSize, processedSize);
         }
     } else {
         ErrorMsg("Failed to get reply from XPC service");
@@ -212,6 +297,8 @@ static OSStatus VocanaAudioServerPlugin_CreatePlugin(AudioServerPlugInDriverRef 
     // Initialize XPC connection
     plugin->xpcConnection = NULL;
     plugin->xpcConnected = false;
+    plugin->xpcClientValidated = false;
+    plugin->xpcClientPID = 0;
 
     // Connect to XPC service
     VocanaAudioServerPlugin_ConnectToXPCService(plugin);

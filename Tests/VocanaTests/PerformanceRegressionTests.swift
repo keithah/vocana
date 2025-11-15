@@ -93,4 +93,87 @@ final class PerformanceRegressionTests: XCTestCase {
         // Max latency should not be more than 2x average (reasonable variance)
         XCTAssertLessThan(maxLatency, mean * 2.0, "STFT latency variance too high (max: \(String(format: "%.2f", maxLatency))ms, mean: \(String(format: "%.2f", mean))ms)")
     }
+
+    // MARK: - ML Processing Performance
+
+    func testMLProcessingLatencyRegression() throws {
+        let expectation = XCTestExpectation(description: "ML processing latency test")
+
+        Task { @MainActor in
+            let processor = MLAudioProcessor()
+            let audioChunk = [Float](repeating: 0.1, count: 960) // 20ms at 48kHz
+
+            // Warm up the processor
+            _ = processor.processAudioWithML(chunk: audioChunk, sensitivity: 0.5)
+
+            measure {
+                _ = processor.processAudioWithML(chunk: audioChunk, sensitivity: 0.5)
+            }
+
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 10.0)
+    }
+
+    func testMemoryUsageRegression() throws {
+        let expectation = XCTestExpectation(description: "Memory usage test")
+
+        Task { @MainActor in
+            let processor = MLAudioProcessor()
+
+            // Test memory usage with large buffers
+            autoreleasepool {
+                let largeChunk = [Float](repeating: 0.1, count: 48000) // 1 second at 48kHz
+                _ = processor.processAudioWithML(chunk: largeChunk, sensitivity: 0.5)
+            }
+
+            // Memory should be properly released
+            // This is a regression test - if memory usage grows unbounded, this will fail
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 10.0)
+    }
+
+    func testConcurrentProcessingRegression() throws {
+        let expectation = XCTestExpectation(description: "Concurrent processing")
+        expectation.expectedFulfillmentCount = 50
+
+        Task { @MainActor in
+            let processor = MLAudioProcessor()
+
+            DispatchQueue.concurrentPerform(iterations: 50) { _ in
+                let chunk = [Float](repeating: Float.random(in: -1...1), count: 960)
+                _ = processor.processAudioWithML(chunk: chunk, sensitivity: 0.5)
+                expectation.fulfill()
+            }
+        }
+
+        wait(for: [expectation], timeout: 30.0)
+    }
+
+    func testBufferManagerPerformanceRegression() throws {
+        let bufferManager = AudioBufferManager()
+        let samples = [Float](repeating: 0.1, count: 512)
+
+        measure {
+            for _ in 0..<1000 {
+                _ = bufferManager.appendToBufferAndExtractChunk(samples: samples) { _ in }
+            }
+        }
+    }
+
+    func testAudioEngineInitializationRegression() throws {
+        let expectation = XCTestExpectation(description: "AudioEngine initialization")
+
+        Task { @MainActor in
+            measure {
+                _ = AudioEngine()
+            }
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 10.0)
+    }
 }

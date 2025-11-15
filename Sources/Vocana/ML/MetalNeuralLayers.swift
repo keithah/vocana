@@ -164,8 +164,10 @@ class MetalNeuralProcessor {
             if buffers.count < self.bufferPoolMaxSize {
                 buffers.append(buffer)
                 self.bufferPool[size] = buffers
+            } else {
+                // Pool is full, set buffer to volatile to allow deallocation
+                buffer.setPurgeableState(.volatile)
             }
-            // If pool is full, buffer will be deallocated automatically
         }
     }
 
@@ -180,7 +182,7 @@ class MetalNeuralProcessor {
     }
 
     /// Creates a Metal buffer from array data
-    private func createBuffer<T>(data: [T]) -> MTLBuffer {
+    internal func createBuffer<T>(data: [T]) -> MTLBuffer {
         guard let device = device else {
             fatalError("Metal device not available")
         }
@@ -918,6 +920,7 @@ enum MetalError: Error, LocalizedError {
     case pipelineCreationFailed
     case bufferCreationFailed
     case commandBufferFailed
+    case commandBufferCreationFailed
     case functionNotFound(String)
     case bufferAllocationFailed
     case kernelExecutionFailed(String)
@@ -935,6 +938,8 @@ enum MetalError: Error, LocalizedError {
             return "Failed to create Metal buffer"
         case .commandBufferFailed:
             return "Failed to create command buffer"
+        case .commandBufferCreationFailed:
+            return "Failed to create Metal command buffer"
         case .functionNotFound(let name):
             return "Metal function '\(name)' not found in library"
         case .bufferAllocationFailed:
@@ -987,9 +992,9 @@ enum MetalError: Error, LocalizedError {
         return try await executeComputeKernel(
             kernelName: "batch_conv1d_forward",
             inputBuffers: [
-                createBuffer(data: input),
-                createBuffer(data: weights),
-                createBuffer(data: bias)
+                self.self.createBuffer(data: input),
+                self.self.createBuffer(data: weights),
+                self.self.createBuffer(data: bias)
             ],
             outputSize: outputSize,
             constants: constants,
@@ -1032,13 +1037,13 @@ enum MetalError: Error, LocalizedError {
         return try await executeComputeKernel(
             kernelName: "multihead_attention",
             inputBuffers: [
-                createBuffer(data: query),
-                createBuffer(data: key),
-                createBuffer(data: value),
-                createBuffer(data: weightsQ),
-                createBuffer(data: weightsK),
-                createBuffer(data: weightsV),
-                createBuffer(data: weightsO)
+                self.createBuffer(data: query),
+                self.createBuffer(data: key),
+                self.createBuffer(data: value),
+                self.createBuffer(data: weightsQ),
+                self.createBuffer(data: weightsK),
+                self.createBuffer(data: weightsV),
+                self.createBuffer(data: weightsO)
             ],
             outputSize: outputSize,
             constants: constants,
@@ -1078,9 +1083,9 @@ enum MetalError: Error, LocalizedError {
         return try await executeComputeKernel(
             kernelName: "fused_conv1d_activation",
             inputBuffers: [
-                createBuffer(data: input),
-                createBuffer(data: weights),
-                createBuffer(data: bias)
+                self.createBuffer(data: input),
+                self.createBuffer(data: weights),
+                self.createBuffer(data: bias)
             ],
             outputSize: outputSize,
             constants: constants
@@ -1119,9 +1124,9 @@ enum MetalError: Error, LocalizedError {
         return try await executeComputeKernel(
             kernelName: "quantized_conv1d_forward",
             inputBuffers: [
-                createBuffer(data: input),
-                createBuffer(data: weights),
-                createBuffer(data: bias)
+                self.createBuffer(data: input),
+                self.createBuffer(data: weights),
+                self.createBuffer(data: bias)
             ],
             outputSize: outputSize,
             constants: constants
@@ -1161,8 +1166,8 @@ enum MetalError: Error, LocalizedError {
         let realOutput = try await executeComputeKernel(
             kernelName: "advanced_stft_analysis",
             inputBuffers: [
-                createBuffer(data: input),
-                createBuffer(data: window)
+                self.createBuffer(data: input),
+                self.createBuffer(data: window)
             ],
             outputSize: outputSize,
             constants: constants,
@@ -1172,8 +1177,8 @@ enum MetalError: Error, LocalizedError {
         let imagOutput = try await executeComputeKernel(
             kernelName: "advanced_stft_analysis",
             inputBuffers: [
-                createBuffer(data: input),
-                createBuffer(data: window)
+                self.createBuffer(data: input),
+                self.createBuffer(data: window)
             ],
             outputSize: outputSize,
             constants: constants,
@@ -1216,11 +1221,11 @@ enum MetalError: Error, LocalizedError {
         return try await executeComputeKernel(
             kernelName: "transformer_feedforward",
             inputBuffers: [
-                createBuffer(data: input),
-                createBuffer(data: weights1),
-                createBuffer(data: weights2),
-                createBuffer(data: bias1),
-                createBuffer(data: bias2)
+                self.createBuffer(data: input),
+                self.createBuffer(data: weights1),
+                self.createBuffer(data: weights2),
+                self.createBuffer(data: bias1),
+                self.createBuffer(data: bias2)
             ],
             outputSize: outputSize,
             constants: constants,
@@ -1300,17 +1305,17 @@ enum MetalError: Error, LocalizedError {
     private func createConstantsBuffer(_ constants: Any) -> MTLBuffer {
         switch constants {
         case let batchConv as BatchConv1DConstants:
-            return createBuffer(data: [batchConv])
+            return self.createBuffer(data: [batchConv])
         case let attention as AttentionConstants:
-            return createBuffer(data: [attention])
+            return self.createBuffer(data: [attention])
         case let fused as FusedConvActivationConstants:
-            return createBuffer(data: [fused])
+            return self.createBuffer(data: [fused])
         case let quantized as QuantizedConvConstants:
-            return createBuffer(data: [quantized])
+            return self.createBuffer(data: [quantized])
         case let stft as AdvancedSTFTConstants:
-            return createBuffer(data: [stft])
+            return self.createBuffer(data: [stft])
         case let transformer as TransformerConstants:
-            return createBuffer(data: [transformer])
+            return self.createBuffer(data: [transformer])
         default:
             fatalError("Unsupported constants type")
         }

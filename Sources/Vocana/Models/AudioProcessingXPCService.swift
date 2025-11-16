@@ -394,7 +394,7 @@ class AudioProcessingXPCService: NSObject {
                 logger.error("Audio processing failed: \(error.localizedDescription)")
 
                 // Check if connection is still valid before sending error reply
-                guard xpc_connection_get_pid(connection) != 0 else {
+                guard xpc_connection_get_pid(connectionRef) != 0 else {
                     logger.warning("Connection closed before error reply could be sent")
                     return
                 }
@@ -411,7 +411,7 @@ class AudioProcessingXPCService: NSObject {
                     }
                     xpc_dictionary_set_data(reply, "processedAudioData", baseAddress, originalAudioData.count)
                 }
-                xpc_connection_send_message(connection, reply)
+                xpc_connection_send_message(connectionRef, reply)
             }
         }
     }

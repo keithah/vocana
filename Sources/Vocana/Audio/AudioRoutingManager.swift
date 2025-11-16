@@ -16,9 +16,12 @@ class AudioRoutingManager: ObservableObject {
     private var blackHoleInputNode: AVAudioInputNode?
     private var physicalOutputNode: AVAudioOutputNode?
     private var mixerNode: AVAudioMixerNode?
-    
+
     // Audio format for processing
     private let processingFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
+
+    // Background queue for audio processing
+    private let processingQueue = DispatchQueue(label: "com.vocana.audioRouting", qos: .userInitiated)
     
     init() {
         setupAudioEngine()
@@ -195,15 +198,22 @@ class AudioRoutingManager: ObservableObject {
     /// Install processing tap on mixer node for ML processing
     private func installProcessingTap(on mixer: AVAudioMixerNode) {
         let format = processingFormat
-        
+
         mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, time in
-            guard let self = self else { return }
-            
-            Task { @MainActor in
-                self.processAudioBuffer(buffer, at: time)
+            guard let self = self,
+                  let channelData = buffer.floatChannelData else { return }
+
+            // Copy buffer data synchronously to avoid lifetime issues
+            let frames = Int(buffer.frameLength)
+            let monoSamples = Array(UnsafeBufferPointer(start: channelData[0], count: frames))
+
+            // Process on background queue to avoid blocking audio thread
+            self.processingQueue.async { [weak self] in
+                guard let self = self else { return }
+                self.processSamples(monoSamples, timestamp: time, channelCount: Int(buffer.format.channelCount))
             }
         }
-        
+
         logger.info("Audio processing tap installed on mixer")
     }
     
@@ -251,7 +261,27 @@ class AudioRoutingManager: ObservableObject {
             return sample
         }
     }
-    
+
+    /// Process audio samples on background queue
+    private func processSamples(_ samples: [Float], timestamp: AVAudioTime, channelCount: Int) {
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        // Process with ML (this would integrate with existing AudioEngine)
+        let processedSamples = processWithML(samples: samples)
+
+        // Calculate latency
+        let processingTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+
+        // Update latency on main actor
+        Task { @MainActor in
+            self.routingLatencyMs = (self.routingLatencyMs * 0.9) + (processingTime * 0.1)
+        }
+
+        // For now, we don't output the processed samples since this is just routing
+        // In a full implementation, this would send to the output device
+        logger.debug("Processed \(samples.count) samples in \(String(format: "%.2f", processingTime))ms")
+    }
+
     /// Get available physical output devices
     func getPhysicalOutputDevices() -> [BlackHoleAudioManager.AudioDeviceInfo] {
         // This would delegate to BlackHoleAudioManager
@@ -260,9 +290,13 @@ class AudioRoutingManager: ObservableObject {
     }
     
     deinit {
-        Task { @MainActor in
-            stopRouting()
-            audioEngine = nil
+        // Perform synchronous cleanup
+        if let engine = audioEngine {
+            if let mixer = mixerNode {
+                mixer.removeTap(onBus: 0)
+            }
+            engine.stop()
         }
+        audioEngine = nil
     }
 }

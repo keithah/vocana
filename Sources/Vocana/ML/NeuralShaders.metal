@@ -459,7 +459,9 @@ kernel void stft_analysis(
     }
 }
 
-// STFT synthesis (inverse)
+// STFT synthesis (inverse) - CURRENTLY DISABLED
+// TODO: Implement proper inverse STFT with IFFT and overlap-add
+// The current implementation is incorrect and only sums real parts
 kernel void stft_synthesis(
     const device float* stft_real [[buffer(0)]],
     const device float* stft_imag [[buffer(1)]],
@@ -468,26 +470,11 @@ kernel void stft_synthesis(
     constant STFTConstants& constants [[buffer(4)]],
     uint sample_gid [[thread_position_in_grid]]
 ) {
+    // DISABLED: This implementation is incorrect
+    // It should perform IFFT on each frame and then overlap-add
+    // For now, return silence to prevent incorrect audio output
     if (sample_gid >= uint(constants.outputLength)) return;
-
-    // Overlap-add reconstruction (simplified)
-    float sum = 0.0f;
-    int num_contributing_frames = 0;
-
-    for (int frame = 0; frame < constants.numFrames; ++frame) {
-        int frame_start = frame * constants.hopSize;
-        int sample_in_frame = sample_gid - frame_start;
-
-        if (sample_in_frame >= 0 && sample_in_frame < constants.fftSize) {
-            float real_part = stft_real[frame * constants.fftSize + sample_in_frame];
-            float win_val = (sample_in_frame < constants.windowSize) ? window[sample_in_frame] : 1.0f;
-            sum += real_part * win_val;
-            num_contributing_frames++;
-        }
-    }
-
-    // Normalize by number of overlapping frames
-    output[sample_gid] = (num_contributing_frames > 0) ? sum / float(num_contributing_frames) : 0.0f;
+    output[sample_gid] = 0.0f;
 }
 
 // MARK: - ERB Filtering Operations
@@ -516,6 +503,12 @@ kernel void generate_erb_filterbank(
     constant ERBConstants& constants [[buffer(1)]],
     uint gid [[thread_position_in_grid]]
 ) {
+    // CRITICAL FIX: Early guard to prevent division by zero and invalid calculations
+    if (constants.numBands <= 1) {
+        filterbank[gid] = 1.0f; // Use full amplitude for single band case
+        return;
+    }
+
     const int freq_bin = gid / constants.numBands;
     const int band = gid % constants.numBands;
 
@@ -524,11 +517,6 @@ kernel void generate_erb_filterbank(
     float freq = float(freq_bin) * constants.sampleRate / float(constants.fftSize);
 
     // ERB filter shape (simplified triangular filter)
-    // CRITICAL FIX: Prevent division by zero when numBands <= 1
-    if (constants.numBands <= 1) {
-        filterbank[gid] = 1.0f; // Use full amplitude for single band case
-        return;
-    }
 
     float erb_center = freq_to_erb(constants.minFreq) +
                       float(band) * (freq_to_erb(constants.maxFreq) - freq_to_erb(constants.minFreq)) /

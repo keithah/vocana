@@ -259,28 +259,22 @@ class AudioProcessingXPCService: NSObject {
     }
 
     private func extractTeamID(from certificate: SecCertificate) -> String? {
-        // Extract team ID from certificate subject
-        // For development, use environment variable or fallback to placeholder
-        // In production, this would parse the certificate properly
-
-        if let envTeamID = ProcessInfo.processInfo.environment["VOCANA_TEAM_ID"],
-           envTeamID.hasPrefix("TEAM") && envTeamID.count == 10 {
-            return envTeamID
+        // Extract OU (organizational unit) – this is where Apple puts the Team ID
+        let keys: [CFString] = [kSecOIDOrganizationalUnitName]
+        var error: Unmanaged<CFError>?
+        guard
+            let values = SecCertificateCopyValues(certificate, keys as CFArray, &error) as? [CFString: Any],
+            let ouDict = values[kSecOIDOrganizationalUnitName] as? [CFString: Any],
+            let ouValue = ouDict[kSecPropertyKeyValue] as? String,
+            !ouValue.isEmpty
+        else {
+            if let error = error?.takeRetainedValue() {
+                logger.error("Failed to read certificate OU for team ID: \(error.localizedDescription)")
+            }
+            return nil
         }
-
-        // Fallback: try to extract from common name (development only)
-        var commonName: CFString?
-        let cnStatus = SecCertificateCopyCommonName(certificate, &commonName)
-        if cnStatus == errSecSuccess,
-           let cn = commonName as String?,
-           cn.hasPrefix("TEAM") && cn.count == 10 {
-            return cn
-        }
-
-        // For production deployment, proper certificate parsing would be implemented
-        // This is a temporary solution for development
-        logger.warning("Team ID extraction not fully implemented - using environment variable or placeholder")
-        return ProcessInfo.processInfo.environment["VOCANA_PROD_TEAM_ID"] ?? "TEAM123456"
+        // OU for Apple dev certificates is the raw Team ID string (typically 10 alphanumeric chars)
+        return ouValue
     }
 
     private func validateCertificateValidity(_ certificate: SecCertificate) -> Bool {

@@ -22,6 +22,9 @@ class AudioRoutingManager: ObservableObject {
 
     // Background queue for audio processing
     private let processingQueue = DispatchQueue(label: "com.vocana.audioRouting", qos: .userInitiated)
+
+    // Track tap installation state to prevent crashes
+    private var isTapInstalled = false
     
     init() {
         setupAudioEngine()
@@ -98,8 +101,9 @@ class AudioRoutingManager: ObservableObject {
         guard let engine = audioEngine else { return }
 
         // Remove the mixer tap to prevent duplicate processing
-        if let mixer = mixerNode {
+        if isTapInstalled, let mixer = mixerNode {
             mixer.removeTap(onBus: 0)
+            isTapInstalled = false
             logger.debug("Removed mixer tap on bus 0")
         }
 
@@ -222,6 +226,7 @@ class AudioRoutingManager: ObservableObject {
             }
         }
 
+        isTapInstalled = true
         logger.info("Audio processing tap installed on mixer")
     }
     
@@ -273,7 +278,7 @@ class AudioRoutingManager: ObservableObject {
     deinit {
         // Perform synchronous cleanup
         if let engine = audioEngine {
-            if let mixer = mixerNode {
+            if isTapInstalled, let mixer = mixerNode {
                 mixer.removeTap(onBus: 0)
             }
             engine.stop()

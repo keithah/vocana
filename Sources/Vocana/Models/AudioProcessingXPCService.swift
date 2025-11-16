@@ -386,7 +386,7 @@ class AudioProcessingXPCService: NSObject {
                     }
                     xpc_dictionary_set_data(reply, "processedAudioData", baseAddress, processedData.count)
                 }
-                xpc_connection_send_message(connection, reply)
+                xpc_connection_send_message(connectionRef, reply)
 
                 logger.debug("Processed audio buffer of \(floatBuffer.count) samples")
             } catch {

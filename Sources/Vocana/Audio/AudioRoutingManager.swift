@@ -31,20 +31,28 @@ class AudioRoutingManager: ObservableObject {
     private func setupAudioEngine() {
         audioEngine = AVAudioEngine()
         guard let engine = audioEngine else { return }
-        
+
         blackHoleInputNode = engine.inputNode
         physicalOutputNode = engine.outputNode
         mixerNode = AVAudioMixerNode()
-        
+
+        // Verify all nodes were created successfully
+        guard let inputNode = blackHoleInputNode,
+              let outputNode = physicalOutputNode,
+              let mixer = mixerNode else {
+            logger.error("Failed to create audio nodes")
+            return
+        }
+
         // Add mixer to engine
-        engine.attach(mixerNode!)
-        
+        engine.attach(mixer)
+
         // Connect BlackHole input to mixer
-        engine.connect(blackHoleInputNode!, to: mixerNode!, format: processingFormat)
-        
+        engine.connect(inputNode, to: mixer, format: processingFormat)
+
         // Connect mixer to physical output
-        engine.connect(mixerNode!, to: physicalOutputNode!, format: processingFormat)
-        
+        engine.connect(mixer, to: outputNode, format: processingFormat)
+
         logger.info("Audio routing engine setup complete")
     }
     
@@ -217,34 +225,7 @@ class AudioRoutingManager: ObservableObject {
         logger.info("Audio processing tap installed on mixer")
     }
     
-    /// Process audio buffer through Vocana ML pipeline
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, at time: AVAudioTime) {
-        guard let channelData = buffer.floatChannelData else { return }
-        
-        let startTime = CFAbsoluteTimeGetCurrent()
-        
-        // Convert to float array for ML processing
-        let frames = Int(buffer.frameLength)
-        let samples = Array(UnsafeBufferPointer(start: channelData[0], count: frames))
-        
-        // Process with ML (this would integrate with existing AudioEngine)
-        // For now, just pass through with level measurement
-        let processedSamples = processWithML(samples: samples)
-        
-        // Calculate latency
-        let processingTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
-        routingLatencyMs = (routingLatencyMs * 0.9) + (processingTime * 0.1)
-        
-        // Update buffer with processed audio
-        if let outputChannelData = buffer.floatChannelData {
-            for (index, sample) in processedSamples.enumerated() {
-                if index < frames {
-                    outputChannelData[0][index] = sample // Left channel
-                    outputChannelData[1][index] = sample // Right channel
-                }
-            }
-        }
-    }
+
     
     /// Process audio samples with ML (placeholder for integration with AudioEngine)
     private func processWithML(samples: [Float]) -> [Float] {

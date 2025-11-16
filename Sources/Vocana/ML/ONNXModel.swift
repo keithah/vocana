@@ -332,13 +332,16 @@ struct Tensor {
         // Fix HIGH: Safe overflow checking in shape calculation
         let expectedSize = shape.reduce(1) { result, dim in
             let (product, overflow) = result.multipliedReportingOverflow(by: dim)
-            precondition(!overflow, "Shape dimensions overflow Int: \(shape)")
+            guard !overflow else {
+                fatalError("Shape dimensions overflow Int: \(shape)")
+            }
             return product
         }
         
-        // Fix LOW: Better error message
-        precondition(data.count == expectedSize, 
-                    "Data size \(data.count) doesn't match shape \(shape) (expected \(expectedSize))")
+        // Fix LOW: Better error handling
+        guard data.count == expectedSize else {
+            fatalError("Data size \(data.count) doesn't match shape \(shape) (expected \(expectedSize))")
+        }
     }
     
     /// Create tensor filled with a constant value
@@ -346,7 +349,9 @@ struct Tensor {
         // Fix HIGH: Safe overflow checking
         let size = shape.reduce(1) { result, dim in
             let (product, overflow) = result.multipliedReportingOverflow(by: dim)
-            precondition(!overflow, "Shape dimensions overflow Int: \(shape)")
+            guard !overflow else {
+                fatalError("Shape dimensions overflow Int: \(shape)")
+            }
             return product
         }
         
@@ -359,7 +364,9 @@ struct Tensor {
         // Fix HIGH: Safe overflow checking
         shape.reduce(1) { result, dim in
             let (product, overflow) = result.multipliedReportingOverflow(by: dim)
-            precondition(!overflow, "Tensor size overflow: \(shape)")
+            guard !overflow else {
+                fatalError("Tensor size overflow: \(shape)")
+            }
             return product
         }
     }

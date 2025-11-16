@@ -12,6 +12,28 @@ import AppKit
 import CoreAudio
 import OSLog
 
+// MARK: - VirtualAudioManager Error Types
+
+enum VirtualAudioManagerError: LocalizedError {
+    case xpcServiceNotAvailable
+    case commandFailed(Error)
+    case deviceNotFound(UInt32)
+    case invalidCommand(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .xpcServiceNotAvailable:
+            return "XPC service not available - HAL plugin installation required"
+        case .commandFailed(let error):
+            return "Command failed: \(error.localizedDescription)"
+        case .deviceNotFound(let deviceID):
+            return "Device not found: \(deviceID)"
+        case .invalidCommand(let command):
+            return "Invalid command: \(command)"
+        }
+    }
+}
+
 // VocanaAudioDevice represents a HAL plugin audio device with XPC communication
 class VocanaAudioDevice: NSObject, ObservableObject {
     let deviceID: UInt32
@@ -252,8 +274,12 @@ enum VocanaNoiseCancellationState: UInt32 {
 
         // Send command to HAL plugin via XPC
         if let device = inputDevice {
-            sendDeviceCommand(deviceID: device.deviceID, command: "setNoiseCancellation",
-                            parameters: ["enabled": enabled, "isInput": true])
+            do {
+                try sendDeviceCommand(deviceID: device.deviceID, command: "setNoiseCancellation",
+                                parameters: ["enabled": enabled, "isInput": true])
+            } catch {
+                logger.error("Failed to enable input noise cancellation: \(error)")
+            }
         }
 
         logger.info("Input noise cancellation \(enabled ? "enabled" : "disabled")")
@@ -265,33 +291,32 @@ enum VocanaNoiseCancellationState: UInt32 {
 
         // Send command to HAL plugin via XPC
         if let device = outputDevice {
-            sendDeviceCommand(deviceID: device.deviceID, command: "setNoiseCancellation",
-                            parameters: ["enabled": enabled, "isInput": false])
+            do {
+                try sendDeviceCommand(deviceID: device.deviceID, command: "setNoiseCancellation",
+                                parameters: ["enabled": enabled, "isInput": false])
+            } catch {
+                logger.error("Failed to enable output noise cancellation: \(error)")
+            }
         }
 
         logger.info("Output noise cancellation \(enabled ? "enabled" : "disabled")")
     }
 
     /// Send command to HAL plugin device via XPC
-    private func sendDeviceCommand(deviceID: UInt32, command: String, parameters: [String: Any]) {
-        // CRITICAL FIX: Implement basic XPC communication framework
-        // For now, throw an error since HAL plugin XPC service is not yet implemented
-
+    private func sendDeviceCommand(deviceID: UInt32, command: String, parameters: [String: Any]) throws {
+        // CRITICAL FIX: Implement proper XPC error handling
         logger.debug("Attempting to send command '\(command)' to device \(deviceID) with parameters: \(parameters)")
 
-        // TODO: Implement full XPC communication with HAL plugin
-        // This requires:
-        // 1. HAL plugin to expose XPC service at "com.vocana.halplugin"
-        // 2. XPC connection establishment
-        // 3. Command serialization and response handling
-        // 4. Error handling and connection management
+        // Check if XPC service is available
+        guard let xpcService = xpcService else {
+            logger.error("XPC service not available - device control requires HAL plugin installation")
+            throw VirtualAudioManagerError.xpcServiceNotAvailable
+        }
 
-        // For now, log the attempt and indicate HAL plugin is required
-        logger.warning("HAL plugin XPC service not available - device control requires HAL plugin installation")
-        logger.info("To enable device control: install Vocana HAL plugin and ensure XPC service is running")
-
-        // In production, this would establish XPC connection and send command
-        // throw VirtualAudioManagerError.halPluginNotAvailable
+        // TODO: Implement XPC command interface in AudioProcessingXPCService
+        // For now, log the command and simulate success
+        logger.info("XPC command '\(command)' sent to device \(deviceID) (simulated)")
+        logger.debug("Command parameters: \(parameters)")
     }
 
     // MARK: - Application Detection

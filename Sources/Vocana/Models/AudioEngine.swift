@@ -90,8 +90,8 @@ public enum MLAudioProcessorError: LocalizedError {
 /// - Telemetry collection for monitoring and debugging
 /// - UI state management with throttled updates
 ///
-/// Threading: All operations are MainActor-isolated for UI safety.
-/// Heavy processing is dispatched to background queues to prevent UI blocking.
+/// Threading: UI properties are MainActor-isolated for UI safety.
+/// Heavy processing is performed on dedicated background queues to prevent UI blocking.
 @MainActor
 class AudioEngine: ObservableObject, AudioEngineProtocol {
     nonisolated private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
@@ -464,7 +464,7 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
 
         if enabled {
             let samples = Array(samplesPtr)
-            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity)
+            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity, mlProcessor: mlProcessor, bufferManager: bufferManager)
             let outputLevel = levelController.calculateRMS(samples: processedSamples)
             
             return (inputLevel, outputLevel, processedSamples)
@@ -716,7 +716,7 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
 
             // Resume ML processing if it was suspended
             if previousLevel == .critical {
-                mlProcessor.resumeMLProcessing()
+                mlProcessor.attemptMemoryPressureRecovery()
                 Self.logger.info("Resumed ML processing after memory pressure relief")
             }
 

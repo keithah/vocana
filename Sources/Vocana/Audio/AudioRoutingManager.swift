@@ -157,8 +157,30 @@ class AudioRoutingManager: ObservableObject {
         }
         #else
         // macOS uses CoreAudio directly for device configuration
-        logger.info("Input device configured for macOS: \(deviceUID)")
-        return true
+        // Set the system default input device
+        var inputDeviceID = deviceID
+        var inputPropertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        let inputResult = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &inputPropertyAddress,
+            0,
+            nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size),
+            &inputDeviceID
+        )
+
+        if inputResult == noErr {
+            logger.info("Input device configured for macOS: \(deviceUID)")
+            return true
+        } else {
+            logger.error("Failed to set default input device on macOS: \(inputResult)")
+            return false
+        }
         #endif
     }
     
@@ -202,8 +224,30 @@ class AudioRoutingManager: ObservableObject {
         }
         #else
         // macOS uses CoreAudio directly for device configuration
-        logger.info("Output device configured for macOS: \(deviceUID)")
-        return true
+        // Set the system default output device
+        var outputDeviceID = deviceID
+        var outputPropertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        let outputResult = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &outputPropertyAddress,
+            0,
+            nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size),
+            &outputDeviceID
+        )
+
+        if outputResult == noErr {
+            logger.info("Output device configured for macOS: \(deviceUID)")
+            return true
+        } else {
+            logger.error("Failed to set default output device on macOS: \(outputResult)")
+            return false
+        }
         #endif
     }
     

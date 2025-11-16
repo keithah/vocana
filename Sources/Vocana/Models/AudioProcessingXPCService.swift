@@ -8,6 +8,7 @@
 import Foundation
 import OSLog
 import Security
+import AppKit
 
 // Import XPC framework
 import XPC
@@ -222,20 +223,12 @@ class AudioProcessingXPCService: NSObject {
             return false
         }
 
-        // CRITICAL SECURITY: Use actual production team IDs from environment - fail closed if not configured
-        var allowedTeamIDs: [String] = []
-        if let prodTeamID = ProcessInfo.processInfo.environment["VOCANA_PROD_TEAM_ID"], !prodTeamID.isEmpty {
-            allowedTeamIDs.append(prodTeamID)
-        }
-        if let devTeamID = ProcessInfo.processInfo.environment["VOCANA_DEV_TEAM_ID"], !devTeamID.isEmpty {
-            allowedTeamIDs.append(devTeamID)
-        }
-
-        // Fail closed if no team IDs are configured
-        guard !allowedTeamIDs.isEmpty else {
-            logger.error("SECURITY: No team IDs configured in environment variables - failing closed")
-            return false
-        }
+        // CRITICAL SECURITY: Hardcoded production team IDs - cannot be spoofed
+        // Replace with actual team IDs from Apple Developer account
+        let allowedTeamIDs: Set<String> = [
+            "ABCD123456", // Production Team ID - REPLACE WITH ACTUAL VALUE
+            "EFGH789012"  // Development Team ID - REPLACE WITH ACTUAL VALUE
+        ]
 
         guard allowedTeamIDs.contains(teamID) else {
             logger.error("Unauthorized team ID: \(teamID)")

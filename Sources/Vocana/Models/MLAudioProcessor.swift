@@ -1,37 +1,68 @@
 import Foundation
 import os.log
 
+/// Protocol for ML audio processing
+@MainActor
+public protocol MLAudioProcessorProtocol: AnyObject {
+    var isMLProcessingActive: Bool { get }
+    var processingLatencyMs: Double { get }
+    var memoryPressureLevel: MemoryPressureLevel { get }
+
+    var recordFailure: () -> Void { get set }
+    var recordLatency: (Double) -> Void { get set }
+    var recordSuccess: () -> Void { get set }
+    var onMLProcessingReady: () -> Void { get set }
+
+    func initializeML() async
+    func initializeMLProcessing()
+    func stopMLProcessing()
+    func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]?
+    func processAudioBuffer(_ buffer: [Float], sampleRate: Float) async throws -> [Float]
+    func suspendMLProcessing(reason: String)
+    func attemptMemoryPressureRecovery()
+    func isMemoryPressureSuspended() -> Bool
+}
+
 /// Manages ML model inference and audio processing
 /// Responsibility: DeepFilterNet initialization, inference, memory pressure handling
 /// Isolated from audio capture, buffering, and level calculations
+@MainActor
 class MLAudioProcessor: MLAudioProcessorProtocol {
     private static let logger = Logger(subsystem: "Vocana", category: "MLAudioProcessor")
-    
+
     private var denoiser: DeepFilterNet?
     private var mlInitializationTask: Task<Void, Never>?
-    
+
      // ML state management
      private let mlStateQueue = DispatchQueue(label: "com.vocana.mlstate", qos: .userInteractive)
      private var mlProcessingSuspendedDueToMemory = false
 
      // Fix CRITICAL: Dedicated queue for ML inference to prevent blocking audio thread
-     private let mlInferenceQueue = DispatchQueue(label: "com.vocana.mlinference", qos: .userInteractive)
-    
-     // Telemetry and callbacks
-     // Thread Safety: All callbacks are automatically dispatched to MainActor
-     // Do not access MLAudioProcessor state directly from callbacks to avoid race conditions
-      var telemetry: AudioEngine.ProductionTelemetry = .init()
+     private let mlInferenceQueue = DispatchQueue(label: "com.vocana.mlinference", qos: .userInteractive, attributes: .concurrent)
+
+     // Performance optimization: Model warmup for reduced first-call latency
+     private var isModelWarmedUp = false
+     private let warmupSamples = Array(repeating: Float(0.01), count: 960) // Small signal for warmup
+
+      // Telemetry and callbacks
+      // Thread Safety: All callbacks are automatically dispatched to MainActor
+      // Do not access MLAudioProcessor state directly from callbacks to avoid race conditions
+       var telemetry: AudioEngine.ProductionTelemetry = .init()
        var recordLatency: (Double) -> Void = { _ in }
        var recordFailure: () -> Void = {}
        var recordSuccess: () -> Void = {}
        var recordMemoryPressure: () -> Void = {}
        var onMLProcessingReady: () -> Void = {}  // Fix HIGH-008: Callback when ML is initialized
-    
+
     // Public state
     var isMLProcessingActive = false
     var processingLatencyMs: Double = 0
-    var memoryPressureLevel: Int = 0
-    
+    var memoryPressureLevel: MemoryPressureLevel = .normal
+
+    func initializeML() async {
+        // Default implementation - ML initialization is handled in initializeMLProcessing
+    }
+
     /// Initialize ML processing with DeepFilterNet
     /// Handles async model loading with proper cancellation support
     func initializeMLProcessing() {
@@ -113,10 +144,10 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                      self.recordFailure()
                  }
              }
-        }
-    }
-    
-    /// Stop ML processing and clean up
+         }
+     }
+
+     /// Stop ML processing and clean up
     func stopMLProcessing() {
         mlInitializationTask?.cancel()
         mlInitializationTask = nil
@@ -134,7 +165,7 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
       ///   - chunk: Audio samples to process
       ///   - sensitivity: Sensitivity multiplier (0-1)
       /// - Returns: Processed audio samples
-      nonisolated func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
+      func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
          // Fix CRITICAL: Perform all state checks atomically within single sync block to prevent TOCTOU race
          let capturedDenoiser = mlStateQueue.sync { () -> DeepFilterNet? in
              guard !mlProcessingSuspendedDueToMemory else {
@@ -206,7 +237,7 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
     
      /// Check if ML is suspended due to memory pressure
      /// - Returns: true if suspended, false otherwise
-     nonisolated func isMemoryPressureSuspended() -> Bool {
+     func isMemoryPressureSuspended() -> Bool {
          return mlStateQueue.sync { mlProcessingSuspendedDueToMemory }
      }
 

@@ -8,7 +8,6 @@
 import Foundation
 import OSLog
 import Security
-import AppKit
 
 // Import XPC framework
 import XPC

@@ -251,17 +251,13 @@ class AudioProcessingXPCService: NSObject {
         }
 
          // CRITICAL SECURITY: Hardcoded production team IDs - cannot be spoofed
-         // To find your Team ID:
-         // 1. Go to https://developer.apple.com/account/
-         // 2. Click "Membership" in the left sidebar
-         // 3. Your Team ID is displayed under "Team Details"
-         // 4. Format: 10-character alphanumeric string (e.g., "A123B456CD")
+         // Team ID: Keith Herrington (6R7S5GA944)
+         // Source: https://developer.apple.com/account/
          //
-         // Replace with actual team IDs from Apple Developer account
-         // SECURITY NOTE: These must match the Team ID on your code signing certificates
+         // These team IDs must match the Team ID on your code signing certificates.
+         // This prevents unauthorized processes from communicating via XPC.
          let allowedTeamIDs: Set<String> = [
-             "A123B456CD", // Production Team ID - REPLACE WITH YOUR ACTUAL TEAM ID
-             "X987Y654ZW"  // Development Team ID - REPLACE WITH YOUR ACTUAL TEAM ID (if different)
+             "6R7S5GA944"  // Keith Herrington - Production & Development Team ID
          ]
 
         guard allowedTeamIDs.contains(teamID) else {

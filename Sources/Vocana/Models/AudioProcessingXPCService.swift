@@ -223,11 +223,20 @@ class AudioProcessingXPCService: NSObject {
             return false
         }
 
-        // CRITICAL SECURITY: Use actual production team IDs from environment
-        let allowedTeamIDs = [
-            ProcessInfo.processInfo.environment["VOCANA_PROD_TEAM_ID"] ?? "TEAM123456",
-            ProcessInfo.processInfo.environment["VOCANA_DEV_TEAM_ID"] ?? "DEVTEAM123"
-        ].filter { !$0.isEmpty }
+        // CRITICAL SECURITY: Use actual production team IDs from environment - fail closed if not configured
+        var allowedTeamIDs: [String] = []
+        if let prodTeamID = ProcessInfo.processInfo.environment["VOCANA_PROD_TEAM_ID"], !prodTeamID.isEmpty {
+            allowedTeamIDs.append(prodTeamID)
+        }
+        if let devTeamID = ProcessInfo.processInfo.environment["VOCANA_DEV_TEAM_ID"], !devTeamID.isEmpty {
+            allowedTeamIDs.append(devTeamID)
+        }
+
+        // Fail closed if no team IDs are configured
+        guard !allowedTeamIDs.isEmpty else {
+            logger.error("SECURITY: No team IDs configured in environment variables - failing closed")
+            return false
+        }
 
         guard allowedTeamIDs.contains(teamID) else {
             logger.error("Unauthorized team ID: \(teamID)")

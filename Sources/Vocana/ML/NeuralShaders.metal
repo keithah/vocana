@@ -322,7 +322,12 @@ kernel void fft_inverse(
 
     // CRITICAL SECURITY: Prevent stack buffer overflow - validate FFT size
     if (N > MAX_FFT_SIZE) return;
-    
+
+    // TODO: Implement proper parallel IFFT with thread synchronization
+    // Currently using single-threaded IFFT for correctness
+    // For production, replace with Metal Performance Shaders or implement proper parallel algorithm
+    if (gid != 0) return;
+
     // Convert input to complex - use thread-local storage for safety
     thread Complex x[MAX_FFT_SIZE]; // Thread-local, not stack
     for (int i = 0; i < N; ++i) {
@@ -371,6 +376,8 @@ struct STFTConstants {
     int numFrames;
     bool inverse;
     int log2fftSize;
+    int signalLength;
+    int outputLength;
 };
 
 // Hann window generation
@@ -411,7 +418,7 @@ kernel void stft_analysis(
     // Extract and window the frame
     thread Complex frame[MAX_FFT_SIZE]; // Thread-local, not stack
     for (int i = 0; i < fft_size; ++i) {
-        float sample = (frame_start + i < constants.windowSize) ? input[frame_start + i] : 0.0f;
+        float sample = (frame_start + i < constants.signalLength) ? input[frame_start + i] : 0.0f;
         float win_val = (i < constants.windowSize) ? window[i] : 1.0f;
         frame[i] = Complex{sample * win_val, 0.0f};
     }
@@ -461,7 +468,7 @@ kernel void stft_synthesis(
     constant STFTConstants& constants [[buffer(4)]],
     uint sample_gid [[thread_position_in_grid]]
 ) {
-    if (sample_gid >= uint(constants.windowSize)) return;
+    if (sample_gid >= uint(constants.outputLength)) return;
 
     // Overlap-add reconstruction (simplified)
     float sum = 0.0f;

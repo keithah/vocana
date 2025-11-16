@@ -7,10 +7,13 @@
 
 import SwiftUI
 import AVFoundation
+import CoreAudio
 
 struct AudioRoutingView: View {
     @StateObject private var virtualAudioManager = VirtualAudioManager()
     @State private var isRoutingEnabled = false
+    @State private var originalInputDeviceID: AudioDeviceID?
+    @State private var originalOutputDeviceID: AudioDeviceID?
     
     var body: some View {
         VStack(spacing: 20) {
@@ -81,6 +84,9 @@ struct AudioRoutingView: View {
     }
     
     private func startRouting() {
+        // Save current default audio devices before switching
+        saveCurrentDefaultDevices()
+
         // Create virtual devices
         let success = virtualAudioManager.createVirtualDevices()
         if success {
@@ -100,6 +106,97 @@ struct AudioRoutingView: View {
 
         // Destroy virtual devices
         virtualAudioManager.destroyVirtualDevices()
+
+        // Restore original default audio devices
+        restoreDefaultDevices()
+    }
+
+    private func saveCurrentDefaultDevices() {
+        // Get current default input device
+        var inputDeviceID: AudioDeviceID = 0
+        var inputSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var inputPropertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        let inputStatus = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &inputPropertyAddress,
+            0,
+            nil,
+            &inputSize,
+            &inputDeviceID
+        )
+
+        if inputStatus == noErr {
+            originalInputDeviceID = inputDeviceID
+        }
+
+        // Get current default output device
+        var outputDeviceID: AudioDeviceID = 0
+        var outputSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var outputPropertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        let outputStatus = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &outputPropertyAddress,
+            0,
+            nil,
+            &outputSize,
+            &outputDeviceID
+        )
+
+        if outputStatus == noErr {
+            originalOutputDeviceID = outputDeviceID
+        }
+    }
+
+    private func restoreDefaultDevices() {
+        // Restore original input device
+        if var inputDeviceID = originalInputDeviceID {
+            var inputPropertyAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+
+            AudioObjectSetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject),
+                &inputPropertyAddress,
+                0,
+                nil,
+                UInt32(MemoryLayout<AudioDeviceID>.size),
+                &inputDeviceID
+            )
+        }
+
+        // Restore original output device
+        if var outputDeviceID = originalOutputDeviceID {
+            var outputPropertyAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+
+            AudioObjectSetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject),
+                &outputPropertyAddress,
+                0,
+                nil,
+                UInt32(MemoryLayout<AudioDeviceID>.size),
+                &outputDeviceID
+            )
+        }
+
+        // Clear saved device IDs
+        originalInputDeviceID = nil
+        originalOutputDeviceID = nil
     }
 
     private func setupAudioRouting() {

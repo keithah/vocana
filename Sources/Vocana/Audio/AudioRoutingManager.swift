@@ -85,7 +85,13 @@ class AudioRoutingManager: ObservableObject {
     /// Stop audio routing
     func stopRouting() {
         guard let engine = audioEngine else { return }
-        
+
+        // Remove the mixer tap to prevent duplicate processing
+        if let mixer = mixerNode {
+            mixer.removeTap(onBus: 0)
+            logger.debug("Removed mixer tap on bus 0")
+        }
+
         engine.stop()
         isRoutingActive = false
         logger.info("Audio routing stopped")

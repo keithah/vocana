@@ -461,22 +461,20 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
 
         let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
 
-        // Calculate input level
-        let tempLevelController = AudioLevelController()
-        let inputLevel = tempLevelController.calculateRMSFromPointer(samplesPtr)
+        // Calculate input level using injected level controller (preserves decay state)
+        let inputLevel = levelController.calculateRMSFromPointer(samplesPtr)
 
         if enabled {
             let samples = Array(samplesPtr)
-            let tempMLProcessor = mlProcessor
-            let tempBufferManager = bufferManager
-            let processedSamples = self.processWithMLForOutput(samples: samples, sensitivity: sensitivity, mlProcessor: tempMLProcessor, bufferManager: tempBufferManager)
-            let outputLevel = tempLevelController.calculateRMS(samples: processedSamples)
+            // Process audio with ML model
+            let processedSamples = self.processWithMLForOutput(samples: samples, sensitivity: sensitivity, mlProcessor: mlProcessor, bufferManager: bufferManager)
+            // Calculate output level from processed samples using shared controller
+            let outputLevel = levelController.calculateRMS(samples: processedSamples)
             
             return (inputLevel, outputLevel, processedSamples)
         } else {
-            // Apply level decay when disabled
-            let tempLevelController = AudioLevelController()
-            let decayedLevels = tempLevelController.applyDecay()
+            // Apply level decay when processing disabled - maintains continuity with shared controller
+            let decayedLevels = levelController.applyDecay()
             return (inputLevel, decayedLevels.output, [])
         }
     }

@@ -59,42 +59,52 @@ class AudioRoutingManager: ObservableObject {
         logger.info("Audio routing engine setup complete")
     }
     
-    /// Start audio routing from BlackHole to physical output
-    func startRouting(blackHoleDeviceID: AudioDeviceID, physicalOutputDeviceID: AudioDeviceID) -> Bool {
-        guard let engine = audioEngine,
-              let mixer = mixerNode else {
-            logger.error("Audio engine not properly initialized")
-            return false
-        }
-        
-        // Configure BlackHole as input device
-        let blackHoleInputConfigured = configureInputDevice(deviceID: blackHoleDeviceID)
-        if !blackHoleInputConfigured {
-            logger.error("Failed to configure BlackHole as input device")
-            return false
-        }
-        
-        // Configure physical output device
-        let physicalOutputConfigured = configureOutputDevice(deviceID: physicalOutputDeviceID)
-        if !physicalOutputConfigured {
-            logger.error("Failed to configure physical output device")
-            return false
-        }
-        
-        // Install tap on mixer to process audio with Vocana ML
-        installProcessingTap(on: mixer)
-        
-        // Start the engine
-        do {
-            try engine.start()
-            isRoutingActive = true
-            logger.info("Audio routing started successfully")
-            return true
-        } catch {
-            logger.error("Failed to start audio engine: \(error)")
-            return false
-        }
-    }
+     /// Start audio routing from BlackHole to physical output
+     func startRouting(blackHoleDeviceID: AudioDeviceID, physicalOutputDeviceID: AudioDeviceID) -> Bool {
+         guard let engine = audioEngine,
+               let mixer = mixerNode else {
+             logger.error("Audio engine not properly initialized")
+             return false
+         }
+         
+         // Prevent double-start - if already routing, stop first to clean up
+         if isRoutingActive {
+             logger.warning("Audio routing already active, stopping first")
+             stopRouting()
+         }
+         
+         // Configure BlackHole as input device
+         let blackHoleInputConfigured = configureInputDevice(deviceID: blackHoleDeviceID)
+         if !blackHoleInputConfigured {
+             logger.error("Failed to configure BlackHole as input device")
+             return false
+         }
+         
+         // Configure physical output device
+         let physicalOutputConfigured = configureOutputDevice(deviceID: physicalOutputDeviceID)
+         if !physicalOutputConfigured {
+             logger.error("Failed to configure physical output device")
+             return false
+         }
+         
+         // Install tap on mixer to process audio with Vocana ML (only if not already installed)
+         if !isTapInstalled {
+             installProcessingTap(on: mixer)
+         } else {
+             logger.debug("Audio processing tap already installed")
+         }
+         
+         // Start the engine
+         do {
+             try engine.start()
+             isRoutingActive = true
+             logger.info("Audio routing started successfully")
+             return true
+         } catch {
+             logger.error("Failed to start audio engine: \(error)")
+             return false
+         }
+     }
     
     /// Stop audio routing
     func stopRouting() {

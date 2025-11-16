@@ -13,7 +13,7 @@ final class MockMLAudioProcessor: MLAudioProcessorProtocol {
     
     @Published var isMLProcessingActive = false
     @Published var processingLatencyMs: Double = 0
-    @Published var memoryPressureLevel: Int = 0
+    @Published var memoryPressureLevel: MemoryPressureLevel = .normal
     
     // MARK: - Callbacks
     
@@ -108,12 +108,12 @@ final class MockMLAudioProcessor: MLAudioProcessorProtocol {
     // MARK: - Memory Pressure
     
     func setMemoryPressureLevel(_ level: MemoryPressureLevel) {
-        memoryPressureLevel = level.rawValue
+        memoryPressureLevel = level
     }
 
     func attemptMemoryPressureRecovery() {
         // Mock recovery - just set to normal
-        memoryPressureLevel = 0
+        memoryPressureLevel = .normal
     }
     
     // MARK: - Test Helpers
@@ -126,7 +126,7 @@ final class MockMLAudioProcessor: MLAudioProcessorProtocol {
     
     /// Simulate memory pressure for testing memory management
     func simulateMemoryPressure() {
-        memoryPressureLevel = 2 // urgent
+        memoryPressureLevel = .urgent
     }
     
     // MARK: - Memory Tracking (Mock Implementation)

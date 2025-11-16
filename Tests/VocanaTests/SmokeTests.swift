@@ -3,6 +3,7 @@ import Foundation
 @testable import Vocana
 
 /// Simple smoke test to verify basic functionality
+@MainActor
 final class SmokeTests: XCTestCase {
     
     func testBasicInitialization() throws {

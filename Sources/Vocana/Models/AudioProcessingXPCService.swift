@@ -8,7 +8,6 @@
 import Foundation
 import OSLog
 import Security
-import AppKit
 
 // Import XPC framework
 import XPC
@@ -115,35 +114,20 @@ class AudioProcessingXPCService: NSObject {
     }
 
     private func validateProcessIdentity(pid: pid_t) -> Bool {
-        // Additional validation to prevent PID spoofing
-        // Check if process is still running and matches expected characteristics
-        guard let runningApp = NSRunningApplication(processIdentifier: pid) else {
+        // Simplified validation - just check if process exists
+        guard kill(pid, 0) == 0 || errno != ESRCH else {
             logger.error("Process with PID \(pid) is not running")
             return false
-        }
-        
-        // Validate process launch time to prevent PID reuse attacks
-        let currentTime = Date()
-        if let launchDate = runningApp.launchDate {
-            let timeSinceLaunch = currentTime.timeIntervalSince(launchDate)
-            // If process launched very recently, could be PID reuse
-            if timeSinceLaunch < 1.0 {
-                logger.warning("Process \(pid) launched very recently (\(timeSinceLaunch)s) - potential PID reuse")
-                // Still allow but log for monitoring
-            }
         }
         
         return true
     }
 
     private func getValidatedBundleIdentifier(pid: pid_t) -> String? {
-        // CRITICAL SECURITY: Use NSRunningApplication to get executable path on macOS
-        guard let runningApp = NSRunningApplication(processIdentifier: pid) else {
-            logger.error("SECURITY: Could not find running application for PID: \(pid)")
-            return nil
-        }
-
-        guard let bundleIdentifier = runningApp.bundleIdentifier else {
+        // CRITICAL SECURITY: Get bundle identifier from process code signing info
+        // This approach uses only Security framework - no AppKit dependency
+        
+        guard let bundleIdentifier = getProcessBundleIdentifier(pid: pid) else {
             logger.error("SECURITY: Could not get bundle identifier for PID: \(pid)")
             return nil
         }
@@ -162,14 +146,57 @@ class AudioProcessingXPCService: NSObject {
 
         return bundleIdentifier
     }
+    
+    private func getProcessBundleIdentifier(pid: pid_t) -> String? {
+        // Get executable path from /proc-like interface
+        let pathBuffer = UnsafeMutablePointer<Int8>.allocate(capacity: Int(MAXPATHLEN))
+        defer { pathBuffer.deallocate() }
+        
+        let result = proc_pidpath(pid, pathBuffer, UInt32(MAXPATHLEN))
+        guard result > 0 else {
+            logger.debug("Could not get process path for PID: \(pid)")
+            return nil
+        }
+        
+        let processPath = String(cString: pathBuffer)
+        let fileURL = URL(fileURLWithPath: processPath)
+        
+        // Create static code for validation
+        var code: SecStaticCode?
+        let status = SecStaticCodeCreateWithPath(fileURL as CFURL, [], &code)
+        guard status == errSecSuccess, let secCode = code else {
+            logger.debug("Could not create static code for process at: \(processPath)")
+            return nil
+        }
+        
+        // Extract bundle identifier from code signing info
+        var signingInfo: CFDictionary?
+        let infoStatus = SecCodeCopySigningInformation(secCode, SecCSFlags(rawValue: kSecCSSigningInformation), &signingInfo)
+        guard infoStatus == errSecSuccess, let info = signingInfo as NSDictionary? else {
+            logger.debug("Could not get signing information for process")
+            return nil
+        }
+        
+        if let bundleID = info[kSecCodeInfoIdentifier] as? String {
+            return bundleID
+        }
+        
+        return nil
+    }
 
     private func validateCodeSigningBasic(pid: pid_t) -> Bool {
-        // CRITICAL SECURITY: Use NSRunningApplication to get executable path on macOS
-        guard let runningApp = NSRunningApplication(processIdentifier: pid),
-              let bundleURL = runningApp.bundleURL else {
-            logger.error("Could not get bundle URL for PID: \(pid)")
+        // CRITICAL SECURITY: Get executable path from process info
+        let pathBuffer = UnsafeMutablePointer<Int8>.allocate(capacity: Int(MAXPATHLEN))
+        defer { pathBuffer.deallocate() }
+        
+        let result = proc_pidpath(pid, pathBuffer, UInt32(MAXPATHLEN))
+        guard result > 0 else {
+            logger.error("Could not get process path for PID: \(pid)")
             return false
         }
+        
+        let processPath = String(cString: pathBuffer)
+        let bundleURL = URL(fileURLWithPath: processPath)
 
         // Basic validation that process is code signed
         var code: SecStaticCode?
@@ -223,12 +250,19 @@ class AudioProcessingXPCService: NSObject {
             return false
         }
 
-        // CRITICAL SECURITY: Hardcoded production team IDs - cannot be spoofed
-        // Replace with actual team IDs from Apple Developer account
-        let allowedTeamIDs: Set<String> = [
-            "ABCD123456", // Production Team ID - REPLACE WITH ACTUAL VALUE
-            "EFGH789012"  // Development Team ID - REPLACE WITH ACTUAL VALUE
-        ]
+         // CRITICAL SECURITY: Hardcoded production team IDs - cannot be spoofed
+         // To find your Team ID:
+         // 1. Go to https://developer.apple.com/account/
+         // 2. Click "Membership" in the left sidebar
+         // 3. Your Team ID is displayed under "Team Details"
+         // 4. Format: 10-character alphanumeric string (e.g., "A123B456CD")
+         //
+         // Replace with actual team IDs from Apple Developer account
+         // SECURITY NOTE: These must match the Team ID on your code signing certificates
+         let allowedTeamIDs: Set<String> = [
+             "A123B456CD", // Production Team ID - REPLACE WITH YOUR ACTUAL TEAM ID
+             "X987Y654ZW"  // Development Team ID - REPLACE WITH YOUR ACTUAL TEAM ID (if different)
+         ]
 
         guard allowedTeamIDs.contains(teamID) else {
             logger.error("Unauthorized team ID: \(teamID)")

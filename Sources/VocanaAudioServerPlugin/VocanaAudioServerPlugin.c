@@ -201,8 +201,14 @@ static OSStatus VocanaAudioServerPlugin_GetPropertyData(AudioServerPlugInDriverR
         case kObjectID_Device:
             switch (inAddress->mSelector) {
                 case kAudioDevicePropertyDeviceUID: {
-                    CFStringRef uid = CFSTR("com.vocana.VirtualDevice");
+                    CFStringRef uid = CFSTR("com.vocana.VirtualAudioDevice");
                     *(CFStringRef*)outData = uid;
+                    *outDataSize = sizeof(CFStringRef);
+                    break;
+                }
+                case kAudioObjectPropertyName: {
+                    CFStringRef name = CFSTR("VocanaVirtualDevice 2ch");
+                    *(CFStringRef*)outData = name;
                     *outDataSize = sizeof(CFStringRef);
                     break;
                 }

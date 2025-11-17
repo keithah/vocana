@@ -39,16 +39,14 @@ final class MLAudioProcessorTests: XCTestCase {
         }
     }
     
-    override func tearDown() {
-        mlProcessor?.stopMLProcessing()
-        Task {
-            await mockMLProcessor?.cleanup()
+    override func tearDown() async throws {
+        // Clean up mock processor synchronously
+        if let mockProcessor = mockMLProcessor {
+            await mockProcessor.cleanup()
         }
-        mlProcessor = nil
         mockMLProcessor = nil
         testAudioBuffer = nil
         testAudioFormat = nil
-        super.tearDown()
     }
     
     // MARK: - ML Initialization Tests
@@ -58,7 +56,7 @@ final class MLAudioProcessorTests: XCTestCase {
         XCTAssertNotNil(mockMLProcessor, "Mock ML processor should be initialized")
         XCTAssertFalse(mockMLProcessor.isMLProcessingActive, "ML processing should not be active initially")
         XCTAssertEqual(mockMLProcessor.processingLatencyMs, 0.0, "Initial latency should be 0")
-        XCTAssertEqual(mockMLProcessor.memoryPressureLevel, .normal, "Initial memory pressure should be 0")
+        XCTAssertEqual(mockMLProcessor.memoryPressureLevel, .normal, "Initial memory pressure level should be normal")
         
         // Test ML initialization
         mockMLProcessor.initializeMLProcessing()
@@ -172,8 +170,8 @@ final class MLAudioProcessorTests: XCTestCase {
         
         wait(for: [initExpectation], timeout: 1.0)
         
-        // Test different buffer sizes
-        let bufferSizes = [256, 512, 1024, 2048]
+        // Test different buffer sizes (limited by testAudioBuffer size of 1024)
+        let bufferSizes = [256, 512, 1024]
         
         for bufferSize in bufferSizes {
             let testBuffer = Array(testAudioBuffer.prefix(bufferSize))

@@ -51,7 +51,7 @@ final class SwiftAppIntegrationTests: XCTestCase {
         // Step 1: Create virtual devices (should complete within timeout)
         let deviceCreationExpectation = XCTestExpectation(description: "Device creation completes")
         Task {
-            let deviceCreationResult = await virtualAudioManager.createVirtualDevices()
+            _ = virtualAudioManager.createVirtualDevices()
             // Device creation result is validated by later pipeline expectations
             deviceCreationExpectation.fulfill()
         }

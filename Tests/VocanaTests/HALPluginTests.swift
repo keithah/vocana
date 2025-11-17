@@ -102,7 +102,11 @@ final class HALPluginTests: XCTestCase {
         
         let volumeGetResult = getDeviceProperty(deviceID: deviceID, property: kAudioDevicePropertyVolumeScalar)
         XCTAssertNotNil(volumeGetResult, "Volume property should be readable")
-        XCTAssertEqual(volumeGetResult as? Float, 0.75, accuracy: 0.01, "Volume should match set value")
+        if let volume = volumeGetResult as? Double {
+            XCTAssertEqual(volume, 0.75, accuracy: 0.01, "Volume should match set value")
+        } else {
+            XCTFail("Volume should be a Double")
+        }
         
         // Test mute property
         let muteSetResult = setDeviceProperty(deviceID: deviceID, property: kAudioDevicePropertyMute, value: true)
@@ -118,7 +122,9 @@ final class HALPluginTests: XCTestCase {
         
         let sampleRateGetResult = getDeviceProperty(deviceID: deviceID, property: kAudioDevicePropertyNominalSampleRate)
         XCTAssertNotNil(sampleRateGetResult, "Sample rate property should be readable")
-        XCTAssertEqual(sampleRateGetResult as? Float64, 44100.0, accuracy: 1.0, "Sample rate should match set value")
+        if let sampleRate = sampleRateGetResult as? Float64 {
+            XCTAssertEqual(sampleRate, 44100.0, accuracy: 1.0, "Sample rate should match set value")
+        }
         
         // Cleanup
         _ = destroyTestDevice(deviceID: deviceID)
@@ -173,17 +179,21 @@ final class HALPluginTests: XCTestCase {
         
         let startTime = CFAbsoluteTimeGetCurrent()
         
-        for i in 0..<10 {
-            DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + Double(i) * 0.01) {
-                let processingStart = CFAbsoluteTimeGetCurrent()
-                let result = testRealTimeAudioProcessing(deviceID: deviceID, audioBuffer: self.testAudioBuffer)
-                let processingEnd = CFAbsoluteTimeGetCurrent()
-                let latency = processingEnd - processingStart
-                
-                XCTAssertTrue(result, "Real-time processing should succeed")
-                XCTAssertLessThan(latency, 0.01, "Processing latency should be < 10ms")
-                
-                latencyExpectation.fulfill()
+        for idx in 0..<10 {
+            Task {
+                await MainActor.run {
+                    let processingStart = CFAbsoluteTimeGetCurrent()
+                    let testBuffer = self.testAudioBuffer!
+                    let result = testRealTimeAudioProcessing(deviceID: deviceID, audioBuffer: testBuffer)
+                    let processingEnd = CFAbsoluteTimeGetCurrent()
+                    let latency = processingEnd - processingStart
+                    
+                    // Basic latency validation
+                    XCTAssertLessThan(latency, 0.01, "Processing latency should be under 10ms for real-time requirements")
+                    XCTAssertTrue(result, "Real-time processing should succeed")
+                    
+                    latencyExpectation.fulfill()
+                }
             }
         }
         

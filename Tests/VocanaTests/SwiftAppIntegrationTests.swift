@@ -122,12 +122,12 @@ final class SwiftAppIntegrationTests: XCTestCase {
         var latencies: [Double] = []
         let latencyLock = NSLock()
         
-        for i in 0..<50 {
-            DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + Double(i) * 0.01) {
+        for idx in 0..<50 {
+            DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + Double(idx) * 0.01) {
                 let startTime = CFAbsoluteTimeGetCurrent()
                 
                 // Process audio buffer
-                let testBuffer = self.createTestAudioBuffer(frameCount: 256, frequency: 440 + Float(i * 10))
+                let testBuffer = self.createTestAudioBuffer(frameCount: 256, frequency: 440 + Float(idx * 10))
                 self.audioEngine.processAudioBuffer(testBuffer)
                 
                 let endTime = CFAbsoluteTimeGetCurrent()
@@ -393,9 +393,9 @@ final class SwiftAppIntegrationTests: XCTestCase {
         audioEngine.setAudioProcessingEnabled(true, sensitivity: 0.9)
         
         // Process many audio buffers
-        for i in 0..<20 {
-            DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + Double(i) * 0.01) {
-                let testBuffer = self.createTestAudioBuffer(frameCount: 256, frequency: 440 + Float(i * 50))
+        for idx in 0..<20 {
+            DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + Double(idx) * 0.01) {
+                let testBuffer = self.createTestAudioBuffer(frameCount: 256, frequency: 440 + Float(idx * 50))
                 self.audioEngine.processAudioBuffer(testBuffer)
             }
         }

@@ -24,7 +24,7 @@ final class SmokeTests: XCTestCase {
         XCTAssertNotNil(mockML)
         XCTAssertFalse(mockML.isMLProcessingActive)
         XCTAssertEqual(mockML.processingLatencyMs, 0.0)
-        XCTAssertEqual(mockML.memoryPressureLevel, 0)
+        XCTAssertEqual(mockML.memoryPressureLevel, .normal)
         
         // Test initialization
         mockML.initializeMLProcessing()

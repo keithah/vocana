@@ -396,7 +396,7 @@ final class RingBufferTests: XCTestCase {
         
         // Perform many operations
         for i in 0..<1000 {
-            let chunk = (0..<100).map { Float(i) * 0.01 }
+            let chunk = (0..<100).map { _ in Float(i) * 0.01 }
             _ = ringBuffer.write(chunk)
             _ = ringBuffer.read(count: 100)
         }

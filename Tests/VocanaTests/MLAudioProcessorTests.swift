@@ -41,7 +41,9 @@ final class MLAudioProcessorTests: XCTestCase {
     
     override func tearDown() {
         mlProcessor?.stopMLProcessing()
-        mockMLProcessor?.cleanup()
+        Task {
+            await mockMLProcessor?.cleanup()
+        }
         mlProcessor = nil
         mockMLProcessor = nil
         testAudioBuffer = nil
@@ -56,7 +58,7 @@ final class MLAudioProcessorTests: XCTestCase {
         XCTAssertNotNil(mockMLProcessor, "Mock ML processor should be initialized")
         XCTAssertFalse(mockMLProcessor.isMLProcessingActive, "ML processing should not be active initially")
         XCTAssertEqual(mockMLProcessor.processingLatencyMs, 0.0, "Initial latency should be 0")
-        XCTAssertEqual(mockMLProcessor.memoryPressureLevel, 0, "Initial memory pressure should be 0")
+        XCTAssertEqual(mockMLProcessor.memoryPressureLevel, .normal, "Initial memory pressure should be 0")
         
         // Test ML initialization
         mockMLProcessor.initializeMLProcessing()
@@ -328,7 +330,7 @@ final class MLAudioProcessorTests: XCTestCase {
         mockMLProcessor.simulateMemoryPressure()
         
         // Verify memory pressure is detected
-        XCTAssertEqual(mockMLProcessor.memoryPressureLevel, 2, "Memory pressure level should be urgent")
+        XCTAssertEqual(mockMLProcessor.memoryPressureLevel, .urgent, "Memory pressure level should be urgent")
         
         // Test inference under memory pressure
         let result = mockMLProcessor.processAudioWithML(chunk: testAudioBuffer, sensitivity: 0.5)
@@ -338,7 +340,7 @@ final class MLAudioProcessorTests: XCTestCase {
         
         // Test recovery
         mockMLProcessor.attemptMemoryPressureRecovery()
-        XCTAssertEqual(mockMLProcessor.memoryPressureLevel, 0, "Memory pressure should be recovered")
+        XCTAssertEqual(mockMLProcessor.memoryPressureLevel, .normal, "Memory pressure should be recovered")
     }
     
     func testMLSuspensionAndRecovery() {
@@ -477,7 +479,7 @@ final class MLAudioProcessorTests: XCTestCase {
         var errors = 0
         let errorLock = NSLock()
         
-        for i in 0..<100 {
+        for _ in 0..<100 {
             DispatchQueue.global(qos: .userInteractive).async {
                 do {
                     let testBuffer = Array(self.testAudioBuffer.shuffled())

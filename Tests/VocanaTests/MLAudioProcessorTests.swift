@@ -91,28 +91,27 @@ final class MLAudioProcessorTests: XCTestCase {
     
     // MARK: - ML Inference Tests
     
-    func testMLInferenceBasic() {
+    func testMLInferenceBasic() async {
         // Initialize ML processor
         mockMLProcessor.initializeMLProcessing()
-        
-        // Wait for initialization
+
+        // Wait for initialization using async expectation
         let initExpectation = XCTestExpectation(description: "ML inference initialization")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             initExpectation.fulfill()
         }
-        
-        wait(for: [initExpectation], timeout: 1.0)
-        
+
+        await fulfillment(of: [initExpectation], timeout: 1.0)
+
         // Test basic inference
         let result = mockMLProcessor.processAudioWithML(chunk: testAudioBuffer, sensitivity: 0.5)
-        
+
         XCTAssertNotNil(result, "ML inference should return a result")
         XCTAssertEqual(result?.count, testAudioBuffer.count, "Result should have same length as input")
-        
-        // Verify result is not identical to input (processing occurred)
+
+        // For mock processor, result should be identical to input (no actual processing)
         if let result = result {
-            let difference = zip(testAudioBuffer, result).map { abs($0 - $1) }.reduce(0, +)
-            XCTAssertGreaterThanOrEqual(difference, 0.0, "Result should be processed (may be identical for mock)")
+            XCTAssertEqual(result, testAudioBuffer, "Mock processor should return input unchanged")
         }
     }
     
@@ -395,7 +394,7 @@ final class MLAudioProcessorTests: XCTestCase {
             callbackLock.unlock()
         }
         
-        mockMLProcessor.recordLatency = { latency in
+        mockMLProcessor.recordLatency = { _ in
             callbackLock.lock()
             latencyCount += 1
             callbackLock.unlock()

@@ -45,11 +45,15 @@ final class MockMLAudioProcessor: MLAudioProcessorProtocol {
     // MARK: - MLAudioProcessorProtocol
     
     func initializeML() async {
-        // Mock initialization - already handled in init
+        // Mock async initialization - activate ML processing
+        isMLProcessingActive = true
+        onMLProcessingReady()
     }
     
     func initializeMLProcessing() {
-        // Mock initialization - already handled in init
+        // Mock initialization - activate ML processing
+        isMLProcessingActive = true
+        onMLProcessingReady()
     }
     
     func stopMLProcessing() {

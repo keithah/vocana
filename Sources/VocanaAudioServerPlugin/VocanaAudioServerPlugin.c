@@ -132,6 +132,7 @@ static Boolean VocanaAudioServerPlugin_HasProperty(AudioServerPlugInDriverRef in
                 case kAudioDevicePropertyLatency:
                 case kAudioDevicePropertySafetyOffset:
                 case kAudioDevicePropertyNominalSampleRate:
+                case kAudioObjectPropertyName:
                 case kAudioObjectPropertyOwnedObjects:
                     return true;
                 default:
@@ -268,8 +269,8 @@ static OSStatus VocanaAudioServerPlugin_GetZeroTimeStamp(AudioServerPlugInDriver
 
 static OSStatus VocanaAudioServerPlugin_WillDoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, UInt32 inOperationID, Boolean* outWillDo, Boolean* outWillDoInPlace) {
     if (!outWillDo || !outWillDoInPlace) return kAudioHardwareBadObjectError;
-    *outWillDo = true;
-    *outWillDoInPlace = true;
+    *outWillDo = false;
+    *outWillDoInPlace = false;
     return kAudioHardwareNoError;
 }
 

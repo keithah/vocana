@@ -239,7 +239,7 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
     
     // MARK: - Private State
     
-    internal var isEnabled: Bool = false
+    private var isEnabled: Bool = false
     private var sensitivity: Double = 0.5
     private var decayTimer: Timer?
 
@@ -440,8 +440,8 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
     
     // MARK: - Private Methods
     
-    // CRITICAL FIX: Perform heavy audio processing off main thread
-    private func performHeavyAudioProcessing(
+    // CRITICAL: Mark performHeavyAudioProcessing as nonisolated to enable true off-main execution
+    nonisolated private func performHeavyAudioProcessing(
         buffer: AVAudioPCMBuffer,
         enabled: Bool,
         sensitivity: Double,
@@ -467,7 +467,7 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
         if enabled {
             let samples = Array(samplesPtr)
             // Process audio with ML model
-            let processedSamples = self.processWithMLForOutput(samples: samples, sensitivity: sensitivity, mlProcessor: mlProcessor, bufferManager: bufferManager)
+            let processedSamples = self.processWithMLForOutput(samples: samples, sensitivity: sensitivity, mlProcessor: mlProcessor, bufferManager: bufferManager, levelController: levelController)
             // Calculate output level from processed samples using shared controller
             let outputLevel = levelController.calculateRMS(samples: processedSamples)
             
@@ -564,7 +564,7 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
 
         if enabled {
             let samples = Array(samplesPtr)
-            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity, mlProcessor: mlProcessor, bufferManager: bufferManager)
+            let processedSamples = self.processWithMLForOutput(samples: samples, sensitivity: sensitivity, mlProcessor: mlProcessor, bufferManager: bufferManager, levelController: levelController)
             let outputLevel = levelController.calculateRMS(samples: processedSamples)
 
             // HAL Plugin: Emit processed stereo buffer to virtual devices
@@ -591,11 +591,18 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
     ///   - sensitivity: Processing sensitivity
     ///   - mlProcessor: ML processor instance
     ///   - bufferManager: Buffer manager instance
-    /// - Returns: Processed audio samples (stereo if available)
-    private func processWithMLForOutput(samples: [Float], sensitivity: Double, mlProcessor: MLAudioProcessorProtocol, bufferManager: AudioBufferManager) -> [Float] {
-        // Validate audio input - create a temporary level controller for validation
-        let tempLevelController = AudioLevelController()
-        guard tempLevelController.validateAudioInput(samples) else {
+    ///   - levelController: Level controller for state continuity
+    ///   - Returns: Processed audio samples (stereo if available)
+    nonisolated private func processWithMLForOutput(samples: [Float], sensitivity: Double, mlProcessor: MLAudioProcessorProtocol, bufferManager: AudioBufferManager, levelController: AudioLevelController) -> [Float] {
+        // Validate audio input using injected level controller (preserves decay state)
+        guard levelController.validateAudioInput(samples) else {
+            // Apply sensitivity and convert to stereo
+            let processed = samples.map { $0 * Float(sensitivity) }
+            return convertToStereo(processed)
+        }
+
+        // Check if ML is available - use captured state
+        guard !mlProcessor.isMemoryPressureSuspended() else {
             // Apply sensitivity and convert to stereo
             let processed = samples.map { $0 * Float(sensitivity) }
             return convertToStereo(processed)
@@ -635,7 +642,7 @@ class AudioEngine: ObservableObject, AudioEngineProtocol {
     /// Convert mono audio samples to stereo format for HAL plugin output
     /// - Parameter monoSamples: Mono audio samples
     /// - Returns: Stereo audio samples (duplicated mono channel)
-    private func convertToStereo(_ monoSamples: [Float]) -> [Float] {
+    nonisolated private func convertToStereo(_ monoSamples: [Float]) -> [Float] {
         // For HAL plugin: duplicate mono channel to create stereo output
         // Pre-allocate array to avoid multiple reallocations during append operations
         var stereoSamples = [Float](repeating: 0, count: monoSamples.count * 2)

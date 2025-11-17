@@ -4,7 +4,6 @@ import os.log
 /// Manages audio buffer lifecycle and chunk extraction
 /// Responsibility: Buffer management, thread-safe append/extract operations, overflow handling
 /// Isolated from level calculation, audio capture, and ML processing
-@MainActor
 class AudioBufferManager: @unchecked Sendable {
     private static let logger = Logger(subsystem: "Vocana", category: "AudioBufferManager")
     

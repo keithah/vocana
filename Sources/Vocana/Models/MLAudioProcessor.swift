@@ -2,7 +2,6 @@ import Foundation
 import os.log
 
 /// Protocol for ML audio processing
-@MainActor
 public protocol MLAudioProcessorProtocol: AnyObject {
     var isMLProcessingActive: Bool { get }
     var processingLatencyMs: Double { get }

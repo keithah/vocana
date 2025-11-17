@@ -15,6 +15,8 @@
 #define kObjectID_Device 2
 
 typedef struct {
+    // Interface must be first for COM compatibility
+    AudioServerPlugInDriverInterface interface;
     AudioServerPlugInHostRef hostRef;
     pthread_mutex_t mutex;
     Float64 sampleRate;
@@ -38,6 +40,9 @@ void* VocanaAudioServerPluginFactory(CFAllocatorRef allocator, CFUUIDRef typeUUI
         return NULL;
     }
 
+    // Initialize the interface v-table in the plugin struct
+    plugin->interface = gVocanaPluginInterface;
+
     // Initialize plugin state
     pthread_mutex_init(&plugin->mutex, NULL);
     plugin->sampleRate = 48000.0;
@@ -45,23 +50,23 @@ void* VocanaAudioServerPluginFactory(CFAllocatorRef allocator, CFUUIDRef typeUUI
     gPlugin = plugin;
     DebugMsg("Plugin created successfully");
 
-    // CRITICAL FIX: Return the driver interface v-table, not the plugin state
-    // CoreAudio expects AudioServerPlugInDriverInterface*, not VocanaPlugin*
-    return &gVocanaPluginInterface;
+    // Return plugin pointer (interface is first member, so this works as interface pointer)
+    return plugin;
 }
 
 static HRESULT VocanaAudioServerPlugin_QueryInterface(void* inDriver, REFIID inUUID, LPVOID* outInterface) {
     if (!inDriver || !outInterface) return E_POINTER;
-    
+
+    VocanaPlugin *plugin = (VocanaPlugin*)inDriver;
     CFUUIDRef requestedUUID = (CFUUIDRef)*(const void**)&inUUID;
     *outInterface = NULL;
-    
+
     if (CFEqual(requestedUUID, kAudioServerPlugInDriverInterfaceUUID) ||
         CFEqual(requestedUUID, IUnknownUUID)) {
-        *outInterface = inDriver;
+        *outInterface = inDriver;  // Return the plugin pointer (interface is first member)
         return S_OK;
     }
-    
+
     return E_NOINTERFACE;
 }
 

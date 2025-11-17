@@ -20,9 +20,9 @@ struct AppConstants {
     // Audio Processing
     static let sampleRate: Int = 48000 // Standard high-quality audio sampling rate
     
-    // Buffer size of 1 second provides good balance between latency and robustness
-    // Allows for ~2 seconds of processing latency before audio starts dropping
-    static let maxAudioBufferSize: Int = 48000  // 1 second at 48kHz
+    // Performance optimization: Reduced buffer size for lower latency
+    // 0.5 seconds provides good balance while reducing memory usage
+    static let maxAudioBufferSize: Int = 24000  // 0.5 seconds at 48kHz
     
     // Empirically tuned factor to bring RMS values (typically 0.01-0.1) to UI range (0-1)
     // Based on testing with typical microphone input levels
@@ -40,9 +40,9 @@ struct AppConstants {
     // 500MB allows for very large models while preventing DoS attacks
     static let maxFilterbankMemoryMB: Int = 500
     
-     // Duration in seconds to suspend audio capture when circuit breaker triggers
-     // 50ms provides better user experience while allowing ML pipeline to catch up
-     static let circuitBreakerSuspensionSeconds: Double = 0.05
+     // Performance optimization: Reduced suspension time for better responsiveness
+     // 25ms provides better user experience while allowing ML pipeline to catch up
+     static let circuitBreakerSuspensionSeconds: Double = 0.025
     
     // Default Log-SNR value for DeepFilterNet when no ML output is available
     // -10dB represents moderate noise suppression as a safe fallback
@@ -59,9 +59,9 @@ struct AppConstants {
     static let dfBands: Int = 96       // Deep filtering applied to first 96 bins (0-4.8kHz where most speech energy is)
     static let dfOrder: Int = 5        // 5-tap FIR filter order - balances complexity vs quality
     
-    // Audio Processing Constants
-    static let crossfadeLengthSamples: Int = 480  // 10ms crossfade at 48kHz to prevent audio artifacts
-    static let maxConsecutiveOverflows: Int = 10   // Circuit breaker threshold for sustained buffer overflows
+    // Performance optimization: Reduced crossfade for lower latency
+    static let crossfadeLengthSamples: Int = 240  // 5ms crossfade at 48kHz to prevent audio artifacts
+    static let maxConsecutiveOverflows: Int = 5    // Faster circuit breaker for better responsiveness
     static let memoryPressureRecoveryDelaySeconds: Double = 30.0  // Timeout for forced memory pressure recovery
     static let memoryPressureCheckDelaySeconds: Double = 5.0     // Delay before checking memory pressure recovery
     

@@ -66,6 +66,17 @@ struct AudioLevels {
 ///
 /// Threading: All operations are MainActor-isolated for UI safety.
 /// Heavy processing is dispatched to background queues to prevent UI blocking.
+// CRITICAL FIX: Atomic state capture structure to prevent race conditions
+private struct AudioProcessingState {
+    let isEnabled: Bool
+    let sensitivity: Double
+    let callback: (([Float]) -> Void)?
+    let bufferManager: AudioBufferManager
+    let levelController: AudioLevelController
+    let mlProcessor: MLAudioProcessor
+    let isMLProcessingActive: Bool
+}
+
 @MainActor
 class AudioEngine: ObservableObject {
     nonisolated private static let logger = Logger(subsystem: "Vocana", category: "AudioEngine")
@@ -347,16 +358,21 @@ class AudioEngine: ObservableObject {
      }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        // Fix CRITICAL: Move audio processing off MainActor to prevent UI blocking
-        // Capture MainActor state before dispatching to background
-        let capturedEnabled = isEnabled
-        let capturedSensitivity = sensitivity
-        let capturedCallback = onProcessedAudioBufferReady
+        // CRITICAL FIX: Atomic state capture to prevent race conditions
+        let capturedState = audioProcessingQueue.sync {
+            return AudioProcessingState(
+                isEnabled: isEnabled,
+                sensitivity: sensitivity,
+                callback: onProcessedAudioBufferReady,
+                bufferManager: bufferManager,
+                levelController: levelController,
+                mlProcessor: mlProcessor,
+                isMLProcessingActive: isMLProcessingActive
+            )
+        }
 
         audioProcessingQueue.async { [weak self] in
-            Task { @MainActor in
-                self?.processAudioBufferInternal(buffer, enabled: capturedEnabled, sensitivity: capturedSensitivity, callback: capturedCallback)
-            }
+            self?.processAudioBufferWithState(buffer, state: capturedState)
         }
     }
     
@@ -376,7 +392,15 @@ class AudioEngine: ObservableObject {
 
         if enabled {
             let samples = Array(samplesPtr)
-            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity)
+            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: sensitivity, state: AudioProcessingState(
+                isEnabled: isEnabled,
+                sensitivity: sensitivity,
+                callback: onProcessedAudioBufferReady,
+                bufferManager: bufferManager,
+                levelController: levelController,
+                mlProcessor: mlProcessor,
+                isMLProcessingActive: isMLProcessingActive
+            ))
             let outputLevel = levelController.calculateRMS(samples: processedSamples)
 
             // HAL Plugin: Emit processed stereo buffer to virtual devices
@@ -396,34 +420,67 @@ class AudioEngine: ObservableObject {
             }
         }
     }
-    
+
+    private func processAudioBufferWithState(_ buffer: AVAudioPCMBuffer, state: AudioProcessingState) {
+        // CRITICAL FIX: Use captured state to prevent race conditions
+        guard !state.bufferManager.isAudioCaptureSuspended() else { return }
+
+        guard let channelData = buffer.floatChannelData else { return }
+        let channelDataValue = channelData.pointee
+        let frames = buffer.frameLength
+
+        let samplesPtr = UnsafeBufferPointer(start: channelDataValue, count: Int(frames))
+
+        // Calculate input level
+        let inputLevel = state.levelController.calculateRMSFromPointer(samplesPtr)
+
+        if state.isEnabled {
+            let samples = Array(samplesPtr)
+            let processedSamples = processWithMLForOutput(samples: samples, sensitivity: state.sensitivity, state: state)
+            let outputLevel = state.levelController.calculateRMS(samples: processedSamples)
+
+            // HAL Plugin: Emit processed stereo buffer to virtual devices
+            state.callback?(processedSamples)
+
+            // Update UI safely on MainActor
+            Task { @MainActor [weak self] in
+                self?.currentLevels = AudioLevels(input: inputLevel, output: outputLevel)
+            }
+        } else {
+            // Apply level decay when disabled
+            let decayedLevels = state.levelController.applyDecay()
+
+            // Update UI safely on MainActor
+            Task { @MainActor [weak self] in
+                self?.currentLevels = decayedLevels
+            }
+        }
+    }
+
     /// Process audio samples with ML and return processed samples for output
     /// - Parameters:
     ///   - samples: Input audio samples
     ///   - sensitivity: Processing sensitivity
     /// - Returns: Processed audio samples (stereo if available)
-    private func processWithMLForOutput(samples: [Float], sensitivity: Double) -> [Float] {
-        // Validate audio input
-        guard levelController.validateAudioInput(samples) else {
+    private func processWithMLForOutput(samples: [Float], sensitivity: Double, state: AudioProcessingState) -> [Float] {
+        // Validate audio input using state
+        guard state.levelController.validateAudioInput(samples) else {
             // Apply sensitivity and convert to stereo
             let processed = samples.map { $0 * Float(sensitivity) }
             return convertToStereo(processed)
         }
 
-        // Check if ML is available
-        guard isMLProcessingActive, !mlProcessor.isMemoryPressureSuspended() else {
+        // Check if ML is available using state
+        guard state.isMLProcessingActive, !state.mlProcessor.isMemoryPressureSuspended() else {
             // Apply sensitivity and convert to stereo
             let processed = samples.map { $0 * Float(sensitivity) }
             return convertToStereo(processed)
         }
 
-         // Append to buffer and extract chunk
-         // Fix HIGH-006: Circuit breaker suspension is handled via recordCircuitBreakerSuspension callback
-         let chunk = bufferManager.appendToBufferAndExtractChunk(samples: samples) { [weak self] duration in
-             guard let self = self else { return }
-             // Trigger the circuit breaker callback which updates UI flags
-             // The actual suspension is managed within AudioBufferManager.audioBufferQueue
-             self.bufferManager.recordCircuitBreakerSuspension(duration)
+         // Append to buffer and extract chunk using state
+         let chunk = state.bufferManager.appendToBufferAndExtractChunk(samples: samples) { duration in
+             // Circuit breaker callback - handled within buffer manager
+             state.bufferManager.recordCircuitBreakerSuspension(duration)
          }
 
         // Process when we have enough samples
@@ -433,8 +490,8 @@ class AudioEngine: ObservableObject {
             return convertToStereo(processed)
         }
 
-        // Run ML inference
-        if let enhanced = mlProcessor.processAudioWithML(chunk: chunk, sensitivity: sensitivity) {
+        // Run ML inference using state
+        if let enhanced = state.mlProcessor.processAudioWithML(chunk: chunk, sensitivity: sensitivity) {
             return convertToStereo(enhanced)
         } else {
             // ML failed, use fallback with sensitivity

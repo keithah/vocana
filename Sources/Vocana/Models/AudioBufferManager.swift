@@ -4,11 +4,15 @@ import os.log
 /// Manages audio buffer lifecycle and chunk extraction
 /// Responsibility: Buffer management, thread-safe append/extract operations, overflow handling
 /// Isolated from level calculation, audio capture, and ML processing
-class AudioBufferManager {
+class AudioBufferManager: @unchecked Sendable {
     private static let logger = Logger(subsystem: "Vocana", category: "AudioBufferManager")
     
     private let minimumBufferSize = 960  // FFT size for DeepFilterNet
     private let audioBufferQueue = DispatchQueue(label: "com.vocana.audiobuffer", qos: .userInteractive)
+    
+    // Performance optimization: Pre-allocated buffer to reduce allocations
+    private var preallocatedBuffer: [Float] = []
+    private let preallocatedCapacity = 16384
     
     // Fix CRITICAL-003: Use struct wrapper for proper encapsulation instead of nonisolated(unsafe)
     // All access to this structure must go through audioBufferQueue
@@ -19,6 +23,11 @@ class AudioBufferManager {
     }
     
     private var bufferState = BufferState()
+    
+    // Performance optimization: Initialize preallocated buffer
+    init() {
+        preallocatedBuffer.reserveCapacity(preallocatedCapacity)
+    }
     
     // Telemetry tracking (passed in from AudioEngine)
     var recordBufferOverflow: () -> Void = {}

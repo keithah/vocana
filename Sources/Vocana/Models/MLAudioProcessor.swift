@@ -38,7 +38,11 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
      private var mlProcessingSuspendedDueToMemory = false
 
      // Fix CRITICAL: Dedicated queue for ML inference to prevent blocking audio thread
-     private let mlInferenceQueue = DispatchQueue(label: "com.vocana.mlinference", qos: .userInteractive)
+     private let mlInferenceQueue = DispatchQueue(label: "com.vocana.mlinference", qos: .userInteractive, attributes: .concurrent)
+     
+     // Performance optimization: Model warmup for reduced first-call latency
+     private var isModelWarmedUp = false
+     private let warmupSamples = Array(repeating: Float(0.01), count: 960) // Small signal for warmup
     
       // Telemetry and callbacks
       // Thread Safety: All callbacks are automatically dispatched to MainActor
@@ -105,6 +109,18 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
                     }
                     
                     self.denoiser = denoiser
+                    
+                    // Performance optimization: Warm up model to reduce first-call latency
+                    if !self.isModelWarmedUp {
+                        do {
+                            _ = try denoiser.process(audio: self.warmupSamples)
+                            self.isModelWarmedUp = true
+                            Self.logger.info("DeepFilterNet model warmed up for optimal performance")
+                        } catch {
+                            Self.logger.warning("Model warmup failed: \(error.localizedDescription)")
+                        }
+                    }
+                    
                     self.isMLProcessingActive = true
                     Self.logger.info("DeepFilterNet ML processing enabled")
                     
@@ -161,23 +177,24 @@ class MLAudioProcessor: MLAudioProcessorProtocol {
      ///   - chunk: Audio samples to process
      ///   - sensitivity: Sensitivity multiplier (0-1)
      /// - Returns: Processed audio samples
-     func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
-         // Fix CRITICAL: Perform all state checks atomically within single sync block to prevent TOCTOU race
-         let capturedDenoiser = mlStateQueue.sync { () -> DeepFilterNet? in
-             guard !mlProcessingSuspendedDueToMemory else {
-                 return nil
-             }
-             return denoiser
-         }
+    func processAudioWithML(chunk: [Float], sensitivity: Double) -> [Float]? {
+        // Fix CRITICAL: Perform all state checks atomically within single sync block to prevent TOCTOU race
+        let capturedDenoiser = mlStateQueue.sync { () -> DeepFilterNet? in
+            guard !mlProcessingSuspendedDueToMemory else {
+                return nil
+            }
+            return denoiser
+        }
+
+        guard let capturedDenoiser = capturedDenoiser else {
+            return nil
+        }
          
-         guard let capturedDenoiser = capturedDenoiser else {
-             return nil
-         }
-         
-         // Synchronously process on background queue to avoid blocking
-         // Fix HIGH: Use async dispatch for non-blocking processing
-         var result: [Float]?
-         let semaphore = DispatchSemaphore(value: 0)
+          // Synchronously process on background queue to avoid blocking
+          // TODO: Consider async processing for better real-time performance
+          // Current semaphore approach may cause priority inversion in audio contexts
+          var result: [Float]?
+          let semaphore = DispatchSemaphore(value: 0)
          
          mlInferenceQueue.async { [weak self] in
              defer { semaphore.signal() }

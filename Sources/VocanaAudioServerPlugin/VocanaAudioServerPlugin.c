@@ -21,27 +21,33 @@ typedef struct {
 } VocanaPlugin;
 
 static VocanaPlugin *gPlugin = NULL;
+static AudioServerPlugInDriverInterface gVocanaPluginInterface;
 
 void* VocanaAudioServerPluginFactory(CFAllocatorRef allocator, CFUUIDRef typeUUID) {
     DebugMsg("Factory called");
-    
+
     if (!CFEqual(typeUUID, kAudioServerPlugInTypeUUID)) {
         DebugMsg("Wrong UUID type");
         return NULL;
     }
-    
+
+    // Allocate plugin state structure
     VocanaPlugin *plugin = calloc(1, sizeof(VocanaPlugin));
     if (!plugin) {
         ErrorMsg("Failed to allocate plugin");
         return NULL;
     }
-    
+
+    // Initialize plugin state
     pthread_mutex_init(&plugin->mutex, NULL);
     plugin->sampleRate = 48000.0;
-    
+
     gPlugin = plugin;
     DebugMsg("Plugin created successfully");
-    return plugin;
+
+    // CRITICAL FIX: Return the driver interface v-table, not the plugin state
+    // CoreAudio expects AudioServerPlugInDriverInterface*, not VocanaPlugin*
+    return &gVocanaPluginInterface;
 }
 
 static HRESULT VocanaAudioServerPlugin_QueryInterface(void* inDriver, REFIID inUUID, LPVOID* outInterface) {

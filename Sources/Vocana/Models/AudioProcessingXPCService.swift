@@ -132,11 +132,12 @@ class AudioProcessingXPCService: NSObject {
             return nil
         }
 
-        // Only allow Vocana bundle identifiers
+        // Allow Vocana bundle identifiers AND coreaudiod (since HAL plugin runs inside it)
         let allowedIdentifiers = [
             "com.vocana.Vocana",
             "com.vocana.VocanaAudioDriver",
-            "com.vocana.VocanaAudioServerPlugin"
+            "com.vocana.VocanaAudioServerPlugin",
+            "com.apple.audio.CoreAudio"  // coreaudiod process hosting HAL plugin
         ]
 
         guard allowedIdentifiers.contains(bundleIdentifier) else {

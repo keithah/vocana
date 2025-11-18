@@ -113,22 +113,14 @@ enum VocanaNoiseCancellationState: UInt32 {
         // Initialize XPC service for HAL plugin communication
         Task {
             await MainActor.run {
-                do {
-                    let mlProcessor = MLAudioProcessor()
-                    self.xpcService = AudioProcessingXPCService(audioProcessor: mlProcessor)
-                    setupBindings()
-                    setupNotifications()
-                    // Start XPC service
-                    xpcService?.start()
-                    // Discover HAL devices on startup
-                    _ = discoverVocanaDevices()
-                } catch {
-                    logger.error("Failed to initialize XPC service: \(error.localizedDescription)")
-                    // Continue with limited functionality
-                    setupBindings()
-                    setupNotifications()
-                    _ = discoverVocanaDevices()
-                }
+                let mlProcessor = MLAudioProcessor()
+                self.xpcService = AudioProcessingXPCService(audioProcessor: mlProcessor)
+                setupBindings()
+                setupNotifications()
+                // Start XPC service
+                xpcService?.start()
+                // Discover HAL devices on startup
+                _ = discoverVocanaDevices()
             }
         }
     }

@@ -8,6 +8,7 @@
 import Foundation
 import OSLog
 import Security
+import Darwin
 
 // Import XPC framework
 import XPC

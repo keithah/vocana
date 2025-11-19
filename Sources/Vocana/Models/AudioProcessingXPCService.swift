@@ -356,6 +356,11 @@ class AudioProcessingXPCService: NSObject {
             logger.error("Invalid XPC message format - missing audio data")
             return
         }
+        
+        guard sampleRate > 0 else {
+            logger.error("Invalid XPC message format - invalid sample rate: \(sampleRate)")
+            return
+        }
 
         // CRITICAL: Copy XPC data immediately - the pointer is only valid for the lifetime of this message
         let originalAudioData = Data(bytes: audioPtr!, count: bufferSize)

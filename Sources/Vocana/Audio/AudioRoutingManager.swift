@@ -217,12 +217,11 @@ class AudioRoutingManager: ObservableObject {
             let session = AVAudioSession.sharedInstance()
             
             // Find matching output route
-            if let outputs = session.currentRoute.outputs {
-                for output in outputs {
-                    if output.uid == (deviceUID as String) {
-                        logger.info("Physical output device configured: \(deviceUID)")
-                        return true
-                    }
+            let outputs = session.currentRoute.outputs
+            for output in outputs {
+                if output.uid == (deviceUID as String) {
+                    logger.info("Physical output device configured: \(deviceUID)")
+                    return true
                 }
             }
             

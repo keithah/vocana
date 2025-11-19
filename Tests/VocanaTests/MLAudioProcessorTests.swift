@@ -16,7 +16,6 @@ final class MLAudioProcessorTests: XCTestCase {
     
     // MARK: - Test Properties
     
-    private var mlProcessor: MLAudioProcessor!
     private var mockMLProcessor: MockMLAudioProcessor!
     private var testAudioBuffer: [Float]!
     private var testAudioFormat: AVAudioFormat!

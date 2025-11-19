@@ -15,8 +15,6 @@
 #define kObjectID_Device 2
 
 typedef struct {
-    // Interface must be first for COM compatibility
-    AudioServerPlugInDriverInterface interface;
     AudioServerPlugInHostRef hostRef;
     pthread_mutex_t mutex;
     Float64 sampleRate;
@@ -24,6 +22,8 @@ typedef struct {
 
 static VocanaPlugin *gPlugin = NULL;
 static AudioServerPlugInDriverInterface gVocanaPluginInterface;
+static AudioServerPlugInDriverInterface* gVocanaPluginInterfacePtr = &gVocanaPluginInterface;
+static AudioServerPlugInDriverRef gVocanaPluginDriverRef = &gVocanaPluginInterfacePtr;
 
 void* VocanaAudioServerPluginFactory(CFAllocatorRef allocator, CFUUIDRef typeUUID) {
     DebugMsg("Factory called");
@@ -33,50 +33,61 @@ void* VocanaAudioServerPluginFactory(CFAllocatorRef allocator, CFUUIDRef typeUUI
         return NULL;
     }
 
-    // Allocate plugin state structure
-    VocanaPlugin *plugin = calloc(1, sizeof(VocanaPlugin));
-    if (!plugin) {
-        ErrorMsg("Failed to allocate plugin");
-        return NULL;
+    // Allocate plugin state once; driver ref is static.
+    if (!gPlugin) {
+        VocanaPlugin *plugin = calloc(1, sizeof(VocanaPlugin));
+        if (!plugin) {
+            ErrorMsg("Failed to allocate plugin");
+            return NULL;
+        }
+
+        pthread_mutex_init(&plugin->mutex, NULL);
+        plugin->sampleRate = 48000.0;
+
+        gPlugin = plugin;
+        DebugMsg("Plugin state created successfully");
     }
 
-    // Initialize the interface v-table in the plugin struct
-    plugin->interface = gVocanaPluginInterface;
-
-    // Initialize plugin state
-    pthread_mutex_init(&plugin->mutex, NULL);
-    plugin->sampleRate = 48000.0;
-
-    gPlugin = plugin;
-    DebugMsg("Plugin created successfully");
-
-    // Return plugin pointer (interface is first member, so this works as interface pointer)
-    return plugin;
+    // Return driver reference as required by AudioServerPlugIn.h
+    return gVocanaPluginDriverRef;
 }
 
 static HRESULT VocanaAudioServerPlugin_QueryInterface(void* inDriver, REFIID inUUID, LPVOID* outInterface) {
-    if (!inDriver || !outInterface) return E_POINTER;
-
-    VocanaPlugin *plugin = (VocanaPlugin*)inDriver;
-    CFUUIDRef requestedUUID = (CFUUIDRef)*(const void**)&inUUID;
-    *outInterface = NULL;
-
-    if (CFEqual(requestedUUID, kAudioServerPlugInDriverInterfaceUUID) ||
-        CFEqual(requestedUUID, IUnknownUUID)) {
-        *outInterface = inDriver;  // Return the plugin pointer (interface is first member)
-        return S_OK;
+    if (!outInterface) {
+        return E_POINTER;
+    }
+    if (inDriver != gVocanaPluginDriverRef) {
+        return E_POINTER;
     }
 
-    return E_NOINTERFACE;
+    HRESULT result = E_NOINTERFACE;
+    CFUUIDRef requestedUUID = CFUUIDCreateFromUUIDBytes(NULL, inUUID);
+    if (!requestedUUID) {
+        return E_POINTER;
+    }
+
+    if (CFEqual(requestedUUID, IUnknownUUID) ||
+        CFEqual(requestedUUID, kAudioServerPlugInDriverInterfaceUUID)) {
+        *outInterface = gVocanaPluginDriverRef;
+        result = S_OK;
+    } else {
+        *outInterface = NULL;
+        result = E_NOINTERFACE;
+    }
+
+    CFRelease(requestedUUID);
+    return result;
 }
 
 static ULONG VocanaAudioServerPlugin_AddRef(void* inDriver) { return 1; }
 static ULONG VocanaAudioServerPlugin_Release(void* inDriver) { return 1; }
 
 static OSStatus VocanaAudioServerPlugin_Initialize(AudioServerPlugInDriverRef inDriver, AudioServerPlugInHostRef inHost) {
-    VocanaPlugin *plugin = (VocanaPlugin*)inDriver;
-    if (!plugin || !inHost) return kAudioHardwareBadObjectError;
-    
+    VocanaPlugin *plugin = gPlugin;
+    if (inDriver != gVocanaPluginDriverRef || !plugin || !inHost) {
+        return kAudioHardwareBadObjectError;
+    }
+
     pthread_mutex_lock(&plugin->mutex);
     plugin->hostRef = inHost;
     pthread_mutex_unlock(&plugin->mutex);
@@ -86,8 +97,10 @@ static OSStatus VocanaAudioServerPlugin_Initialize(AudioServerPlugInDriverRef in
 }
 
 static OSStatus VocanaAudioServerPlugin_CreateDevice(AudioServerPlugInDriverRef inDriver, CFDictionaryRef inDescription, const AudioServerPlugInClientInfo* inClientInfo, AudioObjectID* outDeviceObjectID) {
-    VocanaPlugin *plugin = (VocanaPlugin*)inDriver;
-    if (!plugin || !outDeviceObjectID) return kAudioHardwareBadObjectError;
+    VocanaPlugin *plugin = gPlugin;
+    if (inDriver != gVocanaPluginDriverRef || !plugin || !outDeviceObjectID) {
+        return kAudioHardwareBadObjectError;
+    }
     
     pthread_mutex_lock(&plugin->mutex);
     *outDeviceObjectID = kObjectID_Device;
@@ -162,6 +175,7 @@ static OSStatus VocanaAudioServerPlugin_GetPropertyDataSize(AudioServerPlugInDri
         case kObjectID_Device:
             switch (inAddress->mSelector) {
                 case kAudioDevicePropertyDeviceUID:
+                case kAudioObjectPropertyName:
                     *outDataSize = sizeof(CFStringRef);
                     break;
                 case kAudioDevicePropertyDeviceIsAlive:
@@ -193,7 +207,10 @@ static OSStatus VocanaAudioServerPlugin_GetPropertyData(AudioServerPlugInDriverR
         return kAudioHardwareUnknownPropertyError;
     }
     
-    VocanaPlugin *plugin = (VocanaPlugin*)inDriver;
+    VocanaPlugin *plugin = gPlugin;
+    if (inDriver != gVocanaPluginDriverRef || !plugin) {
+        return kAudioHardwareBadObjectError;
+    }
     OSStatus result = kAudioHardwareNoError;
     
     pthread_mutex_lock(&plugin->mutex);
